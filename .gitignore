@@ -1,5 +1,45 @@
+# Python bytecode/cache
 __pycache__/
-*.pyc
+*.py[cod]
+*$py.class
+
+# Test and coverage artifacts
 .pytest_cache/
 .coverage
+.coverage.*
+htmlcov/
+.hypothesis/
+.tox/
+.nox/
 pytest-cache-files-*/
+
+# Type/lint caches
+.mypy_cache/
+.ruff_cache/
+.pyre/
+
+# Virtual environments
+.venv/
+venv/
+env/
+ENV/
+
+# Local env and secrets
+.env
+.env.*
+!.env.example
+
+# Local databases and runtime files
+*.db
+*.sqlite
+*.sqlite3
+*.log
+*.jsonl
+
+# IDE/editor and OS junk
+.vscode/
+.idea/
+*.swp
+*.swo
+.DS_Store
+Thumbs.db
