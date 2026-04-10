@@ -10,9 +10,10 @@
 4. `pytest-bdd` 已安裝，step definitions 已可執行（BDD 測試可完整跑完）。
 5. `stock_monitor` 主程式套件已建立並實作核心測試契約。
 6. 最新狀態：
-   - `pytest -q tests`：`113 passed`（含 BDD + unit/integration/UAT contract）
+   - `pytest -q tests`：`132 passed`（含 BDD smoke + unit/integration/UAT contract）
    - Coverage gate：`100%`（line + branch）
    - CI：`.github/workflows/ci.yml` 已啟用（push / pull_request）
+   - 可執行入口：`python -m stock_monitor init-db|run-once|reconcile-once`
 7. 交付文件：
    - `test-report.md`
    - `defect-log.md`
@@ -68,12 +69,20 @@
 9. CI workflow 已接上 GitHub Actions。
 10. 測試報告與簽核文件已產出。
 11. `.gitignore` 已補齊長期開發所需忽略規則。
+12. 已實作 production adapters：
+   - TWSE MIS 行情 adapter
+   - LINE Messaging API push adapter
+   - SQLite repositories（watchlist/message/pending/log）
+13. 已新增非 skeleton BDD smoke scenarios（outside-in）：
+   - 交易時段跳過
+   - 冷卻抑制
+   - 補償回補不重送
 
 ## 6. 下一步要做什麼（建議執行順序）
-1. 實作 production adapter（台股行情來源、LINE Messaging API、SQLite repository 真實實作）。
-2. 以 `.feature` 為驅動補上非 skeleton 的 BDD step 驗證邏輯（outside-in）。
-3. 新增 E2E smoke（含交易時段判斷、通知抑制、補償回補）。
-4. 完成 `uat-signoff.md` 的人工簽核欄位（PO/QA/Eng Lead）。
+1. 將 `run-once` 擴為長駐 daemon（每分鐘輪詢 + 14:00 估值排程）。
+2. 將 BDD 從 smoke 擴展至完整 `features/stock_monitoring_system.feature` 的具體 step 實作。
+3. 加入真實外部依賴 smoke（可選 nightly job）：TWSE endpoint 可用性與 LINE sandbox 通道驗證。
+4. 完成正式人工 UAT 簽核（PO/QA/Eng Lead）。
 5. 持續維持流程：`PDD/EDD -> feature -> tests -> code`。
 
 ## 7. 啟動流程（實際可操作）
@@ -97,17 +106,30 @@ pip install pytest pytest-bdd pytest-cov
 python -m pytest -q tests
 ```
 5. 預期結果：
-   - `113 passed`
+   - `132 passed`
    - coverage `100%`
 
 ### 7.2 要跑「真實盤中監控」前必做
-目前程式已完成核心規則與測試契約，但尚未有 production entrypoint（daemon/scheduler）與真實外部 adapter。  
-你要先完成以下項目，才能長時間實際監控台股並送 LINE：
-1. 行情 adapter：接上公開台股即時資料來源（含 timeout/retry/stale/conflict 規則）。
-2. LINE adapter：接上 Messaging API，完成群組推送。
-3. SQLite repository adapter：把 message / pending ledger / snapshots 的真實寫入整合到排程流程。
-4. 啟動入口：提供可執行指令（例如 `python -m stock_monitor.app`）與每分鐘排程 loop。
-5. `.env` 設定：依 `.env.example` 填入實際 token 與群組 ID。
+目前已可執行單次流程（`run-once` / `reconcile-once`），但尚未 daemon 化。  
+先完成 `.env` 後，可直接用以下命令執行：
+```powershell
+# 1) 初始化資料庫
+python -m stock_monitor --db-path data/stock_monitor.db init-db
+
+# 2) 單次盤中監控（會做交易時段判斷、冷卻、推播、落盤）
+python -m stock_monitor --db-path data/stock_monitor.db run-once
+
+# 3) 單次補償回補
+python -m stock_monitor --db-path data/stock_monitor.db reconcile-once
+```
+
+建議先準備 `.env`：
+```powershell
+Copy-Item .env.example .env
+```
+並至少設定：
+1. `LINE_CHANNEL_ACCESS_TOKEN`
+2. `LINE_TO_GROUP_ID`
 
 ## 8. 常用命令
 ```powershell

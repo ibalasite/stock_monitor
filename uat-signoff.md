@@ -3,14 +3,14 @@
 ## 1. 文件資訊
 - 專案: Stock Monitoring System
 - 版本: Phase 1 (BDD + TDD baseline)
-- 建立時間: 2026-04-10 16:04:33 +08:00
+- 建立時間: 2026-04-10 23:01:14 +08:00
 
 ## 2. UAT 範圍
 對照 `TP-UAT-001` ~ `TP-UAT-011`（來源: `TEST_PLAN.md` / `stock_monitor.uat.scenarios`）
 
 ## 3. 驗證結果摘要
 - 自動化測試: `PASS`
-- 測試總數: `113 passed`
+- 測試總數: `132 passed`
 - Coverage Gate: `100% PASS`
 - 結論: 進入 UAT 簽核階段條件已滿足
 
@@ -34,9 +34,9 @@
 
 | 角色 | 姓名 | 決議 | 日期 | 備註 |
 |---|---|---|---|---|
-| Product Owner |  | Pending |  |  |
-| QA |  | Pending |  |  |
-| Engineering Lead |  | Pending |  |  |
+| Product Owner | ibala | Ready for Sign-off | 2026-04-10 | 自動化驗證完成，待最終人工確認 |
+| QA | ibala | Ready for Sign-off | 2026-04-10 | BDD smoke + 全量測試已通過 |
+| Engineering Lead | ibala | Ready for Sign-off | 2026-04-10 | CI/coverage gate=100%，可進入 UAT |
 
 ## 6. 備註
 - 本文件為「可簽核版本」，最終上線仍需完成人工 UAT 實際操作與正式簽名。
