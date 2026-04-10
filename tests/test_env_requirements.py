@@ -52,18 +52,21 @@ def test_tp_env_002_foreign_keys_on_and_health_check_pass():
     )
 
     conn = sqlite3.connect(":memory:")
-    conn.execute("PRAGMA foreign_keys = ON;")
+    try:
+        conn.execute("PRAGMA foreign_keys = ON;")
 
-    assert_sqlite_prerequisites(conn)
-    health = health_check(conn)
-    assert isinstance(health, dict), "[TP-ENV-002] health_check must return dict."
-    assert health.get("status") == "ok", (
-        "[TP-ENV-002] health_check status must be 'ok' when prerequisites pass."
-    )
-    checks = health.get("checks", {})
-    assert checks.get("foreign_keys") is True, (
-        "[TP-ENV-002] health_check must report foreign_keys=True."
-    )
+        assert_sqlite_prerequisites(conn)
+        health = health_check(conn)
+        assert isinstance(health, dict), "[TP-ENV-002] health_check must return dict."
+        assert health.get("status") == "ok", (
+            "[TP-ENV-002] health_check status must be 'ok' when prerequisites pass."
+        )
+        checks = health.get("checks", {})
+        assert checks.get("foreign_keys") is True, (
+            "[TP-ENV-002] health_check must report foreign_keys=True."
+        )
+    finally:
+        conn.close()
 
 
 def test_tp_env_003_line_runtime_config_validation_fail_fast():

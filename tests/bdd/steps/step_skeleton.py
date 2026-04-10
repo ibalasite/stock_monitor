@@ -1,8 +1,7 @@
-"""Step definition skeletons.
+"""Generic step definitions for feature parsing.
 
-These generic steps provide a minimal executable BDD glue layer.
-They intentionally do not encode business assertions yet; assertions are
-covered by contract/unit/integration tests in `tests/`.
+These steps make the feature file executable while detailed behavioral
+assertions are validated in contract/unit/integration tests under `tests/`.
 """
 
 from pytest_bdd import given, parsers, then, when

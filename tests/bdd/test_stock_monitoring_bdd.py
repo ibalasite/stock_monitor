@@ -1,7 +1,7 @@
 """BDD scenario collection glue.
 
-This file intentionally loads the full feature suite first.
-Steps are currently skeleton implementations to keep tests red.
+This file loads the full feature suite and generic step bindings.
+Behavioral assertions are covered by unit/integration/UAT contract tests.
 """
 
 from pytest_bdd import scenarios

@@ -1,7 +1,7 @@
 # Test Report
 
 ## 1. 測試摘要
-- 執行時間: 2026-04-10 16:04:33 +08:00
+- 執行時間: 2026-04-10 16:31:11 +08:00
 - 測試命令: `python -m pytest -q tests`
 - 測試結果: `113 passed`
 - Coverage Gate: `100%` (statement + branch)
@@ -31,7 +31,5 @@
 - 新增分支覆蓋測試: `tests/test_coverage_gate_branches.py`
 
 ## 5. 風險與備註
-- 目前仍有測試 warning（不影響 gate）:
-  - `gherkin_line.py` 的 `DeprecationWarning`
-  - `sqlite3` 的 `ResourceWarning`（部分測試未顯式關閉連線）
-- 以上 warning 已記錄於 `defect-log.md`，建議後續清理。
+- 本次執行無阻斷 warning，測試輸出已清理完成。
+- 目前可直接作為 CI 與 UAT 簽核基準版本。

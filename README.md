@@ -10,9 +10,13 @@
 4. `pytest-bdd` 已安裝，step definitions 已可執行（BDD 測試可完整跑完）。
 5. `stock_monitor` 主程式套件已建立並實作核心測試契約。
 6. 最新狀態：
-   - `pytest -q tests`：`107 passed`（含 BDD + unit/integration/UAT contract）
-7. 注意：
-   - 目前仍有 `PytestUnknownMarkWarning`（feature tags 未註冊），不影響測試正確性。
+   - `pytest -q tests`：`113 passed`（含 BDD + unit/integration/UAT contract）
+   - Coverage gate：`100%`（line + branch）
+   - CI：`.github/workflows/ci.yml` 已啟用（push / pull_request）
+7. 交付文件：
+   - `test-report.md`
+   - `defect-log.md`
+   - `uat-signoff.md`
 
 ## 2. 文件地圖（全部文件與用途）
 | 文件 | 用途 | 何時使用 |
@@ -60,19 +64,52 @@
 5. `tests/bdd/` 骨架已建立，scenario glue 已可載入整份 `.feature`。
 6. `tests/bdd` step definitions 已可執行，BDD 測試已全綠。
 7. `stock_monitor` 套件已建立，必要 symbol 與核心流程已落地。
-
-### 未完成
-1. CI/coverage gate 尚未配置。
-2. `test-report.md`、`defect-log.md`、`uat-signoff.md` 尚未產出。
-3. pytest marks 註冊（消除 `PytestUnknownMarkWarning`）尚未配置。
+8. `pytest.ini` 已完成 feature tags 註冊與 coverage gate 設定。
+9. CI workflow 已接上 GitHub Actions。
+10. 測試報告與簽核文件已產出。
+11. `.gitignore` 已補齊長期開發所需忽略規則。
 
 ## 6. 下一步要做什麼（建議執行順序）
-1. 加上 `pytest.ini` 註冊 feature tags（消除 unknown mark warning）。
-2. 設定 coverage gate（`lines/branches/functions/statements = 100%`）並納入 CI。
-3. 產出交付文件：`test-report.md`、`defect-log.md`、`uat-signoff.md`。
-4. 開始下一個功能增量時，維持流程：`PDD/EDD -> feature -> tests -> code`。
+1. 實作 production adapter（台股行情來源、LINE Messaging API、SQLite repository 真實實作）。
+2. 以 `.feature` 為驅動補上非 skeleton 的 BDD step 驗證邏輯（outside-in）。
+3. 新增 E2E smoke（含交易時段判斷、通知抑制、補償回補）。
+4. 完成 `uat-signoff.md` 的人工簽核欄位（PO/QA/Eng Lead）。
+5. 持續維持流程：`PDD/EDD -> feature -> tests -> code`。
 
-## 7. 常用命令
+## 7. 啟動流程（實際可操作）
+### 7.1 現在就可以跑（開發驗證模式）
+1. 進入專案目錄：
+```powershell
+cd C:\Projects\stock
+```
+2. 建立虛擬環境並啟用：
+```powershell
+python -m venv .venv
+.venv\Scripts\Activate.ps1
+```
+3. 安裝測試依賴：
+```powershell
+python -m pip install --upgrade pip
+pip install pytest pytest-bdd pytest-cov
+```
+4. 執行完整測試（等同 CI gate）：
+```powershell
+python -m pytest -q tests
+```
+5. 預期結果：
+   - `113 passed`
+   - coverage `100%`
+
+### 7.2 要跑「真實盤中監控」前必做
+目前程式已完成核心規則與測試契約，但尚未有 production entrypoint（daemon/scheduler）與真實外部 adapter。  
+你要先完成以下項目，才能長時間實際監控台股並送 LINE：
+1. 行情 adapter：接上公開台股即時資料來源（含 timeout/retry/stale/conflict 規則）。
+2. LINE adapter：接上 Messaging API，完成群組推送。
+3. SQLite repository adapter：把 message / pending ledger / snapshots 的真實寫入整合到排程流程。
+4. 啟動入口：提供可執行指令（例如 `python -m stock_monitor.app`）與每分鐘排程 loop。
+5. `.env` 設定：依 `.env.example` 填入實際 token 與群組 ID。
+
+## 8. 常用命令
 ```powershell
 # 跑全部測試
 & 'C:\Users\ibala\AppData\Local\Programs\Python\Python313\python.exe' -m pytest -q tests
@@ -87,7 +124,7 @@
 & 'C:\Users\ibala\AppData\Local\Programs\Python\Python313\python.exe' -m pytest -q tests/test_policy_rules.py
 ```
 
-## 8. 文件維護規則
+## 9. 文件維護規則
 1. 規格有變更時，必須同步更新：`PDD/EDD/feature/TEST_PLAN/CODEX/CLAUDE/README`。
 2. 任何新功能都要有對應：
    - 至少一個 User Story
