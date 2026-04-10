@@ -1,19 +1,19 @@
 # Stock Monitoring System - README
 
-更新日期：2026-04-10  
+更新日期：2026-04-11  
 專案目標：台股價格監控 + LINE 群組通知 + 每日估值 + SQLite 落盤 + 補償機制
 
 ## 1. 專案現況摘要
 1. 規格文件已完成並完成主要一致性對齊（PDD/EDD/User Story/Test Plan/Feature）。
 2. BDD 規格檔已完成：`features/stock_monitoring_system.feature`。
-3. 目前已接上 `pytest-bdd` 的 `.feature` 執行層（`tests/bdd/` 骨架）。
-4. `pytest-bdd` 已安裝，step definitions 已可執行（BDD 測試可完整跑完）。
+3. 目前已接上 `pytest-bdd` 的 `.feature` 執行層（`tests/bdd/` 骨架；`stock_monitoring_system.feature` 為 skeleton glue）。
+4. `pytest-bdd` 已安裝，並已有具體行為斷言的 smoke BDD（`stock_monitoring_smoke.feature`）可執行。
 5. `stock_monitor` 主程式套件已建立並實作核心測試契約。
 6. 最新狀態：
-   - `pytest -q tests`：`133 passed`（含 BDD smoke + unit/integration/UAT contract）
+   - `pytest -q tests`：最近一次基線（2026-04-11）為 `136 passed`（含 BDD smoke + unit/integration/UAT contract）
    - Coverage gate：`100%`（line + branch）
    - CI：`.github/workflows/ci.yml` 已啟用（push / pull_request），且已採用 action SHA pin + 鎖版依賴 + `pip-audit`
-   - 可執行入口：`python -m stock_monitor init-db|run-once|reconcile-once`
+   - 可執行入口：`python -m stock_monitor init-db|run-once|reconcile-once|valuation-once`
 7. 交付文件：
    - `test-report.md`
    - `defect-log.md`
@@ -63,7 +63,9 @@
 3. BDD `.feature` 與 `TEST_PLAN` TP-ID 已對齊。
 4. 內層 pytest 契約測試檔已建立（可作為 TDD 基線）。
 5. `tests/bdd/` 骨架已建立，scenario glue 已可載入整份 `.feature`。
-6. `tests/bdd` step definitions 已可執行，BDD 測試已全綠。
+6. `tests/bdd` step definitions 已可執行：
+   - `stock_monitoring_system.feature`：skeleton/glue 驗證（確保規格可執行）
+   - `stock_monitoring_smoke.feature`：具體 runtime 行為斷言
 7. `stock_monitor` 套件已建立，必要 symbol 與核心流程已落地。
 8. `pytest.ini` 已完成 feature tags 註冊與 coverage gate 設定。
 9. CI workflow 已接上 GitHub Actions。
@@ -105,13 +107,31 @@ python -m pip install --require-hashes -r requirements-dev.txt
 ```powershell
 python -m pytest -q tests
 ```
-5. 預期結果：
-   - `133 passed`
+5. 最近一次基線結果（2026-04-11）：
+   - `136 passed`
    - coverage `100%`
+   - 實際請以你當次執行輸出為準
 
 ### 7.2 要跑「真實盤中監控」前必做
 目前已可執行單次流程（`run-once` / `reconcile-once`），但尚未 daemon 化。  
-先完成 `.env` 後，可直接用以下命令執行：
+本專案建議直接讀取系統環境變數，不把 token 寫入 `.env`。先設定環境變數，再執行：
+```powershell
+# 當前 shell 生效（關閉視窗後失效）
+$env:LINE_CHANNEL_ACCESS_TOKEN = "你的 LINE Channel Access Token"
+$env:LINE_TO_GROUP_ID = "你的目標群組 ID（例如 Cxxxxxxxxxx）"
+
+# 驗證變數有讀到
+echo $env:LINE_CHANNEL_ACCESS_TOKEN
+echo $env:LINE_TO_GROUP_ID
+```
+
+若要長期保存（新開 shell 才生效）：
+```powershell
+setx LINE_CHANNEL_ACCESS_TOKEN "你的 LINE Channel Access Token"
+setx LINE_TO_GROUP_ID "你的目標群組 ID（例如 Cxxxxxxxxxx）"
+```
+
+設定完成後可直接用以下命令執行：
 ```powershell
 # 1) 初始化資料庫
 python -m stock_monitor --db-path data/stock_monitor.db init-db
@@ -119,37 +139,171 @@ python -m stock_monitor --db-path data/stock_monitor.db init-db
 # 2) 單次盤中監控（會做交易時段判斷、冷卻、推播、落盤）
 python -m stock_monitor --db-path data/stock_monitor.db run-once
 
-# 3) 單次補償回補
+# 3) 單次補償回補（僅回補 DB，不會重送 LINE）
 python -m stock_monitor --db-path data/stock_monitor.db reconcile-once
+
+# 4) 單次估值任務（交易日 14:00 執行，非交易日/非 14:00 會 skip）
+python -m stock_monitor --db-path data/stock_monitor.db valuation-once
 ```
 
-建議先準備 `.env`：
+`.env.example` 僅保留為欄位範本，不作為正式 secrets 載入來源。
+
+### 7.2.1 建立 watchlist（必要，不然 `run-once` 會 `empty_watchlist`）
+先把要監控的股票與手動門檻寫入 SQLite（以下示範你的三檔）：
 ```powershell
-Copy-Item .env.example .env
+@'
+from stock_monitor.adapters.sqlite_repo import connect_sqlite, apply_schema, SqliteWatchlistRepository
+
+conn = connect_sqlite("data/stock_monitor.db")
+apply_schema(conn)
+repo = SqliteWatchlistRepository(conn)
+repo.upsert_manual_threshold("2330", fair=2000, cheap=1500, enabled=1)
+repo.upsert_manual_threshold("2348", fair=72, cheap=68, enabled=1)
+repo.upsert_manual_threshold("3293", fair=700, cheap=680, enabled=1)
+conn.close()
+print("watchlist seeded")
+'@ | python -
 ```
-並至少設定：
-1. `LINE_CHANNEL_ACCESS_TOKEN`
-2. `LINE_TO_GROUP_ID`
+驗證 watchlist 是否已寫入：
+```powershell
+@'
+import sqlite3
+conn = sqlite3.connect("data/stock_monitor.db")
+rows = conn.execute("SELECT stock_no, manual_fair_price, manual_cheap_price, enabled FROM watchlist ORDER BY stock_no").fetchall()
+conn.close()
+print(rows)
+'@ | python -
+```
+
+### 7.2.2 TWSE 憑證驗證問題（Python 可處理，不需關閉 SSL 驗證）
+如果你在瀏覽器看得到 TWSE，但 Python 出現憑證錯誤（例如 `SSLCertVerificationError`），通常是 Python trust store 與作業系統憑證鏈不同步造成。  
+本專案已在程式內使用 `truststore`（走作業系統信任憑證），不需要用 `verify=False`。
+
+1. 重新安裝專案鎖版依賴（含 `truststore`）：
+```powershell
+python -m pip install --upgrade pip
+python -m pip install --require-hashes -r requirements-dev.txt
+```
+2. 驗證可抓到台股即時價：
+```powershell
+@'
+from stock_monitor.adapters.market_data_twse import TwseRealtimeMarketDataProvider
+p = TwseRealtimeMarketDataProvider(timeout_sec=10)
+print(p.get_realtime_quotes(["2330"]).get("2330"))
+'@ | python -
+```
+3. 預期輸出包含 `stock_no='2330'`、`price`、`tick_at`。若有輸出代表憑證問題已排除。
+
+### 7.3 LINE Bot token / group id 申請與設定（Step by Step）
+先說明（避免誤會）：  
+LINE Messaging API 不能直接綁一般 LINE 個人帳號發送 API 訊息，仍需要一個 LINE Official Account（OA）對應的 Messaging API channel。  
+你是個人開發者也可以建立 OA，不需要公司身分。
+
+#### 7.3.1 你會用到的網站
+1. LINE 台灣官方帳號申請入口（免費開設帳號）：`https://tw.linebiz.com/account/`
+2. LINE 台灣管理頁入口（會導到 OA Manager）：`https://tw.linebiz.com/login/`
+3. LINE Official Account Manager（管理 OA）：`https://manager.line.biz/`
+4. LINE Developers Console（管理 channel/token/webhook）：`https://developers.line.biz/console/`
+5. Webhook 測試接收頁（先拿 group id 用）：`https://webhook.site/`
+
+#### 7.3.2 申請與開通流程（點擊路徑）
+1. 建立 OA（個人身分可）  
+開 `https://tw.linebiz.com/account/`，點「免費開設帳號」，依頁面指示用 LINE 帳號或 email 建立/登入 Business ID，完成 OA 建立。
+2. 在 OA Manager 啟用 Messaging API  
+開 `https://tw.linebiz.com/login/`（或直接 `https://manager.line.biz/`）登入 OA 後台，選你的 OA，進 Messaging API 相關設定，點「啟用 Messaging API」。
+3. 選 Provider（第一次會要求）  
+啟用時會導向 Developers 相關設定，建立或選擇 provider。這個 provider 後續不可任意更換，建議用你個人專用 provider。
+4. 進 Developers Console 確認 channel  
+開 `https://developers.line.biz/console/`，選 provider，確認有一個 Messaging API channel。
+5. 發行 token  
+在該 channel 的 `Messaging API` 頁籤發行 Channel Access Token。建議用短期或 v2.1 類型，不建議長效 token。
+6. 暫時設定 Webhook URL 來抓 group id（如果你從沒設定過，就從這步開始）  
+`groupId` 只會出現在 webhook 事件內容裡，LINE 後台不會直接顯示，所以要先找一個接收 webhook 的地方。  
+這裡用 `https://webhook.site/` 只是「臨時接收測試事件」，不是你的正式系統。  
+操作：
+1) 開 `https://webhook.site/`，頁面會自動產生一條專屬 URL（例如 `https://webhook.site/xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx`）  
+2) 複製這條 URL  
+3) 開 `https://developers.line.biz/console/` -> 你的 channel -> `Messaging API`  
+4) 在 `Webhook URL` 貼上剛剛的 URL  
+5) 按 `Verify`，看到成功後把 `Use webhook` 切成啟用
+7. 開啟群組加入權限（在 Developers Console）  
+開 `https://developers.line.biz/console/` -> 選你的 channel -> `Messaging API` 頁籤 -> 找到 `Allow bot to join group chats` -> 切到 `Enabled`。
+8. 建立你的私人通知群組（在 LINE 手機 App）  
+LINE App -> `聊天` -> 右上角「新增聊天」-> `建立群組` -> 先勾選你自己 + (必要時)一個測試帳號 -> 建立群組後，於群組成員管理把你的 OA 邀請進來。
+9. 觸發 webhook 取得 `groupId`（在 webhook.site 看事件）  
+回到你剛建立且 Bot 已加入的群組，發一則訊息（例如 `group id test`）。  
+再回 `webhook.site` 同一頁：
+1) 左側會出現最新一筆請求（通常是 POST）  
+2) 點那筆請求  
+3) 在右側/下方看 `Request Body`（JSON 內容）  
+4) 找 `events[0].source.groupId`
+範例如下：
+```json
+{
+  "events": [
+    {
+      "source": {
+        "type": "group",
+        "groupId": "Cxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
+      }
+    }
+  ]
+}
+```
+複製 `source.groupId`（`C...`）就是你要填的 `LINE_TO_GROUP_ID`。
+10. 抓到 `groupId` 後立刻移除臨時 webhook（回 Developers Console）  
+`Messaging API` 頁籤 -> `Webhook URL` 改掉 `webhook.site`（改正式網址）或先把 `Use webhook` 關閉（若暫時不收 webhook 事件）。
+11. 把 secrets 放環境變數（不寫 `.env`，在 Windows PowerShell）  
+在 PowerShell 設定：
+```powershell
+setx LINE_CHANNEL_ACCESS_TOKEN "你的token"
+setx LINE_TO_GROUP_ID "Cxxxxxxxxxx"
+```
+關閉並重開終端後生效。
+12. 本機驗證（在專案目錄）  
+```powershell
+python -m stock_monitor --db-path data/stock_monitor.db init-db
+python -m stock_monitor --db-path data/stock_monitor.db run-once
+```
+若群組收到訊息代表串接成功。若沒收到，先回 Developers Console 檢查 token 是否過期、`LINE_TO_GROUP_ID` 是否為同一個群組的 `C...`。
+
+若你完全不想建立 OA：  
+本專案現行 LINE 推播路徑將無法使用（拿不到可用的 channel token / group id）。  
+可選擇改用其他通知通道（例如 Telegram Bot、Discord Webhook），或後續加一層通知 adapter。
+
+官方文件（建議對照）：
+1. Messaging API 開始使用與建立 channel：https://developers.line.biz/en/docs/messaging-api/getting-started/
+2. Build a bot（token / webhook URL / verify / use webhook）：https://developers.line.biz/en/docs/messaging-api/building-bot/
+3. 群組聊天與 `groupId`：https://developers.line.biz/en/docs/messaging-api/group-chats
+4. Webhook URL 驗證：https://developers.line.biz/en/docs/messaging-api/verify-webhook-url/
+5. Webhook 簽章驗證：https://developers.line.biz/en/docs/messaging-api/verify-webhook-signature/
+6. 開發安全建議（token 生命週期）：https://developers.line.biz/en/docs/partner-docs/development-guidelines/
 
 ## 8. 常用命令
 ```powershell
 # 跑全部測試
-& 'C:\Users\ibala\AppData\Local\Programs\Python\Python313\python.exe' -m pytest -q tests
+python -m pytest -q tests
 
 # 安裝鎖版測試依賴（含 hashes）
-& 'C:\Users\ibala\AppData\Local\Programs\Python\Python313\python.exe' -m pip install --require-hashes -r requirements-dev.txt
+python -m pip install --require-hashes -r requirements-dev.txt
 
 # 供應鏈弱點掃描（與 CI 相同）
-& 'C:\Users\ibala\AppData\Local\Programs\Python\Python313\python.exe' -m pip_audit --progress-spinner=off --requirement requirements-dev.txt
+python -m pip_audit --progress-spinner=off --requirement requirements-dev.txt
 
 # 重新產生鎖版依賴（更新 requirements-dev.txt）
-& 'C:\Users\ibala\AppData\Local\Programs\Python\Python313\python.exe' -m piptools compile --generate-hashes --output-file requirements-dev.txt requirements-dev.in
+python -m piptools compile --generate-hashes --output-file requirements-dev.txt requirements-dev.in
 
-# 只跑 BDD 測試（建立後）
-& 'C:\Users\ibala\AppData\Local\Programs\Python\Python313\python.exe' -m pytest -q tests/bdd
+# 只跑 BDD 測試
+python -m pytest -q tests/bdd --no-cov
 
 # 跑單一測試模組
-& 'C:\Users\ibala\AppData\Local\Programs\Python\Python313\python.exe' -m pytest -q tests/test_policy_rules.py
+python -m pytest -q tests/test_policy_rules.py
+
+# 只測 LINE 通道（不送出）
+python scripts/test_line_push.py --dry-run
+
+# 只測 LINE 通道（實際送一則訊息）
+python scripts/test_line_push.py --message "LINE 通道測試"
 ```
 
 ## 9. 文件維護規則

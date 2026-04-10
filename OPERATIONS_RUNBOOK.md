@@ -1,26 +1,30 @@
 # OPERATIONS_RUNBOOK - Stock Monitoring System
 
-版本：v0.1  
-日期：2026-04-10  
+版本：v0.2  
+日期：2026-04-11  
 來源基準：`PDD_Stock_Monitoring_System.md`、`EDD_Stock_Monitoring_System.md`
 
 ## 1. 文件目的
 定義上線、日常巡檢、故障排查與補償操作流程，確保系統行為與規格一致。
 
 ## 2. 啟動前檢查清單
-1. `.env` 必填：
-   - `LINE_CHANNEL_ACCESS_TOKEN`、`LINE_TO_GROUP_ID`（或 alias）
-   - `DB_PATH`
+1. 以系統環境變數啟動（不強制 `.env`）：
+   - `LINE_CHANNEL_ACCESS_TOKEN`、`LINE_TO_GROUP_ID`（或 alias: `CHANNEL_ACCESS_TOKEN`、`TARGET_GROUP_ID`）
+   - `APP_TIMEZONE=Asia/Taipei`（未設定時預設 `Asia/Taipei`）
    - `MAX_RETRY_COUNT=3`
    - `STALE_THRESHOLD_SEC=90`
-2. SQLite 檢查：
+   - `COOLDOWN_SEC=300`
+2. 啟動命令需帶 DB 路徑（或採預設 `data/stock_monitor.db`）：
+   - `python -m stock_monitor --db-path data/stock_monitor.db init-db`
+   - `python -m stock_monitor --db-path data/stock_monitor.db run-once`
+3. 監控清單：
+   - `watchlist` 至少需有 1 檔 `enabled=1`，否則 `run-once` 會 `empty_watchlist` 而跳過
+4. SQLite 檢查：
    - `PRAGMA foreign_keys=ON`
    - JSON1 可用（`SELECT json_valid('[]')`）
-3. 檔案路徑：
+5. 檔案路徑：
    - DB 目錄可寫
    - `logs/` 可寫
-4. 時區：
-   - `APP_TZ=Asia/Taipei`
 
 ## 3. 日常排程預期
 1. 每 60 秒執行盤中輪詢。
@@ -39,7 +43,7 @@
 ### 5.1 啟動 fail-fast（設定錯誤）
 1. 症狀：啟動即退出，錯誤指向 LINE 參數。
 2. 處置：
-   - 修正 `.env` 的 canonical 或 alias 參數。
+   - 修正系統環境變數（canonical 或 alias 參數）。
    - 重新啟動並確認 health check 為 `ok`。
 
 ### 5.2 行情 timeout / provider 不可用
