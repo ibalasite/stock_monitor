@@ -1,0 +1,196 @@
+# TEST_PLAN - Stock Monitor System
+
+版本：v0.4  
+日期：2026-04-10  
+依據文件：[EDD_Stock_Monitoring_System.md](c:/Projects/stock/EDD_Stock_Monitoring_System.md), [PDD_Stock_Monitoring_System.md](c:/Projects/stock/PDD_Stock_Monitoring_System.md), [USER_STORY_ACCEPTANCE_CRITERIA.md](c:/Projects/stock/USER_STORY_ACCEPTANCE_CRITERIA.md)
+
+## 1. 測試目標
+1. 驗證系統符合 EDD 的業務規則與資料一致性要求。  
+2. 驗證通知、冷卻、補償機制在失敗情境下不重複通知。  
+3. 驗證每日 14:00 估值流程與方法版本規則可正確落地。  
+4. 驗證交易時段邊界（08:45/09:00）、時間桶一致性與 KPI 計算。  
+5. 以 TDD 流程實作（先測試再主程式），並達成 coverage gate 100%。  
+
+## 2. 測試範圍
+### In Scope
+1. Schema 與 migration（含 constraint/index/partial unique index）。  
+2. Domain policy（`PriorityPolicy`, `CooldownPolicy`, `SignalPolicy`）。  
+3. 盤中每分鐘流程與單一彙總訊息。  
+4. LINE 發送成功/失敗路徑。  
+5. `pending_delivery_ledger` 補償流程。  
+6. 交易日判斷與開盤資料判斷（含 08:45/09:00 邊界）。  
+7. 每日 14:00 估值計算與快照寫入。  
+8. `TimeBucketService` 單一入口規則。  
+9. 通知延遲與準確率 KPI。  
+
+### Out of Scope
+1. 自動下單。  
+2. 多節點分散式部署。  
+3. 非台股市場整合。  
+
+## 3. 測試環境
+1. OS：Windows（與目前開發環境一致）。  
+2. DB：SQLite（需 JSON1，`PRAGMA foreign_keys=ON`）。  
+3. Timezone：`Asia/Taipei`。  
+4. LINE：測試 channel token + 測試群組。  
+5. Market data：Mock provider + 一組公開來源 smoke test。  
+
+## 4. 進出場條件
+### Entry Criteria
+1. migration 可完整執行。  
+2. `.env` 已設定必要參數。  
+3. Mock LINE 與 Mock MarketData 可用。  
+4. 測試框架已啟用 coverage 報告（line/branch/function/statements）。  
+
+### Exit Criteria
+1. Critical/High 缺陷為 0。  
+2. PDD UAT 11 條全數通過。  
+3. 補償流程與冷卻流程測試全數通過。  
+4. Coverage 四項指標皆為 100%。  
+
+## 5. 測試資料
+1. 股票：`2330`, `2317`。  
+2. 手動門檻：`2330 fair=1500, cheap=1000`; `2317 fair=145, cheap=130`。  
+3. 估值方法：`manual_rule:v1`, `pe_band:v1`, `pb_band:v2`。  
+4. 時間桶：`YYYY-MM-DD HH:mm`（Asia/Taipei）。  
+5. 行情來源最大重試次數：`MAX_RETRY_COUNT=3`。  
+6. 報價新鮮度門檻：`STALE_THRESHOLD_SEC=90`。  
+
+## 6. 測試矩陣（需求追蹤）
+| 測試ID | 需求對應 | 類型 | 驗收重點 |
+|---|---|---|---|
+| TP-DB-001 | EDD §6.1 | Migration | `watchlist` 約束與欄位型別正確 |
+| TP-DB-002 | EDD §6.2 | Migration | `ux_method_single_enabled` 生效 |
+| TP-DB-003 | EDD §6.4 | Migration | `message` unique/format/json 約束生效 |
+| TP-DB-004 | EDD §6.5 | Migration | `pending_delivery_ledger` 可正常寫讀 |
+| TP-DB-005 | EDD §6.3 | Migration | `valuation_snapshots` 唯一鍵需含 `method_version` |
+| TP-ENV-001 | EDD §8.1 | Integration | JSON1 不可用時服務 fail-fast |
+| TP-ENV-002 | EDD §8.1 | Integration | `PRAGMA foreign_keys=ON` 與 health check 驗證 |
+| TP-ENV-003 | PDD §7 FR-09 / EDD §7.1 | Integration | LINE 設定鍵値驗證與錯誤訊息（規範名 `LINE_*`、別名 `CHANNEL_*/TARGET_*`、無效値三組 Examples） |
+| TP-POL-001 | EDD §2.2 | Unit | 同時命中 1/2 只保留 2 |
+| TP-POL-002 | EDD §2.4 | Unit | 5 分鐘冷卻判斷正確 |
+| TP-POL-003 | EDD §7.4 | Unit | `last_sent_at IS NULL` 可發送 |
+| TP-POL-004 | EDD §2.4 / §7.3 | Unit | 同分鐘冪等鍵僅由 `stock_no+minute_bucket` 組成 |
+| TP-POL-005 | EDD §2.3 | Unit | 同股票同分鐘多方法皆 status 1，只產生一個股票層級訊號（methods_hit 含全部） |
+| TP-POL-006a | EDD §2.4 | Unit | 最近 status 1 發送後 60s，status 2 冷卻鍵不同应可發 |
+| TP-POL-006b | EDD §2.4 | Unit | 最近 status 1 發送後 60s，同 status 1 不同方法仍應被擋 |
+| TP-INT-001 | EDD §4.1 | Integration | 同分鐘多股票只發 1 封 LINE |
+| TP-INT-002 | EDD §7.3 | Integration | 同分鐘 `status=1 -> status=2` 升級成功 |
+| TP-INT-003 | EDD §7.3 | Integration | 同狀態但內容差異可更新 |
+| TP-INT-004 | EDD §7.3 | Integration | LINE 失敗不寫 `message` |
+| TP-INT-005 | EDD §7.5 | Integration | LINE 成功 + DB 失敗 -> 建立補償紀錄 |
+| TP-INT-006 | EDD §7.5 | Integration | 補償回補成功後 `RECONCILED` 且不重複通知 |
+| TP-INT-007 | EDD §5.2 / PDD §7 FR-02 | Integration | 大盤資料逾時 -> 該分鐘跳過通知、寫 WARN、且不得補發 |
+| TP-INT-008 | EDD §7.5 | Integration | DB 不可寫時 fallback `pending_delivery.jsonl` 成功 |
+| TP-INT-009 | EDD §7.3 | Integration | message 批次失敗需整批 rollback（0 筆） |
+| TP-INT-010 | PDD §7 FR-02 | Integration | 行情來源短暫失敗在重試上限內成功可繼續該分鐘流程 |
+| TP-INT-011 | PDD §7 FR-02 | Integration | 行情來源重試耗盡仍失敗時跳過且不得補發 |
+| TP-TRD-001 | EDD §5.2 | Integration | 08:45 後有大盤新資料 -> 可交易 |
+| TP-TRD-002 | EDD §5.2 | Integration | 09:00 後無大盤新資料 -> 不開市 |
+| TP-TRD-003 | EDD §8 / UAT-4 | Integration | 13:30 後（TRADING_END）应判定為非交易時段，輪詢應跳過 |
+| TP-BKT-001 | EDD §7.3 | Unit | `TimeBucketService` 為 minute_bucket 唯一來源 |
+| TP-KPI-001 | PDD §3.2 | Unit | 準確率分母需排除資料源中斷分鐘 |
+| TP-VAL-001 | EDD §4.2 | Integration | 14:00 交易日執行估值 |
+| TP-VAL-002 | EDD §4.2 | Integration | 非交易日不執行估值 |
+| TP-VAL-003 | EDD §6.3 | Integration | 估值失敗不覆蓋舊快照 |
+| TP-UAT-001 | PDD §12 UAT-1 | UAT | 手動門檻觸發 60 秒內通知 |
+| TP-UAT-002 | PDD §12 UAT-2 | UAT | 5 分鐘冷卻不重複推播 |
+| TP-UAT-003 | PDD §12 UAT-3 | UAT | message 核心欄位可查 |
+| TP-UAT-004 | PDD §12 UAT-4 | UAT | 非交易時段跳過盤中輪詢 |
+| TP-UAT-005 | PDD §12 UAT-5 | UAT | 14:00 估值執行且失敗不覆蓋 |
+| TP-UAT-006 | PDD §12 UAT-6 | UAT | 同分鐘多股票多方法只發一封 |
+| TP-UAT-007 | PDD §12 UAT-7 | UAT | 同分鐘 1/2 同時命中僅通知 2 |
+| TP-UAT-008 | PDD §12 UAT-8 | UAT | LINE 成功 DB 失敗可補償且不重複 |
+| TP-UAT-009 | PDD §12 UAT-9 | UAT | LINE 必填參數錯誤 fail-fast |
+| TP-UAT-010 | PDD §12 UAT-10 | UAT | 重啟後不得重複通知同分鐘事件 |
+| TP-UAT-011 | PDD §12 UAT-11 | UAT | stale/conflict 分鐘不得通知且有 WARN |
+
+## 7. 詳細測試案例
+| 測試ID | 前置條件 | 步驟 | 預期結果 |
+|---|---|---|---|
+| TP-DB-001 | DB 空庫 | 建立 `watchlist` 並寫入有效/無效資料 | 有效資料成功；無效（如 `cheap > fair`）失敗 |
+| TP-DB-002 | DB 空庫 | 建立 `valuation_methods` 並插入同 `method_name` 兩筆 `enabled=1` | 第二筆失敗（unique constraint） |
+| TP-DB-003 | DB 空庫 | 插入無效 `minute_bucket` 或無效 JSON | 寫入失敗（CHECK constraint） |
+| TP-DB-004 | DB 空庫 | 寫入 `pending_delivery_ledger` 並查詢狀態索引 | 成功寫讀，索引查詢可用 |
+| TP-DB-005 | DB 空庫 | 同 `stock_no+trade_date+method_name` 下，分別插入 `v1`、`v2`，再重複插入 `v1` | `v1`/`v2` 可共存，重複 `v1` 失敗（unique constraint） |
+| TP-ENV-001 | 關閉/移除 JSON1 支援 | 啟動服務 | 啟動失敗且輸出明確 fail-fast 錯誤 |
+| TP-ENV-002 | DB 啟動後 | 查 `PRAGMA foreign_keys;` 並打 health check | 回傳 `ON`，健康檢查通過 |
+| TP-ENV-003 | 缺少/錯誤 LINE token/groupId | 以 `LINE_*` 或 `CHANNEL_*/TARGET_*` 任一命名啟動服務 | 缺少必要值時 fail-fast，錯誤訊息明確且不洩漏 token |
+| TP-POL-001 | 準備同一股票同分鐘兩訊號 | 先餵 `status=1` 再餵 `status=2` | 輸出僅保留 `status=2` |
+| TP-POL-002 | 建立既有 `update_time` | 分別測 `299s` 與 `301s` 間隔 | 299s 不發，301s 可發 |
+| TP-POL-003 | 無歷史通知紀錄 | 執行冷卻判斷 | 視為可發送 |
+| TP-POL-004 | 同股票同分鐘先後命中 `status=1/2` | 分別產生兩次同分鐘冪等鍵 | 兩次鍵值相同，且不含 `stock_status` |
+| TP-INT-001 | Mock LINE、兩檔股票命中 | 執行一次 1 分鐘輪詢 | LINE 僅被呼叫一次，內容含兩檔 |
+| TP-INT-002 | 先已有同分鐘 `status=1` 記錄 | 同分鐘觸發 `status=2` | `message` 升級為 `status=2` |
+| TP-INT-003 | 已有同分鐘同狀態紀錄 | 同分鐘更新 `methods_hit/message` | 記錄內容更新為最終聚合結果 |
+| TP-INT-004 | Mock LINE 回 500 | 執行輪詢 | `message` 不新增，`system_logs` 新增 ERROR |
+| TP-INT-005 | Mock LINE 成功、Mock DB transaction fail | 執行輪詢 | `pending_delivery_ledger` 或 jsonl 有 PENDING（@UAT-008） |
+| TP-INT-006 | 已存在 PENDING | 執行補償 worker | `message` 成功回補，ledger 轉 `RECONCILED`；再次執行不重送（證據同 TP-INT-005） |
+| TP-INT-007 | Mock 大盤資料 timeout | 執行輪詢 | 不發 LINE，記錄 WARN，且該分鐘不得補發 |
+| TP-INT-008 | Mock DB 寫入不可用 | 執行輪詢 | 建立 `pending_delivery.jsonl` 待補償項 |
+| TP-INT-009 | 同分鐘兩筆 message 待寫 | 模擬第二筆寫入失敗 | transaction rollback，該分鐘 `message=0` 筆 |
+| TP-INT-010 | Mock 行情來源首輪失敗次輪成功（重試上限=3） | 執行輪詢 | 該分鐘流程可繼續，且 logs 有 retry 記錄 |
+| TP-INT-011 | Mock 行情來源重試耗盡仍失敗（超過3次） | 執行輪詢 | 該分鐘跳過、不通知、不寫 message、不得補發 |
+| TP-TRD-001 | 時間 08:45 後 | 大盤有當日新資料 | 判定可交易 |
+| TP-TRD-002 | 時間 09:00 後 | 大盤無當日新資料 | 判定不開市且該分鐘跳過通知 |
+| TP-TRD-003 | 時間 13:31 | 輪詢觸發 | 判定非交易時段，直接跳過輪詢 |
+| TP-POL-005 | 同股票同分鐘 3 個方法皆 status 1 | 進行股票層級聯合 | 只產生 1 個股票事件，methods_hit 包含全部方法 |
+| TP-POL-006a | 2330+1 已在 60s 前發送 | 對 2330+2 執行冷卻判斷 | 冷卻鍵不同，應可發送 |
+| TP-POL-006b | 2330+1 已在 60s 前發送 | 對另一方法產生的 2330+1 執行冷卻判斷 | 相同key（status相同），應被擋且不更新 update_time |
+| TP-BKT-001 | 有系統時間輸入 | 產生 `minute_bucket` | 僅允許 `TimeBucketService` 產生，格式固定 |
+| TP-KPI-001 | 準確率統計窗口資料 | 計算準確率 | 分母排除資料源中斷分鐘後再計算 |
+| TP-VAL-001 | 交易日 14:00 | 觸發日結 job | 產生各方法估值快照 |
+| TP-VAL-002 | 非交易日 14:00 | 觸發日結 job | 不執行估值，僅記錄 skip/info |
+| TP-VAL-003 | 既有昨日估值 | 模擬今日計算失敗 | 不覆蓋昨日快照，記錄錯誤 |
+| TP-UAT-001 | 系統可運行 | 依 PDD UAT-1 執行並記錄證據 | 通過且具通知時間證據 |
+| TP-UAT-002 | 系統可運行 | 依 PDD UAT-2 執行並記錄證據 | 通過且具冷卻抑制證據 |
+| TP-UAT-003 | 系統可運行 | 依 PDD UAT-3 執行並記錄證據 | 通過且具資料查詢證據 |
+| TP-UAT-004 | 系統可運行 | 依 PDD UAT-4 執行（含週末/假日/無大盤/13:30後）並記錄證據 | 通過且具時段跳過證據 |
+| TP-UAT-005 | 系統可運行 | 依 PDD UAT-5 執行並記錄證據 | 通過且具估值執行證據 |
+| TP-UAT-006 | 系統可運行 | 依 PDD UAT-6 執行並記錄證據 | 通過且具單封彙總證據 |
+| TP-UAT-007 | 系統可運行 | 依 PDD UAT-7 執行並記錄證據 | 通過且具狀態優先證據 |
+| TP-UAT-008 | 系統可運行 | 依 PDD UAT-8 執行並記錄證據 | 通過且具補償與不重複證據 |
+| TP-UAT-009 | 系統可運行 | 依 PDD UAT-9 執行並記錄證據 | 通過且具 fail-fast 錯誤證據 |
+| TP-UAT-010 | 系統可運行 | 依 PDD UAT-10 執行並記錄證據 | 通過且具重啟去重證據 |
+| TP-UAT-011 | 系統可運行 | 依 PDD UAT-11 執行並記錄證據 | 通過且具 WARN 證據，且該分鐘無補發 |
+
+## 8. 失敗模式測試
+1. LINE 成功、DB 失敗（最關鍵）。  
+2. DB 批次寫入半途失敗 rollback（不得部分成功）。  
+3. 補償回補失敗重試遞增。  
+4. 大盤資料源 timeout/stale/data conflict。  
+5. JSON1 不可用啟動 fail-fast。  
+6. 服務重啟後重複通知風險。  
+7. 行情來源重試耗盡仍失敗時，必須跳過該分鐘且不得補發。  
+8. timeout/stale/data conflict 被跳過分鐘，不得補發過期訊號。  
+
+## 9. 測試執行順序
+1. Schema/Migration + Environment 測試（TP-DB-* + TP-ENV-*）。  
+2. Unit 測試（TP-POL-* + TP-BKT-* + TP-KPI-*）。  
+3. Integration 測試（TP-INT-* + TP-TRD-* + TP-VAL-*）。  
+4. UAT（TP-UAT-*）。  
+5. Coverage gate（100%）檢查。  
+
+## 10. TDD 實作策略（必遵守）
+1. Red：先寫測試案例，確認 fail。  
+2. Green：只寫最少主程式讓該案例通過。  
+3. Refactor：重構並保持測試綠燈。  
+4. 每完成一組案例即提交（小步提交）。  
+5. 禁止先寫主流程再補測試。  
+
+## 11. Coverage Gate（100%）
+1. 指標：`lines=100%`, `branches=100%`, `functions=100%`, `statements=100%`。  
+2. 低於門檻直接 fail（本機與 CI 同規則）。  
+3. 覆蓋率排除需明確列名單並附理由（預設不排除）。  
+4. 每次修 bug 必須先新增重現測試，再修程式。  
+
+## 12. 缺陷分級
+1. Critical：重複通知、漏通知、資料破壞。  
+2. High：補償失效、冷卻失效、方法版本約束失效。  
+3. Medium：訊息內容不完整、日志缺漏。  
+4. Low：格式/文案問題。  
+
+## 13. 產出物
+1. `test-report.md`（總結與通過率）。  
+2. `defect-log.md`（缺陷列表與修復狀態）。  
+3. `uat-signoff.md`（UAT 11 條簽核）。  
