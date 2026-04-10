@@ -7,6 +7,10 @@ import socket
 from dataclasses import dataclass
 from urllib import error, parse, request
 
+import truststore
+
+truststore.inject_into_ssl()
+
 
 def _to_float(value: str | None) -> float | None:
     if value is None:
@@ -95,4 +99,3 @@ class TwseRealtimeMarketDataProvider:
                 "name": str(row.get("n") or ""),
             }
         return quotes
-

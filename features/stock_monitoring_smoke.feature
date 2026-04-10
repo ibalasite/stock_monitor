@@ -32,5 +32,4 @@ Feature: Stock Monitoring Runtime Smoke
     Then reconcile count should be 1
     When I execute reconcile cycle
     Then reconcile count should be 0
-    And line push count should be 1
-
+    And line push count should be 0

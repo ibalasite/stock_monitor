@@ -80,7 +80,9 @@ def reconcile_pending_once(line_client, message_repo, pending_repo, logger) -> d
     reconciled = 0
     for item in pending_repo.list_pending():
         try:
-            line_client.send(item.get("payload", ""))
+            # Pending items represent "LINE already sent, DB persist failed".
+            # Reconcile must only backfill DB state and never re-send LINE.
+            _ = line_client
             message_repo.save_batch(item.get("rows", []))
             pending_repo.mark_reconciled(item.get("pending_id"))
             reconciled += 1
@@ -134,4 +136,3 @@ def fetch_market_with_retry(
             return {"ok": False, "skip_minute": True, "backfill_allowed": False}
 
     return {"ok": False, "skip_minute": True, "backfill_allowed": False}
-

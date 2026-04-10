@@ -282,8 +282,8 @@ def test_tp_int_006_reconcile_pending_marks_reconciled_and_avoids_duplicate_send
     reconcile_pending_once(line_client=line, message_repo=message_repo, pending_repo=pending_repo, logger=logger)
     reconcile_pending_once(line_client=line, message_repo=message_repo, pending_repo=pending_repo, logger=logger)
 
-    assert line.sent_payloads == ["minute=2026-04-10 10:21;stock=2330"], (
-        "[TP-INT-006] Reconciled item must not be re-sent on second reconciliation run."
+    assert line.sent_payloads == [], (
+        "[TP-INT-006] Reconcile should only backfill DB and must never re-send LINE."
     )
     assert pending_repo.rows[0]["status"] == "RECONCILED", (
         "[TP-INT-006] Pending item must be marked as RECONCILED after successful compensation."

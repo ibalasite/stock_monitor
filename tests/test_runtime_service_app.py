@@ -16,7 +16,7 @@ from stock_monitor.application.runtime_service import (
     run_minute_cycle,
     run_reconcile_cycle,
 )
-from stock_monitor.app import _build_runtime, _resolve_timezone, main
+from stock_monitor.app import _ManualValuationCalculator, _build_runtime, _resolve_timezone, main
 
 
 @dataclass
@@ -86,6 +86,22 @@ class _FakePendingRepo:
             if item.get("pending_id") == pending_id:
                 item["status"] = "RECONCILED"
 
+    def get_last_pending_sent_at(self, stock_no: str, stock_status: int) -> int | None:
+        latest: int | None = None
+        for item in self.items:
+            if item.get("status") != "PENDING":
+                continue
+            for row in item.get("rows", []):
+                try:
+                    row_stock = str(row.get("stock_no"))
+                    row_status = int(row.get("stock_status"))
+                    row_ts = int(row.get("update_time"))
+                except (TypeError, ValueError):
+                    continue
+                if row_stock == str(stock_no) and row_status == int(stock_status):
+                    latest = row_ts if latest is None else max(latest, row_ts)
+        return latest
+
 
 @dataclass
 class _FakeFallback:
@@ -93,6 +109,20 @@ class _FakeFallback:
 
     def append(self, item: dict):
         self.rows.append(item)
+
+    def get_last_pending_sent_at(self, stock_no: str, stock_status: int) -> int | None:
+        latest: int | None = None
+        for item in self.rows:
+            for row in item.get("rows", []):
+                try:
+                    row_stock = str(row.get("stock_no"))
+                    row_status = int(row.get("stock_status"))
+                    row_ts = int(row.get("update_time"))
+                except (TypeError, ValueError):
+                    continue
+                if row_stock == str(stock_no) and row_status == int(stock_status):
+                    latest = row_ts if latest is None else max(latest, row_ts)
+        return latest
 
 
 def test_runtime_helpers_for_epoch_hits_and_rows():
@@ -116,6 +146,8 @@ def test_runtime_helpers_for_epoch_hits_and_rows():
         now_dt=datetime(2026, 4, 10, 10, 21, 0),
         hits=hits,
         message_repo=_FakeMessageRepo(last_sent_map={}, rows=[]),
+        pending_repo=_FakePendingRepo(items=[]),
+        pending_fallback=_FakeFallback(rows=[]),
         cooldown_seconds=300,
     )
     assert len(rows) == 1
@@ -125,9 +157,31 @@ def test_runtime_helpers_for_epoch_hits_and_rows():
         now_dt=datetime(2026, 4, 10, 10, 21, 0),
         hits=[{"stock_no": "2330", "stock_status": 1, "method": "manual_rule", "price": 1490.0}],
         message_repo=_FakeMessageRepo(last_sent_map={("2330", 1): int(datetime(2026, 4, 10, 10, 20, 30).timestamp())}, rows=[]),
+        pending_repo=_FakePendingRepo(items=[]),
+        pending_fallback=_FakeFallback(rows=[]),
         cooldown_seconds=300,
     )
     assert blocked_rows == []
+
+    class _MsgRepoNoPending:
+        def get_last_sent_at(self, stock_no: str, stock_status: int):
+            return None
+
+    class _NoPendingLookup:
+        pass
+
+    class _NoFallbackLookup:
+        pass
+
+    rows_without_pending_lookup = build_minute_rows(
+        now_dt=datetime(2026, 4, 10, 10, 21, 0),
+        hits=[{"stock_no": "2330", "stock_status": 1, "method": "manual_rule", "price": 1490.0}],
+        message_repo=_MsgRepoNoPending(),
+        pending_repo=_NoPendingLookup(),
+        pending_fallback=_NoFallbackLookup(),
+        cooldown_seconds=300,
+    )
+    assert len(rows_without_pending_lookup) == 1
 
     # Force aggregate_stock_signals returning [] to hit defensive branch.
     class _MsgRepo:
@@ -144,6 +198,8 @@ def test_runtime_helpers_for_epoch_hits_and_rows():
                 now_dt=datetime(2026, 4, 10, 10, 21, 0),
                 hits=[{"stock_no": "2330", "stock_status": 1, "method": "manual_rule", "price": 1490.0}],
                 message_repo=_MsgRepo(),
+                pending_repo=_NoPendingLookup(),
+                pending_fallback=_NoFallbackLookup(),
                 cooldown_seconds=300,
             )
             == []
@@ -240,6 +296,86 @@ def test_run_minute_cycle_branches_and_reconcile():
     assert result_sent["count"] == 1
     assert len(line_client.sent) == 1
 
+    result_stale_quote = run_minute_cycle(
+        now_dt=datetime(2026, 4, 10, 10, 0, 0),
+        market_data_provider=_FakeMarketProvider(
+            snapshot={"index_tick_at": now_epoch},
+            quotes={"2330": {"price": 999.0, "tick_at": now_epoch - 200}},
+        ),
+        line_client=line_client,
+        watchlist_repo=_FakeWatchlistRepo(rows=[{"stock_no": "2330", "manual_fair_price": 1500, "manual_cheap_price": 1000}]),
+        message_repo=message_repo,
+        pending_repo=pending_repo,
+        pending_fallback=fallback,
+        logger=logger,
+        stale_threshold_sec=90,
+    )
+    assert result_stale_quote["status"] == "no_signal"
+    assert any("STALE_QUOTE:2330" in msg for _, msg in logger.events)
+
+    result_conflict_quote = run_minute_cycle(
+        now_dt=datetime(2026, 4, 10, 10, 0, 0),
+        market_data_provider=_FakeMarketProvider(
+            snapshot={"index_tick_at": now_epoch},
+            quotes={"2330": {"price": 999.0, "tick_at": now_epoch, "conflict": True}},
+        ),
+        line_client=line_client,
+        watchlist_repo=_FakeWatchlistRepo(rows=[{"stock_no": "2330", "manual_fair_price": 1500, "manual_cheap_price": 1000}]),
+        message_repo=message_repo,
+        pending_repo=pending_repo,
+        pending_fallback=fallback,
+        logger=logger,
+        stale_threshold_sec=90,
+    )
+    assert result_conflict_quote["status"] == "no_signal"
+    assert any("DATA_CONFLICT:2330" in msg for _, msg in logger.events)
+
+    result_invalid_tick = run_minute_cycle(
+        now_dt=datetime(2026, 4, 10, 10, 0, 0),
+        market_data_provider=_FakeMarketProvider(
+            snapshot={"index_tick_at": now_epoch},
+            quotes={"2330": {"price": 999.0, "tick_at": "bad-int"}},
+        ),
+        line_client=line_client,
+        watchlist_repo=_FakeWatchlistRepo(rows=[{"stock_no": "2330", "manual_fair_price": 1500, "manual_cheap_price": 1000}]),
+        message_repo=message_repo,
+        pending_repo=pending_repo,
+        pending_fallback=fallback,
+        logger=logger,
+        stale_threshold_sec=90,
+    )
+    assert result_invalid_tick["status"] == "no_signal"
+
+    recent_pending = int(datetime(2026, 4, 10, 9, 59, 30).timestamp())
+    pending_repo.items = [
+        {
+            "pending_id": "P-COOL",
+            "status": "PENDING",
+            "rows": [
+                {
+                    "stock_no": "2330",
+                    "stock_status": 1,
+                    "update_time": recent_pending,
+                }
+            ],
+        }
+    ]
+    result_pending_cooldown = run_minute_cycle(
+        now_dt=datetime(2026, 4, 10, 10, 0, 0),
+        market_data_provider=_FakeMarketProvider(
+            snapshot={"index_tick_at": now_epoch},
+            quotes={"2330": {"price": 1490.0, "tick_at": now_epoch}},
+        ),
+        line_client=line_client,
+        watchlist_repo=_FakeWatchlistRepo(rows=[{"stock_no": "2330", "manual_fair_price": 1500, "manual_cheap_price": 1000}]),
+        message_repo=_FakeMessageRepo(last_sent_map={}, rows=[]),
+        pending_repo=pending_repo,
+        pending_fallback=fallback,
+        logger=logger,
+        cooldown_seconds=300,
+    )
+    assert result_pending_cooldown["status"] == "no_signal"
+
     pending_repo.items = [
         {
             "pending_id": "1",
@@ -289,6 +425,7 @@ def test_app_main_init_db_run_once_and_reconcile(monkeypatch, tmp_path: Path, ca
         "watchlist_repo": object(),
         "message_repo": object(),
         "pending_repo": object(),
+        "valuation_snapshot_repo": object(),
         "logger": object(),
         "pending_fallback": object(),
     }
@@ -316,6 +453,17 @@ def test_app_main_init_db_run_once_and_reconcile(monkeypatch, tmp_path: Path, ca
     assert reconcile_output["reconciled"] == 2
     assert fake_conn2.closed is True
 
+    fake_conn3 = _FakeConn()
+    runtime3 = dict(runtime)
+    runtime3["conn"] = fake_conn3
+    monkeypatch.setattr("stock_monitor.app._build_runtime", lambda args: runtime3)
+    monkeypatch.setattr("stock_monitor.app.run_daily_valuation_job", lambda **kwargs: {"status": "executed", "count": 1})
+    valuation_code = main(["--db-path", str(db_path), "valuation-once"])
+    assert valuation_code == 0
+    valuation_output = json.loads(capsys.readouterr().out.strip())
+    assert valuation_output["status"] == "executed"
+    assert fake_conn3.closed is True
+
 
 def test_build_runtime_and_timezone_resolution(monkeypatch, tmp_path: Path):
     class _Args:
@@ -333,6 +481,28 @@ def test_build_runtime_and_timezone_resolution(monkeypatch, tmp_path: Path):
 
     assert _resolve_timezone("Asia/Taipei") is not None
     assert _resolve_timezone("Invalid/Timezone/Name") is not None
+
+
+def test_manual_valuation_calculator_from_watchlist():
+    class _WatchlistRepo:
+        def list_enabled(self):
+            return [{"stock_no": "2330", "manual_fair_price": 1500, "manual_cheap_price": 1000}]
+
+    calculator = _ManualValuationCalculator(
+        watchlist_repo=_WatchlistRepo(),
+        trade_date="2026-04-10",
+    )
+    snapshots = calculator.calculate()
+    assert snapshots == [
+        {
+            "stock_no": "2330",
+            "trade_date": "2026-04-10",
+            "method_name": "manual_rule",
+            "method_version": "v1",
+            "fair_price": 1500.0,
+            "cheap_price": 1000.0,
+        }
+    ]
 
 
 def test_stock_monitor_dunder_main_invokes_app_main(monkeypatch):

@@ -52,6 +52,8 @@ def build_minute_rows(
     now_dt: datetime,
     hits: list[dict],
     message_repo,
+    pending_repo,
+    pending_fallback,
     cooldown_seconds: int,
     timezone_name: str = "Asia/Taipei",
 ) -> list[dict]:
@@ -72,8 +74,18 @@ def build_minute_rows(
             continue
         event = aggregated[0]
         status = int(event["stock_status"])
-        last_sent_at = message_repo.get_last_sent_at(stock_no, status)
-        if not cooldown.can_send(last_sent_at=last_sent_at, now_ts=now_epoch):
+        sent_at_candidates = [
+            message_repo.get_last_sent_at(stock_no, status),
+        ]
+        if hasattr(pending_repo, "get_last_pending_sent_at"):
+            sent_at_candidates.append(pending_repo.get_last_pending_sent_at(stock_no, status))
+        if hasattr(pending_fallback, "get_last_pending_sent_at"):
+            sent_at_candidates.append(pending_fallback.get_last_pending_sent_at(stock_no, status))
+
+        known_sent_times = [int(ts) for ts in sent_at_candidates if ts is not None]
+        effective_last_sent_at = max(known_sent_times) if known_sent_times else None
+
+        if not cooldown.can_send(last_sent_at=effective_last_sent_at, now_ts=now_epoch):
             continue
 
         prices = sorted({float(hit["price"]) for hit in stock_hits})
@@ -102,6 +114,7 @@ def run_minute_cycle(
     logger,
     cooldown_seconds: int = 300,
     retry_count: int = 3,
+    stale_threshold_sec: int = 90,
     timezone_name: str = "Asia/Taipei",
 ) -> dict:
     if not is_in_trading_session(now_dt):
@@ -133,11 +146,30 @@ def run_minute_cycle(
 
     stock_nos = [str(row["stock_no"]) for row in watchlist_rows]
     quotes = market_data_provider.get_realtime_quotes(stock_nos)
-    hits = evaluate_manual_threshold_hits(watchlist_rows=watchlist_rows, quotes=quotes)
+    filtered_quotes: dict[str, dict] = {}
+    for stock_no, quote in quotes.items():
+        if bool(quote.get("conflict")):
+            logger.log("WARN", f"DATA_CONFLICT:{stock_no}")
+            continue
+
+        try:
+            tick_at = int(quote.get("tick_at"))
+        except (TypeError, ValueError):
+            tick_at = 0
+
+        if tick_at <= 0 or (now_epoch - tick_at) > stale_threshold_sec:
+            logger.log("WARN", f"STALE_QUOTE:{stock_no}")
+            continue
+
+        filtered_quotes[stock_no] = quote
+
+    hits = evaluate_manual_threshold_hits(watchlist_rows=watchlist_rows, quotes=filtered_quotes)
     rows = build_minute_rows(
         now_dt=now_dt,
         hits=hits,
         message_repo=message_repo,
+        pending_repo=pending_repo,
+        pending_fallback=pending_fallback,
         cooldown_seconds=cooldown_seconds,
         timezone_name=timezone_name,
     )
@@ -164,4 +196,3 @@ def run_reconcile_cycle(*, line_client, message_repo, pending_repo, logger) -> d
         pending_repo=pending_repo,
         logger=logger,
     )
-

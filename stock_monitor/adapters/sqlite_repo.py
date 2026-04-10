@@ -78,16 +78,18 @@ class SqliteMessageRepository:
             INSERT INTO message(stock_no, message, stock_status, methods_hit, minute_bucket, update_time)
             VALUES (?, ?, ?, ?, ?, ?)
             ON CONFLICT(stock_no, minute_bucket) DO UPDATE SET
-              message = excluded.message,
-              stock_status = CASE
-                WHEN excluded.stock_status > message.stock_status THEN excluded.stock_status
-                ELSE message.stock_status
-              END,
+              stock_status = excluded.stock_status,
               methods_hit = excluded.methods_hit,
-              update_time = CASE
-                WHEN excluded.stock_status >= message.stock_status THEN excluded.update_time
-                ELSE message.update_time
-              END
+              message = excluded.message,
+              update_time = excluded.update_time
+            WHERE excluded.stock_status > message.stock_status
+               OR (
+                    excluded.stock_status = message.stock_status
+                AND (
+                     excluded.methods_hit <> message.methods_hit
+                  OR excluded.message <> message.message
+                )
+               )
             """,
             (
                 row["stock_no"],
@@ -198,6 +200,20 @@ class SqlitePendingRepository:
         )
         self.conn.commit()
 
+    def get_last_pending_sent_at(self, stock_no: str, stock_status: int) -> int | None:
+        latest: int | None = None
+        for item in self.list_pending(limit=500):
+            for row in item.get("rows", []):
+                try:
+                    row_stock_no = str(row.get("stock_no"))
+                    row_status = int(row.get("stock_status"))
+                    row_update_time = int(row.get("update_time"))
+                except (TypeError, ValueError):
+                    continue
+                if row_stock_no == str(stock_no) and row_status == int(stock_status):
+                    latest = row_update_time if latest is None else max(latest, row_update_time)
+        return latest
+
 
 @dataclass
 class JsonlPendingFallback:
@@ -207,6 +223,77 @@ class JsonlPendingFallback:
         self.path.parent.mkdir(parents=True, exist_ok=True)
         with self.path.open("a", encoding="utf-8") as handle:
             handle.write(json.dumps(item, ensure_ascii=False) + "\n")
+
+    def get_last_pending_sent_at(self, stock_no: str, stock_status: int) -> int | None:
+        if not self.path.exists():
+            return None
+
+        latest: int | None = None
+        for raw_line in self.path.read_text(encoding="utf-8").splitlines():
+            if not raw_line.strip():
+                continue
+            try:
+                item = json.loads(raw_line)
+            except json.JSONDecodeError:
+                continue
+            for row in item.get("rows", []):
+                try:
+                    row_stock_no = str(row.get("stock_no"))
+                    row_status = int(row.get("stock_status"))
+                    row_update_time = int(row.get("update_time"))
+                except (TypeError, ValueError):
+                    continue
+                if row_stock_no == str(stock_no) and row_status == int(stock_status):
+                    latest = row_update_time if latest is None else max(latest, row_update_time)
+        return latest
+
+
+@dataclass
+class SqliteValuationSnapshotRepository:
+    conn: sqlite3.Connection
+
+    def save_snapshots(self, snapshots: list[dict]) -> None:
+        if not snapshots:
+            return
+        now_epoch = _now_epoch()
+        self.conn.execute("BEGIN")
+        try:
+            for snapshot in snapshots:
+                method_name = str(snapshot["method_name"])
+                method_version = str(snapshot["method_version"])
+                self.conn.execute(
+                    """
+                    INSERT INTO valuation_methods(method_name, method_version, enabled, created_at, updated_at)
+                    VALUES (?, ?, 1, ?, ?)
+                    ON CONFLICT(method_name, method_version) DO UPDATE SET
+                      updated_at = excluded.updated_at
+                    """,
+                    (method_name, method_version, now_epoch, now_epoch),
+                )
+                self.conn.execute(
+                    """
+                    INSERT INTO valuation_snapshots(
+                      stock_no, trade_date, method_name, method_version, fair_price, cheap_price, created_at
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?)
+                    ON CONFLICT(stock_no, trade_date, method_name, method_version) DO UPDATE SET
+                      fair_price = excluded.fair_price,
+                      cheap_price = excluded.cheap_price,
+                      created_at = excluded.created_at
+                    """,
+                    (
+                        str(snapshot["stock_no"]),
+                        str(snapshot["trade_date"]),
+                        method_name,
+                        method_version,
+                        float(snapshot["fair_price"]),
+                        float(snapshot["cheap_price"]),
+                        now_epoch,
+                    ),
+                )
+            self.conn.commit()
+        except Exception:
+            self.conn.rollback()
+            raise
 
 
 @dataclass
@@ -237,4 +324,3 @@ class SqliteLogger:
             """
         ).fetchall()
         return [dict(row) for row in rows]
-

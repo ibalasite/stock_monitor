@@ -16,11 +16,13 @@ from stock_monitor.adapters.sqlite_repo import (
     SqliteLogger,
     SqliteMessageRepository,
     SqlitePendingRepository,
+    SqliteValuationSnapshotRepository,
     SqliteWatchlistRepository,
     apply_schema,
     connect_sqlite,
 )
 from stock_monitor.application.runtime_service import run_minute_cycle, run_reconcile_cycle
+from stock_monitor.application.valuation_scheduler import run_daily_valuation_job
 from stock_monitor.bootstrap.runtime import assert_sqlite_prerequisites, validate_line_runtime_config
 
 
@@ -33,7 +35,32 @@ def _build_parser() -> argparse.ArgumentParser:
     subparsers.add_parser("init-db")
     subparsers.add_parser("run-once")
     subparsers.add_parser("reconcile-once")
+    subparsers.add_parser("valuation-once")
     return parser
+
+
+class _ManualValuationCalculator:
+    """Phase-1 valuation source based on manual watchlist thresholds."""
+
+    def __init__(self, watchlist_repo, trade_date: str):
+        self.watchlist_repo = watchlist_repo
+        self.trade_date = trade_date
+
+    def calculate(self) -> list[dict]:
+        rows = self.watchlist_repo.list_enabled()
+        snapshots: list[dict] = []
+        for row in rows:
+            snapshots.append(
+                {
+                    "stock_no": str(row["stock_no"]),
+                    "trade_date": self.trade_date,
+                    "method_name": "manual_rule",
+                    "method_version": "v1",
+                    "fair_price": float(row["manual_fair_price"]),
+                    "cheap_price": float(row["manual_cheap_price"]),
+                }
+            )
+        return snapshots
 
 
 def _build_runtime(args) -> dict:
@@ -54,6 +81,7 @@ def _build_runtime(args) -> dict:
         "watchlist_repo": SqliteWatchlistRepository(conn),
         "message_repo": SqliteMessageRepository(conn),
         "pending_repo": SqlitePendingRepository(conn),
+        "valuation_snapshot_repo": SqliteValuationSnapshotRepository(conn),
         "logger": SqliteLogger(conn),
         "pending_fallback": JsonlPendingFallback(Path("logs/pending_delivery.jsonl")),
     }
@@ -98,13 +126,26 @@ def main(argv: list[str] | None = None) -> int:
                 logger=runtime["logger"],
                 cooldown_seconds=int(os.getenv("COOLDOWN_SEC", "300")),
                 retry_count=int(os.getenv("MAX_RETRY_COUNT", "3")),
+                stale_threshold_sec=int(os.getenv("STALE_THRESHOLD_SEC", "90")),
                 timezone_name=args.timezone,
             )
-        else:
+        elif args.command == "reconcile-once":
             result = run_reconcile_cycle(
                 line_client=runtime["line_client"],
                 message_repo=runtime["message_repo"],
                 pending_repo=runtime["pending_repo"],
+                logger=runtime["logger"],
+            )
+        else:
+            calculator = _ManualValuationCalculator(
+                watchlist_repo=runtime["watchlist_repo"],
+                trade_date=now_dt.strftime("%Y-%m-%d"),
+            )
+            result = run_daily_valuation_job(
+                now_dt=now_dt,
+                is_trading_day=now_dt.weekday() < 5,
+                calculator=calculator,
+                snapshot_repo=runtime["valuation_snapshot_repo"],
                 logger=runtime["logger"],
             )
         print(json.dumps(result, ensure_ascii=False))

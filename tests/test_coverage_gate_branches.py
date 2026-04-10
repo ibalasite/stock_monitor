@@ -90,6 +90,12 @@ class _ReconcileMessageRepo:
 
 
 @dataclass
+class _FailReconcileMessageRepo:
+    def save_batch(self, rows: list[dict]):
+        raise RuntimeError("db-save-failed")
+
+
+@dataclass
 class _SnapshotProviderOk:
     def get_market_snapshot(self, now_epoch: int):
         return {"index_tick_at": now_epoch}
@@ -201,13 +207,13 @@ def test_cov_workflow_string_normalize_dispatch_success_and_reconcile_error_path
         }
     ]
     reconcile_result = reconcile_pending_once(
-        line_client=_FailLineClient(),
-        message_repo=_ReconcileMessageRepo(),
+        line_client=_OkLineClient(),
+        message_repo=_FailReconcileMessageRepo(),
         pending_repo=pending_repo,
         logger=logger,
     )
     assert reconcile_result.get("reconciled") == 0, (
-        "[COV-MWF-001] Failed reconcile send must not increase reconciled count."
+        "[COV-MWF-001] Failed reconcile persist must not increase reconciled count."
     )
     assert any("RECONCILE_FAILED" in message for _, message in logger.events), (
         "[COV-MWF-001] Reconcile failure must be logged."

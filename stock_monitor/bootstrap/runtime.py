@@ -34,7 +34,7 @@ def _pick_first_non_empty(env: Mapping[str, str], keys: list[str]) -> str | None
 
 
 def _is_valid_channel_token(token: str) -> bool:
-    return bool(re.fullmatch(r"[A-Za-z0-9._\-]{10,}", token))
+    return bool(re.fullmatch(r"[A-Za-z0-9._\-+/=]{10,}", token))
 
 
 def _is_valid_group_id(group_id: str) -> bool:
@@ -58,4 +58,3 @@ def validate_line_runtime_config(env: Mapping[str, str]) -> dict:
         raise RuntimeError("invalid group id")
 
     return {"channel_token": channel_token, "group_id": group_id}
-

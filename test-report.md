@@ -1,15 +1,15 @@
 # Test Report
 
 ## 1. 測試摘要
-- 執行時間: 2026-04-10 23:56:00 +08:00
+- 執行時間: 2026-04-11 02:06:47 +08:00
 - 測試命令: `python -m pytest -q tests`
-- 測試結果: `133 passed`
+- 測試結果: `136 passed`
 - Coverage Gate: `100%` (statement + branch)
 - Gate 結論: `PASS`
 
 ## 2. Coverage 結果
 - 目標門檻: `--cov-fail-under=100`
-- 實際結果: `TOTAL 576 statements, 128 branches, 100.00%`
+- 實際結果: `TOTAL 664 statements, 162 branches, 100.00%`
 - 各模組 coverage: 全部 `100%`
 
 ## 3. CI 設定
