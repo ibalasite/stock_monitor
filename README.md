@@ -296,6 +296,16 @@ python -m piptools compile --generate-hashes --output-file requirements-dev.txt 
 # 只跑 BDD 測試
 python -m pytest -q tests/bdd --no-cov
 
+# BDD 詳細輸出（列出每個 scenario 與狀態）
+python -m pytest tests/bdd --no-cov -vv -ra
+
+# 只列出本次會執行的 BDD 情境（不執行）
+python -m pytest tests/bdd --collect-only --no-cov
+
+# 顯示 Gherkin 風格輸出（Given/When/Then）
+python -m pytest tests/bdd --no-cov --gherkin-terminal-reporter -s
+
+
 # 跑單一測試模組
 python -m pytest -q tests/test_policy_rules.py
 
