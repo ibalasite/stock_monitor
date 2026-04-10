@@ -1,9 +1,9 @@
 # Test Report
 
 ## 1. 測試摘要
-- 執行時間: 2026-04-10 23:01:14 +08:00
+- 執行時間: 2026-04-10 23:56:00 +08:00
 - 測試命令: `python -m pytest -q tests`
-- 測試結果: `132 passed`
+- 測試結果: `133 passed`
 - Coverage Gate: `100%` (statement + branch)
 - Gate 結論: `PASS`
 
@@ -18,7 +18,9 @@
   - `push` (all branches)
   - `pull_request`
 - CI 內容:
-  - 安裝 `pytest`, `pytest-bdd`, `pytest-cov`
+  - pinned `actions/checkout` 與 `actions/setup-python` commit SHA
+  - 安裝鎖版依賴 `requirements-dev.txt`（`--require-hashes`）
+  - 執行 `pip-audit` 供應鏈掃描
   - 執行 `python -m pytest -q tests`
   - 由 `pytest.ini` 套用 coverage gate
 
@@ -29,6 +31,7 @@
   - `--cov-report=term-missing`
   - `--cov-fail-under=100`
 - 新增分支覆蓋測試: `tests/test_coverage_gate_branches.py`
+- 補充 timezone fallback 分支覆蓋: `tests/test_trading_bucket_kpi_rules.py`
 - 新增 production adapters + runtime app + E2E smoke BDD 測試覆蓋
 
 ## 5. 風險與備註

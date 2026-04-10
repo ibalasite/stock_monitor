@@ -43,3 +43,6 @@ ENV/
 *.swo
 .DS_Store
 Thumbs.db
+
+# Local security reports
+.gstack/

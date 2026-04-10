@@ -76,6 +76,22 @@ def test_tp_bkt_001_time_bucket_must_be_generated_by_time_bucket_service():
         guard_bucket_source("repository_inline_concat")
 
 
+def test_tp_bkt_001_time_bucket_falls_back_when_timezone_not_found():
+    TimeBucketService = require_symbol(
+        "stock_monitor.domain.time_bucket",
+        "TimeBucketService",
+        "TP-BKT-001",
+    )
+
+    service = TimeBucketService("Not/A-Real-Timezone")
+    aware_dt = datetime.fromisoformat("2026-04-10T10:21:37+00:00")
+    bucket = _call_bucket_service(service, aware_dt)
+
+    assert bucket == "2026-04-10 10:21", (
+        "[TP-BKT-001] Unknown timezone should fallback to input datetime without crashing."
+    )
+
+
 def test_tp_kpi_001_notification_accuracy_excludes_outage_minutes():
     compute_notification_accuracy = require_symbol(
         "stock_monitor.domain.metrics",

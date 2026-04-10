@@ -1,0 +1,18 @@
+#!/usr/bin/env sh
+set -eu
+
+# Block committing dotenv files except .env.example
+staged_files="$(git diff --cached --name-only --diff-filter=ACMR)"
+
+blocked_files="$(printf '%s\n' "$staged_files" | awk '
+  /(^|\/)\.env($|(\..+))/ {
+    if ($0 !~ /(^|\/)\.env\.example$/) print
+  }
+')"
+
+if [ -n "$blocked_files" ]; then
+  echo "ERROR: .env files are not allowed in git commits." >&2
+  echo "Remove these from staging:" >&2
+  echo "$blocked_files" >&2
+  exit 1
+fi

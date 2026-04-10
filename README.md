@@ -10,9 +10,9 @@
 4. `pytest-bdd` 已安裝，step definitions 已可執行（BDD 測試可完整跑完）。
 5. `stock_monitor` 主程式套件已建立並實作核心測試契約。
 6. 最新狀態：
-   - `pytest -q tests`：`132 passed`（含 BDD smoke + unit/integration/UAT contract）
+   - `pytest -q tests`：`133 passed`（含 BDD smoke + unit/integration/UAT contract）
    - Coverage gate：`100%`（line + branch）
-   - CI：`.github/workflows/ci.yml` 已啟用（push / pull_request）
+   - CI：`.github/workflows/ci.yml` 已啟用（push / pull_request），且已採用 action SHA pin + 鎖版依賴 + `pip-audit`
    - 可執行入口：`python -m stock_monitor init-db|run-once|reconcile-once`
 7. 交付文件：
    - `test-report.md`
@@ -99,14 +99,14 @@ python -m venv .venv
 3. 安裝測試依賴：
 ```powershell
 python -m pip install --upgrade pip
-pip install pytest pytest-bdd pytest-cov
+python -m pip install --require-hashes -r requirements-dev.txt
 ```
 4. 執行完整測試（等同 CI gate）：
 ```powershell
 python -m pytest -q tests
 ```
 5. 預期結果：
-   - `132 passed`
+   - `133 passed`
    - coverage `100%`
 
 ### 7.2 要跑「真實盤中監控」前必做
@@ -136,8 +136,14 @@ Copy-Item .env.example .env
 # 跑全部測試
 & 'C:\Users\ibala\AppData\Local\Programs\Python\Python313\python.exe' -m pytest -q tests
 
-# 安裝 pytest-bdd（若尚未安裝）
-& 'C:\Users\ibala\AppData\Local\Programs\Python\Python313\python.exe' -m pip install pytest-bdd
+# 安裝鎖版測試依賴（含 hashes）
+& 'C:\Users\ibala\AppData\Local\Programs\Python\Python313\python.exe' -m pip install --require-hashes -r requirements-dev.txt
+
+# 供應鏈弱點掃描（與 CI 相同）
+& 'C:\Users\ibala\AppData\Local\Programs\Python\Python313\python.exe' -m pip_audit --progress-spinner=off --requirement requirements-dev.txt
+
+# 重新產生鎖版依賴（更新 requirements-dev.txt）
+& 'C:\Users\ibala\AppData\Local\Programs\Python\Python313\python.exe' -m piptools compile --generate-hashes --output-file requirements-dev.txt requirements-dev.in
 
 # 只跑 BDD 測試（建立後）
 & 'C:\Users\ibala\AppData\Local\Programs\Python\Python313\python.exe' -m pytest -q tests/bdd
