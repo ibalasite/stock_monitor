@@ -6,14 +6,15 @@
 ## 1. 專案現況摘要
 1. 規格文件已完成並完成主要一致性對齊（PDD/EDD/User Story/Test Plan/Feature）。
 2. BDD 規格檔已完成：`features/stock_monitoring_system.feature`。
-3. 目前已接上 `pytest-bdd` 的 `.feature` 執行層（`tests/bdd/` 骨架；`stock_monitoring_system.feature` 為 skeleton glue）。
-4. `pytest-bdd` 已安裝，並已有具體行為斷言的 smoke BDD（`stock_monitoring_smoke.feature`）可執行。
+3. `pytest-bdd` 已接上完整 `.feature` 執行層，`stock_monitoring_system.feature` 已有具體 step 實作。
+4. `pytest-bdd` 已安裝，`stock_monitoring_smoke.feature` 與完整 `stock_monitoring_system.feature` 皆可執行。
 5. `stock_monitor` 主程式套件已建立並實作核心測試契約。
 6. 最新狀態：
-   - `pytest -q tests`：最近一次基線（2026-04-11）為 `136 passed`（含 BDD smoke + unit/integration/UAT contract）
+   - `pytest -q tests`：最近一次基線（2026-04-11）為 `138 passed`（含完整 BDD + unit/integration/UAT contract）
    - Coverage gate：`100%`（line + branch）
    - CI：`.github/workflows/ci.yml` 已啟用（push / pull_request），且已採用 action SHA pin + 鎖版依賴 + `pip-audit`
-   - 可執行入口：`python -m stock_monitor init-db|run-once|reconcile-once|valuation-once`
+   - 可執行入口：`python -m stock_monitor init-db|run-once|reconcile-once|valuation-once|run-daemon`
+   - Nightly smoke：`.github/workflows/nightly-smoke.yml`（TWSE 必跑、LINE sandbox 可選）
 7. 交付文件：
    - `test-report.md`
    - `defect-log.md`
@@ -63,9 +64,9 @@
 3. BDD `.feature` 與 `TEST_PLAN` TP-ID 已對齊。
 4. 內層 pytest 契約測試檔已建立（可作為 TDD 基線）。
 5. `tests/bdd/` 骨架已建立，scenario glue 已可載入整份 `.feature`。
-6. `tests/bdd` step definitions 已可執行：
-   - `stock_monitoring_system.feature`：skeleton/glue 驗證（確保規格可執行）
-   - `stock_monitoring_smoke.feature`：具體 runtime 行為斷言
+6. `tests/bdd` step definitions 已完整可執行：
+   - `stock_monitoring_system.feature`：完整規格具體行為斷言
+   - `stock_monitoring_smoke.feature`：關鍵流程 smoke 驗證
 7. `stock_monitor` 套件已建立，必要 symbol 與核心流程已落地。
 8. `pytest.ini` 已完成 feature tags 註冊與 coverage gate 設定。
 9. CI workflow 已接上 GitHub Actions。
@@ -79,13 +80,19 @@
    - 交易時段跳過
    - 冷卻抑制
    - 補償回補不重送
+14. 已完成 daemon 模式：
+   - 交易時段（09:00-13:30）每分鐘輪詢
+   - 交易日 14:00 單次估值
+   - 補償回補循環持續執行
+15. 已新增真實外部依賴 smoke：
+   - `scripts/external_dependency_smoke.py`
+   - `nightly-smoke.yml`（TWSE + 可選 LINE sandbox）
 
 ## 6. 下一步要做什麼（建議執行順序）
-1. 將 `run-once` 擴為長駐 daemon（每分鐘輪詢 + 14:00 估值排程）。
-2. 將 BDD 從 smoke 擴展至完整 `features/stock_monitoring_system.feature` 的具體 step 實作。
-3. 加入真實外部依賴 smoke（可選 nightly job）：TWSE endpoint 可用性與 LINE sandbox 通道驗證。
-4. 完成正式人工 UAT 簽核（PO/QA/Eng Lead）。
-5. 持續維持流程：`PDD/EDD -> feature -> tests -> code`。
+1. 完成正式人工 UAT 簽核（PO/QA/Eng Lead）。
+2. 設定 GitHub Secrets（LINE sandbox）並啟用 nightly LINE push 驗證。
+3. 實際交易日觀察 daemon 日誌與通知品質，回填 `test-report.md`/`defect-log.md`。
+4. 持續維持流程：`PDD/EDD -> feature -> tests -> code`。
 
 ## 7. 啟動流程（實際可操作）
 ### 7.1 現在就可以跑（開發驗證模式）
@@ -108,12 +115,12 @@ python -m pip install --require-hashes -r requirements-dev.txt
 python -m pytest -q tests
 ```
 5. 最近一次基線結果（2026-04-11）：
-   - `136 passed`
+   - `138 passed`
    - coverage `100%`
    - 實際請以你當次執行輸出為準
 
 ### 7.2 要跑「真實盤中監控」前必做
-目前已可執行單次流程（`run-once` / `reconcile-once`），但尚未 daemon 化。  
+目前已可執行單次流程與長駐 daemon（`run-daemon`）。  
 本專案建議直接讀取系統環境變數，不把 token 寫入 `.env`。先設定環境變數，再執行：
 ```powershell
 # 當前 shell 生效（關閉視窗後失效）
@@ -144,6 +151,15 @@ python -m stock_monitor --db-path data/stock_monitor.db reconcile-once
 
 # 4) 單次估值任務（交易日 14:00 執行，非交易日/非 14:00 會 skip）
 python -m stock_monitor --db-path data/stock_monitor.db valuation-once
+
+# 5) 長駐 daemon：
+#    - 交易時段（09:00-13:30）每分鐘輪詢
+#    - 交易日 14:00 估值
+#    - 每圈執行補償回補
+python -m stock_monitor --db-path data/stock_monitor.db run-daemon --poll-interval-sec 60 --valuation-time 14:00
+
+# 6) daemon 測試模式（跑固定圈數就停止，方便本機驗證）
+python -m stock_monitor --db-path data/stock_monitor.db run-daemon --poll-interval-sec 1 --valuation-time 14:00 --max-loops 5
 ```
 
 `.env.example` 僅保留為欄位範本，不作為正式 secrets 載入來源。
@@ -314,6 +330,12 @@ python scripts/test_line_push.py --dry-run
 
 # 只測 LINE 通道（實際送一則訊息）
 python scripts/test_line_push.py --message "LINE 通道測試"
+
+# 真實外部依賴 smoke（TWSE only）
+python scripts/external_dependency_smoke.py --stock-no 2330 --skip-line
+
+# 真實外部依賴 smoke（含 LINE sandbox push）
+python scripts/external_dependency_smoke.py --stock-no 2330 --line-send --require-line-config
 ```
 
 ## 9. 文件維護規則

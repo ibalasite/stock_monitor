@@ -129,7 +129,7 @@ def fetch_market_with_retry(
             if attempt < max_retries:
                 logger.log("WARN", f"retry {attempt + 1}/{max_retries}")
                 continue
-            logger.log("WARN", "MARKET_RETRY_EXHAUSTED")
+            logger.log("WARN", "MARKET_TIMEOUT")
             return {"ok": False, "skip_minute": True, "backfill_allowed": False}
         except Exception as exc:
             logger.log("ERROR", f"MARKET_FETCH_FAILED: {exc}")

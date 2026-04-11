@@ -17,6 +17,7 @@
 2. 啟動命令需帶 DB 路徑（或採預設 `data/stock_monitor.db`）：
    - `python -m stock_monitor --db-path data/stock_monitor.db init-db`
    - `python -m stock_monitor --db-path data/stock_monitor.db run-once`
+   - `python -m stock_monitor --db-path data/stock_monitor.db run-daemon --poll-interval-sec 60 --valuation-time 14:00`
 3. 監控清單：
    - `watchlist` 至少需有 1 檔 `enabled=1`，否則 `run-once` 會 `empty_watchlist` 而跳過
 4. SQLite 檢查：

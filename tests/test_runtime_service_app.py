@@ -16,7 +16,7 @@ from stock_monitor.application.runtime_service import (
     run_minute_cycle,
     run_reconcile_cycle,
 )
-from stock_monitor.app import _ManualValuationCalculator, _build_runtime, _resolve_timezone, main
+from stock_monitor.app import _ManualValuationCalculator, _build_runtime, _resolve_timezone, _run_daemon_loop, main
 
 
 @dataclass
@@ -464,6 +464,22 @@ def test_app_main_init_db_run_once_and_reconcile(monkeypatch, tmp_path: Path, ca
     assert valuation_output["status"] == "executed"
     assert fake_conn3.closed is True
 
+    fake_conn4 = _FakeConn()
+    runtime4 = dict(runtime)
+    runtime4["conn"] = fake_conn4
+    monkeypatch.setattr("stock_monitor.app._build_runtime", lambda args: runtime4)
+    monkeypatch.setattr(
+        "stock_monitor.app._run_daemon_loop",
+        lambda **kwargs: {"status": "stopped", "loops": 1, "minute_cycles": 0, "valuation_runs": 0, "reconcile_runs": 1},
+    )
+
+    daemon_code = main(["--db-path", str(db_path), "run-daemon", "--max-loops", "1"])
+    assert daemon_code == 0
+    daemon_output = json.loads(capsys.readouterr().out.strip())
+    assert daemon_output["status"] == "stopped"
+    assert daemon_output["loops"] == 1
+    assert fake_conn4.closed is True
+
 
 def test_build_runtime_and_timezone_resolution(monkeypatch, tmp_path: Path):
     class _Args:
@@ -503,6 +519,119 @@ def test_manual_valuation_calculator_from_watchlist():
             "cheap_price": 1000.0,
         }
     ]
+
+
+def test_run_daemon_loop_trading_poll_and_valuation(monkeypatch):
+    calls = {
+        "minute": 0,
+        "valuation": 0,
+        "reconcile": 0,
+    }
+
+    def _fake_run_minute_cycle(**kwargs):
+        _ = kwargs
+        calls["minute"] += 1
+        return {"status": "persisted", "count": 1}
+
+    def _fake_run_daily_valuation_job(**kwargs):
+        _ = kwargs
+        calls["valuation"] += 1
+        return {"status": "executed", "count": 1}
+
+    def _fake_run_reconcile_cycle(**kwargs):
+        _ = kwargs
+        calls["reconcile"] += 1
+        return {"reconciled": 0}
+
+    monkeypatch.setattr("stock_monitor.app.run_minute_cycle", _fake_run_minute_cycle)
+    monkeypatch.setattr("stock_monitor.app.run_daily_valuation_job", _fake_run_daily_valuation_job)
+    monkeypatch.setattr("stock_monitor.app.run_reconcile_cycle", _fake_run_reconcile_cycle)
+
+    schedule = iter(
+        [
+            datetime(2026, 4, 10, 9, 0, 1),   # trading minute 09:00
+            datetime(2026, 4, 10, 9, 0, 40),  # same minute, should not repoll
+            datetime(2026, 4, 10, 9, 1, 1),   # next minute, should poll
+            datetime(2026, 4, 10, 14, 0, 0),  # valuation time, once
+            datetime(2026, 4, 10, 14, 0, 30), # same valuation minute, should not rerun
+        ]
+    )
+
+    def _now_provider():
+        return next(schedule)
+
+    slept: list[int] = []
+
+    runtime = {
+        "market_provider": object(),
+        "line_client": object(),
+        "watchlist_repo": object(),
+        "message_repo": object(),
+        "pending_repo": object(),
+        "valuation_snapshot_repo": object(),
+        "logger": object(),
+        "pending_fallback": object(),
+    }
+
+    result = _run_daemon_loop(
+        runtime=runtime,
+        timezone_name="Asia/Taipei",
+        poll_interval_sec=60,
+        valuation_time="14:00",
+        cooldown_seconds=300,
+        retry_count=3,
+        stale_threshold_sec=90,
+        max_loops=5,
+        now_provider=_now_provider,
+        sleep_fn=lambda sec: slept.append(sec),
+    )
+
+    assert result["status"] == "stopped"
+    assert result["loops"] == 5
+    assert result["minute_cycles"] == 2
+    assert result["valuation_runs"] == 1
+    assert result["reconcile_runs"] == 5
+    assert calls["minute"] == 2
+    assert calls["valuation"] == 1
+    assert calls["reconcile"] == 5
+    assert slept == [60, 60, 60, 60, 60]
+
+
+def test_run_daemon_loop_keyboard_interrupt(monkeypatch):
+    monkeypatch.setattr("stock_monitor.app.run_minute_cycle", lambda **kwargs: {"status": "no_signal", "count": 0})
+    monkeypatch.setattr("stock_monitor.app.run_daily_valuation_job", lambda **kwargs: {"status": "skipped"})
+    monkeypatch.setattr("stock_monitor.app.run_reconcile_cycle", lambda **kwargs: {"reconciled": 0})
+
+    runtime = {
+        "market_provider": object(),
+        "line_client": object(),
+        "watchlist_repo": object(),
+        "message_repo": object(),
+        "pending_repo": object(),
+        "valuation_snapshot_repo": object(),
+        "logger": object(),
+        "pending_fallback": object(),
+    }
+
+    def _raise_interrupt(_sec: int):
+        raise KeyboardInterrupt
+
+    result = _run_daemon_loop(
+        runtime=runtime,
+        timezone_name="Asia/Taipei",
+        poll_interval_sec=60,
+        valuation_time="14:00",
+        cooldown_seconds=300,
+        retry_count=3,
+        stale_threshold_sec=90,
+        max_loops=None,
+        now_provider=lambda: datetime(2026, 4, 10, 9, 0, 0),
+        sleep_fn=_raise_interrupt,
+    )
+
+    assert result["status"] == "interrupted"
+    assert result["loops"] == 1
+    assert result["reconcile_runs"] == 1
 
 
 def test_stock_monitor_dunder_main_invokes_app_main(monkeypatch):
