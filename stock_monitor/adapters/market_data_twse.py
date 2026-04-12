@@ -32,6 +32,22 @@ class TwseRealtimeMarketDataProvider:
     index_channel: str = "tse_t00.tw"
     timeout_sec: int = 10
 
+    def _build_stock_channels(self, stock_nos: list[str]) -> tuple[list[str], list[str]]:
+        normalized: list[str] = []
+        seen: set[str] = set()
+        for raw in stock_nos:
+            stock_no = str(raw).strip()
+            if not stock_no or stock_no in seen:
+                continue
+            seen.add(stock_no)
+            normalized.append(stock_no)
+
+        channels: list[str] = []
+        for stock_no in normalized:
+            channels.append(f"tse_{stock_no}.tw")
+            channels.append(f"otc_{stock_no}.tw")
+        return normalized, channels
+
     def _build_url(self, channels: list[str]) -> str:
         query = parse.urlencode({"ex_ch": "|".join(channels), "json": "1", "delay": "0"})
         return f"{self.base_url}?{query}"
@@ -78,12 +94,15 @@ class TwseRealtimeMarketDataProvider:
     def get_realtime_quotes(self, stock_nos: list[str]) -> dict[str, dict]:
         if not stock_nos:
             return {}
-        channels = [f"tse_{stock_no}.tw" for stock_no in stock_nos]
+        normalized_stock_nos, channels = self._build_stock_channels(stock_nos)
+        requested = set(normalized_stock_nos)
         rows = self._fetch_channels(channels)
         quotes: dict[str, dict] = {}
         for row in rows:
             stock_no = str(row.get("c") or "").strip()
             if not stock_no:
+                continue
+            if stock_no not in requested:
                 continue
             price = _to_float(row.get("z"))
             if price is None:
@@ -92,6 +111,12 @@ class TwseRealtimeMarketDataProvider:
                 tick_epoch = int(str(row.get("tlong"))) // 1000
             except (TypeError, ValueError):
                 tick_epoch = 0
+
+            existing = quotes.get(stock_no)
+            existing_tick = int(existing["tick_at"]) if existing else -1
+            if existing is not None and tick_epoch < existing_tick:
+                continue
+
             quotes[stock_no] = {
                 "stock_no": stock_no,
                 "price": price,

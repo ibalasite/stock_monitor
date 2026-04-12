@@ -45,7 +45,10 @@ def test_twse_provider_build_url_and_quote_parsing(monkeypatch):
 
     def _fake_urlopen(req, timeout):
         assert timeout == provider.timeout_sec
-        assert "ex_ch=tse_2330.tw%7Ctse_2317.tw" in req.full_url
+        assert "tse_2330.tw" in req.full_url
+        assert "otc_2330.tw" in req.full_url
+        assert "tse_2317.tw" in req.full_url
+        assert "otc_2317.tw" in req.full_url
         return _FakeHttpResponse(body=json.dumps(rows))
 
     monkeypatch.setattr("stock_monitor.adapters.market_data_twse.request.urlopen", _fake_urlopen)
@@ -53,6 +56,56 @@ def test_twse_provider_build_url_and_quote_parsing(monkeypatch):
     assert "2330" in quotes
     assert quotes["2330"]["price"] == 2000.0
     assert "2317" not in quotes
+
+
+def test_twse_provider_supports_otc_and_prefers_latest_tick(monkeypatch):
+    provider = TwseRealtimeMarketDataProvider(base_url="https://example.test/api")
+    rows = {
+        "msgArray": [
+            {"c": "2330", "z": "1999.0", "tlong": "1775802000000", "n": "台積電"},
+            {"c": "2330", "z": "2000.0", "tlong": "1775802600000", "n": "台積電"},
+            {"c": "3293", "z": "688.0", "tlong": "1775802600000", "n": "鈊象"},
+            {"c": "9999", "z": "1.0", "tlong": "1775802600000", "n": "ignore-me"},
+        ]
+    }
+
+    def _fake_urlopen(req, timeout):
+        assert timeout == provider.timeout_sec
+        assert "tse_3293.tw" in req.full_url
+        assert "otc_3293.tw" in req.full_url
+        return _FakeHttpResponse(body=json.dumps(rows))
+
+    monkeypatch.setattr("stock_monitor.adapters.market_data_twse.request.urlopen", _fake_urlopen)
+    quotes = provider.get_realtime_quotes(["2330", "3293"])
+
+    assert quotes["2330"]["price"] == 2000.0
+    assert quotes["2330"]["tick_at"] == 1775802600
+    assert quotes["3293"]["price"] == 688.0
+    assert "9999" not in quotes
+
+
+def test_twse_provider_deduplicates_channels_and_skips_older_tick(monkeypatch):
+    provider = TwseRealtimeMarketDataProvider(base_url="https://example.test/api")
+    rows = {
+        "msgArray": [
+            {"c": "2330", "z": "2000.0", "tlong": "1775802600000", "n": "台積電"},
+            {"c": "2330", "z": "1990.0", "tlong": "1775802000000", "n": "台積電(older)"},
+        ]
+    }
+
+    def _fake_urlopen(req, timeout):
+        assert timeout == provider.timeout_sec
+        # duplicate/blank symbols should be normalized to one stock channel pair.
+        assert req.full_url.count("tse_2330.tw") == 1
+        assert req.full_url.count("otc_2330.tw") == 1
+        return _FakeHttpResponse(body=json.dumps(rows))
+
+    monkeypatch.setattr("stock_monitor.adapters.market_data_twse.request.urlopen", _fake_urlopen)
+    quotes = provider.get_realtime_quotes(["2330", "2330", " ", ""])
+
+    # older tick row should be ignored and not overwrite latest.
+    assert quotes["2330"]["price"] == 2000.0
+    assert quotes["2330"]["tick_at"] == 1775802600
 
 
 def test_twse_provider_market_snapshot_and_error_paths(monkeypatch):
