@@ -1,8 +1,8 @@
 # SECURITY_AND_SECRETS - Stock Monitoring System
 
-版本：v0.1  
-日期：2026-04-10  
-來源基準：`PDD_Stock_Monitoring_System.md`、`EDD_Stock_Monitoring_System.md`
+版本：v0.2  
+日期：2026-04-14  
+來源基準：`PDD_Stock_Monitoring_System.md`、`EDD_Stock_Monitoring_System.md`（v0.8）
 
 ## 1. 文件目的
 定義金鑰、權限、日誌與資料保護要求，降低通知系統的憑證與資料風險。
@@ -21,7 +21,13 @@
 2. `.env` 不得提交到版本庫。
 3. 錯誤日誌不得輸出完整 token：
    - 只允許 masked 顯示（如前 4 + 後 2）。
-4. 發現 token 外洩時需立即輪替並重啟服務。
+4. `LinePushClient` 持有物件不得透過 `repr()` 或任何 `__str__` 路徑輸出 token 明文；
+   實作上必須設定 `field(repr=False)` 或等效保護（對應 EDD §13.1 CR-SEC-01）。
+5. 系統時區名稱若設定無效，必須在啟動時即 `raise ValueError`；
+   不得靜默 fallback 至 UTC，否則導致 +08:00 偏移錯誤（對應 EDD §13.1 CR-SEC-03）。
+6. HTTP 回應讀取需設大小上限（預設 `MAX_RESPONSE_BYTES = 1_048_576`，即 1 MB）；
+   防止超大回應耗盡記憶體（對應 EDD §13.1 CR-SEC-04）。
+7. 發現 token 外洩時需立即輪替並重啟服務。
 
 ## 4. LINE 權限與配置
 1. 使用 LINE Messaging API，不使用已終止的 LINE Notify。
@@ -59,6 +65,9 @@
 2. log 不可洩漏 token（`TP-ENV-003`）。
 3. LINE 失敗不落 `message`（`TP-INT-004`）。
 4. 補償流程不重複通知（`TP-INT-005`、`TP-INT-006`）。
+5. `LinePushClient` repr/str 不洩漏 token 明文（`TP-SEC-001`）。
+6. 無效時區名稱啟動時 fail-fast，不得靜默 fallback（`TP-SEC-002`）。
+7. HTTP 回應有大小上限，防止 OOM（`TP-SEC-003`）。
 
 ## 9. 後續強化建議
 1. token 週期性輪替（例如每 90 天）。

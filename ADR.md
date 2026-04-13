@@ -1,8 +1,8 @@
 # ADR - Architecture Decision Records
 
-版本：v0.1  
-日期：2026-04-10  
-來源基準：`PDD_Stock_Monitoring_System.md`、`EDD_Stock_Monitoring_System.md`
+版本：v0.2  
+日期：2026-04-14  
+來源基準：`PDD_Stock_Monitoring_System.md`、`EDD_Stock_Monitoring_System.md`（v0.8）
 
 ## ADR-001 使用 Clean Architecture 分層
 1. 狀態：Accepted
@@ -99,3 +99,34 @@
 4. 影響：
    - 需新增模板設定鍵與 `MessageTemplatePort`。
    - 渲染失敗需有明確 `TEMPLATE_*` 錯誤語意與測試覆蓋。
+
+## ADR-011 估値計算器邏輯放在 Application 層
+1. 狀態：Accepted
+2. 決策：
+   - `ManualValuationCalculator`（及後續估値方法）需位於 `stock_monitor/application/` 下，不可定義在 CLI 入口 `app.py`。
+3. 原因：
+   - `app.py` 是 CLI Interface 層，職責將僅為解析命令列參數與呼叫 Application 服務（SRP 原則）。
+   - 估値邏輯放在 `app.py` 導致測試需啟動 CLI，增加耦合（CR-ARCH-01）。
+4. 影響：
+   - 新增 `stock_monitor/application/valuation_calculator.py`，`app.py` 僅做依賴注入。
+   - CLAUDE.md §11 禁止清單已登錄此規則。
+
+## ADR-012 `render_line_template_message` 唯一定義於 `message_template`
+1. 狀態：Accepted
+2. 決策：
+   - 所有出站 LINE 訊息文案渲染只能呼叫 `stock_monitor.application.message_template.render_line_template_message`，禁止在其他模組重複定義。
+3. 原因：
+   - 重複定義導致文案格式分歧，難以維護（CR-ARCH-03）。
+4. 影響：
+   - `monitoring_workflow.py`、`app.py` 等模組必須 import，不可 inline 定義。
+   - CLAUDE.md §11 禁止清單已登錄此規則（CR-ARCH-03）。
+
+## ADR-013 開盤摘要冪等狀態以 DB 欄位記錄
+1. 狀態：Accepted
+2. 決策：
+   - 開盤摘要是否已送出的判斷依據為 DB 欄位（如 `system_logs` 或專屬欄位），不得以程式記憶體變數或日誌字串比對判斷。
+3. 原因：
+   - `daemon` 重啟後記憶體狀態清空，若依賴記憶體變數或 log 字串，重啟後 09:01 將無法補送已錯過的開盤摘要（CR-ARCH-06）。
+4. 影響：
+   - 每次 `evaluate_market_open_status` 前必須查詢 DB，確認當日是否已送出。
+   - CR-CODE-06 對應實作改善：開盤檢查起始時間 08:45～09:00 區間唇均可評估，不定式限定在整分点 09:00。

@@ -1,8 +1,8 @@
 # OPERATIONS_RUNBOOK - Stock Monitoring System
 
-版本：v0.2  
-日期：2026-04-11  
-來源基準：`PDD_Stock_Monitoring_System.md`、`EDD_Stock_Monitoring_System.md`
+版本：v0.3  
+日期：2026-04-14  
+來源基準：`PDD_Stock_Monitoring_System.md`、`EDD_Stock_Monitoring_System.md`（v0.8）
 
 ## 1. 文件目的
 定義上線、日常巡檢、故障排查與補償操作流程，確保系統行為與規格一致。
@@ -13,7 +13,7 @@
    - `LINE_TEMPLATE_DIR`（模板目錄）
    - `LINE_TEMPLATE_MINUTE_DIGEST`、`LINE_TEMPLATE_OPENING_SUMMARY`
    - `LINE_TEMPLATE_TRIGGER_ROW`、`LINE_TEMPLATE_TEST_PUSH`（若提供 test push）
-   - `APP_TIMEZONE=Asia/Taipei`（未設定時預設 `Asia/Taipei`）
+   - `APP_TIMEZONE=Asia/Taipei`（未設定時預設 `Asia/Taipei`；若設定嘗無效時區名稱，服務啟動時將 fail-fast 並丟出 `ValueError`，不得靜默 fallback，見 EDD §13.1 CR-SEC-03）
    - `MAX_RETRY_COUNT=3`
    - `STALE_THRESHOLD_SEC=90`
    - `COOLDOWN_SEC=300`
@@ -83,6 +83,8 @@
 1. 08:45 後開始檢查大盤新資料。
 2. 09:00 後仍無當日大盤新資料視為不開市。
 3. 13:30 後一律不進行盤中輪詢通知。
+4. 開盤摘要（Opening Summary）冪等狀態以 DB 記錄為準；
+   若 `daemon` 在 09:01 後重啟，當日尚未發送開盤摘要時應正常補送（見 EDD §13.3 CR-ARCH-06、CR-CODE-06）。
 
 ## 8. 發布後驗證（Smoke）
 1. 以測試股票觸發一筆 `status=1`，確認 60 秒內可收到 LINE。
