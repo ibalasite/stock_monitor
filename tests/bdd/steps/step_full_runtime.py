@@ -892,17 +892,37 @@ def _handle_given(step: str, ctx: dict):
             "[UAT-014] MINUTE_DIGEST_TEMPLATE_KEY must be defined in monitoring_workflow"
         )
         return
-    # TP-SEC-001 / TP-SEC-002 / TP-ARCH-001/002/003 — pending CR-* action items
+    # TP-SEC-001 — CR-SEC-01: token repr protection
     if step.startswith("LinePushClient 以 token "):
-        pytest.skip("Pending CR-SEC-01: field(repr=False) not yet implemented")
+        from stock_monitor.adapters.line_messaging import LinePushClient
+        token = re.search(r'"([^"]+)"', step).group(1)
+        ctx["sec_line_client"] = LinePushClient(channel_access_token=token, to_group_id="C1234567890")
+        ctx["sec_token"] = token
+        return
+    # TP-SEC-002 — CR-SEC-03 / CR-CODE-05: invalid timezone fail-fast
     if step.startswith("使用無效時區名稱 "):
-        pytest.skip("Pending CR-SEC-03/CR-CODE-05: timezone validation not yet enforced")
+        ctx["sec_tz_name"] = re.search(r'"([^"]+)"', step).group(1)
+        ctx["sec_raised_exc"] = None
+        return
+    # TP-ARCH-001 — CR-ARCH-01/02: calculator in application layer
     if step == "stock_monitor.application.valuation_calculator 模組可 import":
-        pytest.skip("Pending CR-ARCH-01: ManualValuationCalculator not yet moved to application layer")
+        ctx["sec_arch001"] = {}
+        return
+    # TP-ARCH-002 — CR-ARCH-03: single render definition
     if step == "已載入 stock_monitor.application.message_template":
-        pytest.skip("Pending CR-ARCH-03: duplicate render_line_template_message not yet removed")
+        import stock_monitor.application.message_template as _mt
+        ctx["sec_message_template"] = _mt
+        return
+    # TP-ARCH-003 — CR-CODE-03: MinuteCycleConfig
     if step == "stock_monitor.application.runtime_service 模組可 import":
-        pytest.skip("Pending CR-CODE-03: MinuteCycleConfig not yet introduced")
+        import stock_monitor.application.runtime_service as _rs_mod
+        ctx["sec_runtime_service"] = _rs_mod
+        return
+    # TP-ARCH-004 — CR-ARCH-06: DB-based opening summary idempotency
+    if step == "系統採用 SqliteLogger 紀錄事件":
+        from stock_monitor.adapters.sqlite_repo import SqliteLogger as _SL
+        ctx["sec_SqliteLogger"] = _SL
+        return
     raise AssertionError(f"Unhandled GIVEN step: {step}")
 
 
@@ -1358,17 +1378,80 @@ def _handle_when(step: str, ctx: dict):
     if step == "任何 LINE 訊息被產生":
         # UAT-014: no-op; assertions are covered in THEN steps
         return
-    # TP-SEC-001/002 / TP-ARCH-001/002/003 — pending CR-* when steps
+    # TP-SEC-001 — CR-SEC-01: capture repr output
     if step == "對 LinePushClient 實例呼叫 repr()":
-        pytest.skip("Pending CR-SEC-01")
+        ctx["sec_repr_output"] = repr(ctx["sec_line_client"])
+        return
+    # TP-SEC-002 — CR-SEC-03 / CR-CODE-05: attempt invalid-tz init
     if step == "初始化 TimeBucketService 或呼叫 _resolve_timezone":
-        pytest.skip("Pending CR-SEC-03")
+        tz_name = ctx.get("sec_tz_name", "Invalid/NotAZone")
+        try:
+            ctx["sec_tz_service"] = TimeBucketService(tz_name)
+            ctx["sec_raised_exc"] = None
+        except ValueError as _exc:
+            ctx["sec_raised_exc"] = _exc
+        except Exception as _exc:
+            ctx["sec_raised_exc"] = _exc
+            ctx["sec_unexpected_exc_type"] = type(_exc).__name__
+        return
+    # TP-ARCH-001 — CR-ARCH-01/02: attempt import + run valuation
     if step == "執行一次估值計算（正常情境）":
-        pytest.skip("Pending CR-ARCH-01")
+        arch001 = ctx.setdefault("sec_arch001", {})
+        try:
+            from stock_monitor.application.valuation_calculator import ManualValuationCalculator as _MVC
+
+            class _FakeRepo:
+                def list_enabled(self_):
+                    return [{"stock_no": "2330", "manual_fair_price": 1500.0, "manual_cheap_price": 1000.0}]
+
+            _calc = _MVC(watchlist_repo=_FakeRepo(), trade_date="2026-04-14")
+            arch001["calc_result"] = _calc.calculate()
+            arch001["calc_events"] = getattr(_calc, "events", [])
+            arch001["calc_import_ok"] = True
+        except ImportError as _exc:
+            arch001["calc_import_ok"] = False
+            arch001["calc_import_error"] = str(_exc)
+        return
+    # TP-ARCH-002 — CR-ARCH-03: scan project for duplicate render definitions
     if step.startswith("在整個專案中搜尋"):
-        pytest.skip("Pending CR-ARCH-03")
+        import ast as _ast
+        import stock_monitor as _sm_pkg
+        from pathlib import Path as _Path
+        from inspect import getfile as _getfile
+        _pkg_root = _Path(_getfile(_sm_pkg)).parent
+        _defs: list[str] = []
+        for _py in sorted(_pkg_root.rglob("*.py")):
+            try:
+                _src = _py.read_text(encoding="utf-8")
+                _tree = _ast.parse(_src)
+                for _node in _ast.walk(_tree):
+                    if isinstance(_node, _ast.FunctionDef) and _node.name == "render_line_template_message":
+                        _defs.append(_py.name)
+            except Exception:
+                pass
+        ctx["sec_render_definitions"] = _defs
+        return
+    # TP-ARCH-003 — CR-CODE-03: attempt MinuteCycleConfig attribute lookup
     if step == "從 runtime_service import MinuteCycleConfig":
-        pytest.skip("Pending CR-CODE-03")
+        _rs = ctx.get("sec_runtime_service")
+        try:
+            ctx["sec_MinuteCycleConfig"] = getattr(_rs, "MinuteCycleConfig")
+            ctx["sec_mcc_import_ok"] = True
+        except AttributeError:
+            ctx["sec_mcc_import_ok"] = False
+        return
+    # TP-ARCH-004 — CR-ARCH-06: inspect method source
+    if step == "查看 opening_summary_sent_for_date 的實作":
+        import inspect as _inspect
+        _cls = ctx.get("sec_SqliteLogger")
+        _method = getattr(_cls, "opening_summary_sent_for_date", None)
+        ctx["sec_method_exists"] = _method is not None
+        if _method is not None:
+            try:
+                ctx["sec_method_source"] = _inspect.getsource(_method)
+            except Exception:
+                ctx["sec_method_source"] = ""
+        return
     raise AssertionError(f"Unhandled WHEN step: {step}")
 
 
@@ -1759,25 +1842,116 @@ def _handle_then(step: str, ctx: dict):
             "[UAT-014] aggregate_minute_notifications must not hardcode '[股票監控通知]'"
         )
         return
-    # TP-SEC-001 / TP-SEC-002 / TP-ARCH-001/002/003 — pending CR-* then steps
-    _cr_pending_then = {
-        "repr 輸出不應包含",
-        "LinePushClient 仍可正常發出 LINE API 請求",
-        "應立即 raise ValueError",
-        "不應繼續執行後續邏輯",
-        "不應 fallback 至 UTC 時區",
-        "ManualValuationCalculator 應可從 application.valuation_calculator import",
-        "app.py 不應包含估值計算專屬 class 或 function 定義",
-        "system_logs 不應出現 scenario_case 相關的偽造 skip 事件",
-        "只應在 message_template.py 中找到一個定義",
-        "runtime_service.py 不應包含 render_line_template_message 函式定義",
-        "import 應成功",
-        "MinuteCycleConfig 應為 dataclass 或具名 config 型別",
-        "run_minute_cycle 應接受 MinuteCycleConfig 作為設定入口",
-    }
-    for _pending in _cr_pending_then:
-        if step.startswith(_pending):
-            pytest.skip(f"Pending CR-*: {step}")
+    # TP-SEC-001 — CR-SEC-01: token repr
+    if step.startswith("repr 輸出不應包含 "):
+        _text = re.search(r'"([^"]+)"', step).group(1)
+        _repr = ctx.get("sec_repr_output", "")
+        assert _text not in _repr, (
+            f"[TP-SEC-001] repr() exposes token — CR-SEC-01 requires field(repr=False). Got: {_repr!r}"
+        )
+        return
+    if step == "LinePushClient 仍可正常發出 LINE API 請求":
+        _client = ctx.get("sec_line_client")
+        assert hasattr(_client, "channel_access_token"), "[TP-SEC-001] must keep channel_access_token"
+        assert hasattr(_client, "send"), "[TP-SEC-001] must keep send() method"
+        return
+    # TP-SEC-002 — CR-SEC-03 / CR-CODE-05: timezone ValueError
+    if step == "應立即 raise ValueError":
+        _exc = ctx.get("sec_raised_exc")
+        _unexp = ctx.get("sec_unexpected_exc_type")
+        if _unexp:
+            pytest.fail(f"[TP-SEC-002] Expected ValueError but got {_unexp}({_exc})")
+        assert _exc is not None, (
+            f"[TP-SEC-002] No exception raised for invalid tz {ctx.get('sec_tz_name')!r} — "
+            "CR-SEC-03 / CR-CODE-05 require ValueError fail-fast, not silent fallback"
+        )
+        assert isinstance(_exc, ValueError), f"[TP-SEC-002] Expected ValueError, got {type(_exc).__name__}"
+        return
+    if step == "不應繼續執行後續邏輯":
+        assert ctx.get("sec_raised_exc") is not None, (
+            "[TP-SEC-002] Execution continued without raising — service created with degraded tz=None"
+        )
+        return
+    if step == "不應 fallback 至 UTC 時區":
+        assert ctx.get("sec_raised_exc") is not None, (
+            "[TP-SEC-002] Silent UTC fallback occurred — CR-SEC-03 requires ValueError instead"
+        )
+        return
+    # TP-ARCH-001 — CR-ARCH-01/02: calculator in application layer
+    if step == "ManualValuationCalculator 應可從 application.valuation_calculator import":
+        _arch001 = ctx.get("sec_arch001", {})
+        if not _arch001.get("calc_import_ok"):
+            pytest.fail(
+                "[TP-ARCH-001] CR-ARCH-01: Cannot import ManualValuationCalculator from "
+                f"stock_monitor.application.valuation_calculator — "
+                f"{_arch001.get('calc_import_error', 'ImportError')}"
+            )
+        return
+    if step == "app.py 不應包含估值計算專屬 class 或 function 定義":
+        import stock_monitor.app as _app_mod
+        assert not hasattr(_app_mod, "_ManualValuationCalculator"), (
+            "[TP-ARCH-001] CR-ARCH-01: app.py still defines _ManualValuationCalculator. "
+            "Move to stock_monitor.application.valuation_calculator."
+        )
+        return
+    if step == "system_logs 不應出現 scenario_case 相關的偽造 skip 事件":
+        _events = ctx.get("sec_arch001", {}).get("calc_events", [])
+        _fake = [e for e in _events if "optional_indicator_v1" in str(e) and "SKIP_INSUFFICIENT_DATA" in str(e)]
+        assert not _fake, f"[TP-ARCH-001/CR-SEC-02] Fake skip events from scenario_case='default': {_fake}"
+        return
+    # TP-ARCH-002 — CR-ARCH-03: single render definition
+    if step == "只應在 message_template.py 中找到一個定義":
+        _defs = ctx.get("sec_render_definitions", [])
+        assert len(_defs) == 1, (
+            f"[TP-ARCH-002] CR-ARCH-03: render_line_template_message defined in {len(_defs)} file(s): {_defs}. "
+            "Expected 1 definition in message_template.py only."
+        )
+        return
+    if step == "runtime_service.py 不應包含 render_line_template_message 函式定義":
+        _defs = ctx.get("sec_render_definitions", [])
+        assert "runtime_service.py" not in _defs, (
+            f"[TP-ARCH-002] CR-ARCH-03: runtime_service.py still defines render_line_template_message: {_defs}"
+        )
+        return
+    # TP-ARCH-003 — CR-CODE-03: MinuteCycleConfig
+    if step == "import 應成功":
+        assert ctx.get("sec_mcc_import_ok"), (
+            "[TP-ARCH-003] CR-CODE-03: MinuteCycleConfig not found in runtime_service. "
+            "Introduce a MinuteCycleConfig dataclass to replace the 12-parameter signature."
+        )
+        return
+    if step == "MinuteCycleConfig 應為 dataclass 或具名 config 型別":
+        from dataclasses import is_dataclass as _is_dc
+        _cls = ctx.get("sec_MinuteCycleConfig")
+        if _cls is None:
+            pytest.fail("[TP-ARCH-003] MinuteCycleConfig not imported")
+        assert _is_dc(_cls), f"[TP-ARCH-003] CR-CODE-03: {_cls!r} is not a dataclass"
+        return
+    if step == "run_minute_cycle 應接受 MinuteCycleConfig 作為設定入口":
+        import inspect as _insp
+        _rs = ctx.get("sec_runtime_service")
+        _sig = _insp.signature(_rs.run_minute_cycle)
+        _params = list(_sig.parameters.keys())
+        _cfg_params = [p for p in _params if p in {"config", "cfg", "minute_cycle_config"}]
+        assert _cfg_params, (
+            f"[TP-ARCH-003] CR-CODE-03: run_minute_cycle uses individual params {_params}, not a config object"
+        )
+        return
+    # TP-ARCH-004 — CR-ARCH-06: DB-based opening summary idempotency
+    if step == "不得使用 LIKE 查詢比對 system_logs.detail 判斷是否已發送":
+        _src = ctx.get("sec_method_source", "")
+        assert "LIKE" not in _src, (
+            "[TP-ARCH-004] CR-ARCH-06: opening_summary_sent_for_date uses LIKE on system_logs.detail "
+            "(log-as-state anti-pattern). Replace with dedicated DB state field."
+        )
+        return
+    if step == "應使用專屬 DB 狀態欄位或獨立資料表記錄已發送日期":
+        _src = ctx.get("sec_method_source", "")
+        assert "system_logs" not in _src, (
+            "[TP-ARCH-004] CR-ARCH-06: opening_summary_sent_for_date still queries system_logs. "
+            "After fix, use a dedicated idempotency store (not the event log table)."
+        )
+        return
     raise AssertionError(f"Unhandled THEN step: {step}")
 
 

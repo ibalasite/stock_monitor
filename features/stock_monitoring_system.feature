@@ -527,3 +527,13 @@ Feature: 台股監控與 LINE 通知系統（完整 BDD 規格）
       And MinuteCycleConfig 應為 dataclass 或具名 config 型別
       And run_minute_cycle 應接受 MinuteCycleConfig 作為設定入口
 
+    @TP-ARCH-004
+    Scenario: [TP-ARCH-004] 開盤摘要冪等狀態應儲存於 DB 欄位不得依賴 log LIKE 查詢
+      # EDD §13.2 CR-ARCH-06 / §13.3 CR-CODE-06：DB-over-log 冪等合約
+      # log-as-state 反模式：以 system_logs.detail LIKE '%date=...' 判斷是否已發送
+      # daemon 重啟後 in-memory 狀態消失，log LIKE 雖可查詢但脆弱且語意錯誤
+      Given 系統採用 SqliteLogger 紀錄事件
+      When 查看 opening_summary_sent_for_date 的實作
+      Then 不得使用 LIKE 查詢比對 system_logs.detail 判斷是否已發送
+      And 應使用專屬 DB 狀態欄位或獨立資料表記錄已發送日期
+
