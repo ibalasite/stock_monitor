@@ -28,16 +28,16 @@ Feature: 台股監控與 LINE 通知系統（完整 BDD 規格）
     @TP-DB-002 @schema
     Scenario: [TP-DB-002] valuation_methods 同 method_name 僅允許一個 enabled=1
       Given 已完成資料庫 migration
-      When 插入 valuation method "pe_band:v1" with enabled 1
+      When 插入 valuation method "emily_composite:v1" with enabled 1
       Then 寫入應成功
-      When 插入 valuation method "pe_band:v2" with enabled 1
+      When 插入 valuation method "emily_composite:v2" with enabled 1
       Then 寫入應失敗且錯誤為 partial unique index
 
     @TP-DB-003 @schema
     Scenario: [TP-DB-003] message 表需滿足 minute_bucket 格式、JSON 與同分鐘唯一鍵
       Given 已完成資料庫 migration
       And 已有 watchlist "2330"
-      When 新增 message row for stock "2330" minute "2026-04-10 10:21" methods_hit 為有效 JSON 陣列且包含 "manual_rule"
+      When 新增 message row for stock "2330" minute "2026-04-10 10:21" methods_hit 為有效 JSON 陣列且包含 "emily_composite_v1"
       Then 寫入應成功
       When 再新增 message row for stock "2330" same minute "2026-04-10 10:21"
       Then 寫入應失敗且錯誤為 unique constraint
@@ -55,12 +55,12 @@ Feature: 台股監控與 LINE 通知系統（完整 BDD 規格）
     Scenario: [TP-DB-005] valuation_snapshots 唯一鍵需包含 method_version
       Given 已完成資料庫 migration
       And 已有 watchlist "2330"
-      And 已有 valuation method "pe_band:v1" 與 "pe_band:v2"
-      When 新增 valuation_snapshot for stock "2330" trade_date "2026-04-10" method "pe_band:v1"
+      And 已有 valuation method "emily_composite:v1" 與 "emily_composite:v2"
+      When 新增 valuation_snapshot for stock "2330" trade_date "2026-04-10" method "emily_composite:v1"
       Then 寫入應成功
-      When 新增 valuation_snapshot for stock "2330" trade_date "2026-04-10" method "pe_band:v2"
+      When 新增 valuation_snapshot for stock "2330" trade_date "2026-04-10" method "emily_composite:v2"
       Then 寫入應成功
-      When 再新增 valuation_snapshot for stock "2330" trade_date "2026-04-10" method "pe_band:v1"
+      When 再新增 valuation_snapshot for stock "2330" trade_date "2026-04-10" method "emily_composite:v1"
       Then 寫入應失敗且錯誤為 unique constraint
 
   Rule: 啟動環境與設定驗證（TP-ENV-* + US-011 + UAT-9）
@@ -109,11 +109,11 @@ Feature: 台股監控與 LINE 通知系統（完整 BDD 規格）
     @TP-POL-001 @priority
     Scenario: [TP-POL-001] 同分鐘同股票同時命中 status 1/2 僅保留 status 2
       Given 股票 "2330" 在同分鐘有兩個命中
-      And 第一個命中為 status 1 from method "manual_rule"
-      And 第二個命中為 status 2 from method "pe_band_v1"
+      And 第一個命中為 status 1 from method "emily_composite_v1"
+      And 第二個命中為 status 2 from method "raysky_blended_margin_v1"
       When 套用 PriorityPolicy
       Then 最終狀態應為 status 2
-      And 訊息內 methods_hit 應包含 "manual_rule,pe_band_v1"
+      And 訊息內 methods_hit 應包含 "emily_composite_v1,raysky_blended_margin_v1"
 
     @TP-POL-002 @cooldown
     Scenario Outline: [TP-POL-002] 冷卻判斷邊界 <elapsed> 秒
@@ -142,7 +142,7 @@ Feature: 台股監控與 LINE 通知系統（完整 BDD 規格）
 
     @TP-POL-005 @EDD-2-3 @multi_method
     Scenario: [TP-POL-005] 同股票同分鐘多方法皆命中 status 1 時只產生一個股票訊號
-      Given 股票 "2330" 同分鐘命中 methods "manual_rule,pe_band_v1,pb_band_v2"
+      Given 股票 "2330" 同分鐘命中 methods "emily_composite_v1,oldbull_dividend_yield_v1,raysky_blended_margin_v1"
       And 以上方法狀態皆為 status 1
       When 進行股票層級聚合
       Then 只應產生一個股票事件
@@ -158,13 +158,16 @@ Feature: 台股監控與 LINE 通知系統（完整 BDD 規格）
 
     @TP-POL-006b @EDD-2-4 @cooldown
     Scenario: [TP-POL-006b] 第 1 分鐘 status 1 可發，第 2 分鐘 status 1 即使方法不同也不可發
-      Given 第 1 分鐘股票 "2330" 命中 status 1 from method "manual_rule" 並已成功發送
-      And 第 2 分鐘股票 "2330" 命中 status 1 from method "pe_band_v1"
+      Given 第 1 分鐘股票 "2330" 命中 status 1 from method "emily_composite_v1" 並已成功發送
+      And 第 2 分鐘股票 "2330" 命中 status 1 from method "oldbull_dividend_yield_v1"
       When 套用冷卻規則
       Then 第 2 分鐘事件應被擋下
       And 不應更新任何 message.update_time
 
   Rule: 盤中一分鐘主流程與 LINE/DB 一致性（TP-INT-* + UAT-1/2/3/6/7/8）
+    # FR-14 對齊要求：
+    # 每分鐘彙總通知與觸發列內容都需由 template 渲染（template_key + context），
+    # 不得在主流程程式直接硬編碼最終 LINE 文案。
 
     @TP-INT-001 @UAT-006
     Scenario: [TP-INT-001] 同分鐘多股票命中時 LINE 僅發一次且內容含全部股票
@@ -182,9 +185,9 @@ Feature: 台股監控與 LINE 通知系統（完整 BDD 規格）
 
     @TP-INT-003
     Scenario: [TP-INT-003] 同分鐘同狀態但內容差異時可更新為最終聚合內容
-      Given message 表已有 "2330" minute "2026-04-10 10:21" status 1 且 methods_hit 僅含 "manual_rule"
-      When 同分鐘新輸入為 status 1 且 methods_hit 含 "manual_rule,pb_band_v2"
-      Then upsert 後 methods_hit 應更新為同分鐘最終方法清單 "manual_rule,pb_band_v2"
+      Given message 表已有 "2330" minute "2026-04-10 10:21" status 1 且 methods_hit 僅含 "emily_composite_v1"
+      When 同分鐘新輸入為 status 1 且 methods_hit 含 "emily_composite_v1,raysky_blended_margin_v1"
+      Then upsert 後 methods_hit 應更新為同分鐘最終方法清單 "emily_composite_v1,raysky_blended_margin_v1"
       And message 內容應更新為最新聚合版
 
     @TP-INT-004
@@ -289,6 +292,24 @@ Feature: 台股監控與 LINE 通知系統（完整 BDD 規格）
       When 產生彙總訊息
       Then 該股票應僅以 status 2 呈現與通知
 
+  Rule: 開盤監控設定摘要通知（FR-13 + UAT-13）
+    # FR-14 對齊要求：
+    # 所有出站 LINE 訊息皆需模板渲染；開盤摘要是其中一種。
+    # 開盤摘要最終文字需由模板渲染（Template-driven），而非在主流程程式硬編碼。
+    # 模板可調整為手機友善精簡格式（例：台積電(2330) 手動 2000/1500）。
+
+    @TP-INT-012 @UAT-013 @TP-UAT-013
+    Scenario: [TP-INT-012/UAT-013] 交易日開盤第一個可交易分鐘先發監控摘要且同日不重複
+      Given 今天是交易日
+      And 當日 watchlist 含 "2330,2348,3293"
+      And 當日可用方法為 "manual_rule,emily_composite_v1,oldbull_dividend_yield_v1,raysky_blended_margin_v1"
+      And 各股票各方法 fair/cheap 已可取得
+      When 觸發開盤監控設定摘要通知
+      Then LINE 應發送 1 封開盤摘要訊息
+      And 訊息應列出股票、方法、fair/cheap
+      When 同一交易日再次觸發開盤摘要
+      Then LINE 不應再次發送開盤摘要
+
   Rule: 每日 14:00 估值流程（TP-VAL-* + UAT-5）
 
     @TP-VAL-001 @UAT-005
@@ -313,6 +334,32 @@ Feature: 台股監控與 LINE 通知系統（完整 BDD 規格）
       When 觸發日結估值 job
       Then 既有快照不應被覆蓋
       And system_logs 應記錄錯誤
+
+    @TP-VAL-004 @US-008 @US-009
+    Scenario: [TP-VAL-004] 三方法同日可同時產生快照
+      Given 三方法所需資料皆可用
+      When 觸發日結估值 job
+      Then emily/oldbull/raysky 各新增一筆快照
+
+    @TP-VAL-005 @US-014
+    Scenario: [TP-VAL-005] 單方法資料不足僅該方法 skip，不影響其它方法
+      Given raysky 缺 "current_assets"
+      When 觸發日結估值 job
+      Then raysky 應記錄 "SKIP_INSUFFICIENT_DATA" 且其餘方法成功
+
+    @TP-VAL-006 @US-014
+    Scenario: [TP-VAL-006] 主來源失敗時可切換備援並成功估值
+      Given 主來源逾時、備援可用
+      When 觸發日結估值 job
+      Then 該方法可成功計算且有來源切換 log
+
+    @UAT-012 @TP-UAT-012 @US-014
+    Scenario: [UAT-012] 每交易日三方法估值皆應嘗試執行，資料不足方法需 skip 且不得覆蓋舊值
+      Given 昨日 valuation_snapshots 已存在
+      And raysky 缺 "current_assets"
+      When 觸發日結估值 job
+      Then raysky 應記錄 "SKIP_INSUFFICIENT_DATA" 且其餘方法成功
+      And 既有快照不應被覆蓋
 
     @UAT-005 @TP-UAT-005
     Scenario: [UAT-005] 每交易日 14:00 估值任務執行一次且失敗不覆蓋
@@ -416,3 +463,18 @@ Feature: 台股監控與 LINE 通知系統（完整 BDD 規格）
       Then 分母應為 980
       And 準確率應為 99.18%
       And KPI 驗證結果應為 "pass"
+
+  Rule: LINE 訊息全量模板化（FR-14 + UAT-14）
+    # PDD FR-14 / EDD §2.7 / ADR-010 強制要求：
+    # 所有出站 LINE 訊息（彙總通知、開盤摘要、觸發列、測試推播）都必須由模板渲染，
+    # 業務層只提供 template_key + context，不得在業務程式直接拼接最終文案。
+    # BDD 詳細 Scenario 見 line_template_rendering.feature。
+
+    @UAT-014 @TP-UAT-014
+    Scenario: [UAT-014] 所有出站 LINE 訊息皆透過 template_key + context 渲染且無硬編碼文案
+      Given 系統正在組合出站 LINE 訊息（彙總、摘要、觸發列）
+      And TRIGGER_ROW_TEMPLATE_KEY 已定義於 runtime_service
+      And MINUTE_DIGEST_TEMPLATE_KEY 已定義於 monitoring_workflow
+      When 任何 LINE 訊息被產生
+      Then 所有訊息皆須透過 render_line_template_message 渲染
+      And 程式碼中不得存在跳過模板的硬編碼最終文案

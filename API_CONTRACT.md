@@ -1,7 +1,7 @@
 # API_CONTRACT - Stock Monitoring System
 
-版本：v0.1  
-日期：2026-04-10  
+版本：v0.2  
+日期：2026-04-14  
 來源基準：`PDD_Stock_Monitoring_System.md`、`EDD_Stock_Monitoring_System.md`
 
 ## 1. 文件目的
@@ -31,6 +31,12 @@
    - 啟動時 fail-fast 驗證必要值存在與格式有效。
    - Canonical 與 alias 同時存在時，以 Canonical 為準。
    - log 不得輸出完整 token。
+4. 模板設定（FR-14）：
+   - `LINE_TEMPLATE_DIR`
+   - `LINE_TEMPLATE_MINUTE_DIGEST`
+   - `LINE_TEMPLATE_TRIGGER_ROW`
+   - `LINE_TEMPLATE_OPENING_SUMMARY`
+   - `LINE_TEMPLATE_TEST_PUSH`（若系統提供測試推播）
 
 ## 4. Domain 事件契約
 ### 4.1 StockSignalEvent
@@ -50,8 +56,17 @@
 |---|---|---|
 | `minute_bucket` | `str` | 分鐘桶 |
 | `events` | `list[StockSignalEvent]` | 該分鐘可發送事件 |
-| `message_text` | `str` | LINE 單封彙總訊息內容 |
+| `message_text` | `str` | LINE 單封彙總訊息內容（由 template 渲染） |
+| `template_key` | `str` | 渲染使用模板鍵（例如 `line_minute_digest_v1`） |
 | `idempotency_key` | `str` | `minute_bucket` 層級請求鍵（發送層） |
+
+### 4.3 OutboundLineMessage
+| 欄位 | 型別 | 說明 |
+|---|---|---|
+| `message_type` | `str` | `minute_digest` / `opening_summary` / `trigger_row` / `test_push` |
+| `template_key` | `str` | 對應模板鍵 |
+| `context` | `dict` | 模板渲染輸入資料 |
+| `rendered_text` | `str` | render 後最終文案（不得為空） |
 
 ## 5. Port 契約
 ### 5.1 `MarketDataPort`
@@ -76,8 +91,9 @@
    - 09:00 後若無當日大盤新資料，為 false。
 
 ### 5.3 `LineMessagingPort`
-1. `send_minute_digest(minute_bucket: str, message_text: str) -> LineSendResult`
-2. `LineSendResult`：
+1. `send_text(message_type: str, message_text: str) -> LineSendResult`
+2. `message_text` 必須是模板 render 的輸出，不可為業務層硬編碼完整文案。
+3. `LineSendResult`：
    - `success: bool`
    - `provider_message_id: str|None`
    - `sent_at_utc: int|None`
@@ -111,6 +127,14 @@
 3. `mark_reconciled(id: int, now_utc: int) -> None`
 4. `mark_failed(id: int, error: str, now_utc: int) -> None`
 
+### 5.7 `MessageTemplatePort`
+1. `render(template_key: str, context: dict) -> str`
+2. 契約：
+   - `template_key` 不存在時拋 `TEMPLATE_NOT_FOUND`
+   - template 語法或 context 缺失導致渲染失敗時拋 `TEMPLATE_RENDER_FAILED`
+   - render 輸出不可為空字串
+   - 所有出站 LINE 訊息（minute digest/opening summary/trigger row/test push）都必須先經過此介面
+
 ## 6. 錯誤語意契約
 | Error Code | 行為 |
 |---|---|
@@ -120,6 +144,8 @@
 | `DATA_CONFLICT` | 該股票該分鐘跳過，不補發，寫 WARN |
 | `LINE_SEND_FAILED` | 不寫 `message`，寫 ERROR |
 | `DB_WRITE_FAILED_AFTER_SEND` | 寫補償佇列，視同已通知 |
+| `TEMPLATE_NOT_FOUND` | 寫 ERROR，該次通知視為失敗 |
+| `TEMPLATE_RENDER_FAILED` | 寫 ERROR，該次通知視為失敗 |
 
 ## 7. BDD 對應
 1. `features/stock_monitoring_system.feature` 的 `TP-ENV-*`、`TP-POL-*`、`TP-INT-*` 全部應可對應到本契約至少一個 Port 行為。

@@ -1,6 +1,6 @@
 # Stock Monitoring System - README
 
-更新日期：2026-04-13  
+更新日期：2026-04-14  
 專案目標：台股價格監控 + LINE 群組通知 + 每日估值 + SQLite 落盤 + 補償機制
 
 ## 1. 專案現況摘要
@@ -10,7 +10,7 @@
 4. `pytest-bdd` 已安裝，`stock_monitoring_smoke.feature` 與完整 `stock_monitoring_system.feature` 皆可執行。
 5. `stock_monitor` 主程式套件已建立並實作核心測試契約。
 6. 最新狀態：
-   - `pytest -q tests`：最近一次基線（2026-04-13）為 `141 passed`（含完整 BDD + unit/integration/UAT contract）
+   - `pytest -q tests`：最近一次基線（2026-04-14）為 `163 passed`（含完整 BDD + unit/integration/UAT contract）
    - Coverage gate：`100%`（line + branch）
    - CI：`.github/workflows/ci.yml` 已啟用（push / pull_request），且已採用 action SHA pin + 鎖版依賴 + `pip-audit`
    - 可執行入口：`python -m stock_monitor init-db|run-once|reconcile-once|valuation-once|run-daemon`
@@ -28,6 +28,7 @@
 | `USER_STORY_ACCEPTANCE_CRITERIA.md` | User Story 與驗收條件 | 排優先序、拆工作項時 |
 | `features/stock_monitoring_system.feature` | BDD 可讀規格（業務語言） | 與 PM/QA 對齊行為、做 BDD 驗收時 |
 | `TEST_PLAN.md` | 測試策略與 TP 對照矩陣 | 實作測試、追蹤 coverage 與驗收時 |
+| `VALUATION_PERSONAS_DISTILLATION.md` | 艾蜜莉/股海老牛/雷司紀方法蒸餾與落地映射 | 建立估值方法規格、對齊 method naming 時 |
 | `API_CONTRACT.md` | Port/Adapter 與錯誤語意契約 | 寫應用層與基礎設施介面前 |
 | `ADR.md` | 架構決策記錄（為什麼這樣設計） | 有架構爭議或變更時 |
 | `NFR_SLI_SLO.md` | 非功能需求與量測指標 | 定義 KPI、監控與告警時 |
@@ -61,6 +62,8 @@
    - LINE 參數 canonical + alias 相容規則
    - `MAX_RETRY_COUNT=3`、`STALE_THRESHOLD_SEC=90`
    - `methods_hit` 必須為 JSON array
+   - 三方法基線：`emily_composite_v1`、`oldbull_dividend_yield_v1`、`raysky_blended_margin_v1`
+   - 每方法估值狀態：`SUCCESS / SKIP_INSUFFICIENT_DATA / SKIP_PROVIDER_ERROR`
 3. BDD `.feature` 與 `TEST_PLAN` TP-ID 已對齊。
 4. 內層 pytest 契約測試檔已建立（可作為 TDD 基線）。
 5. `tests/bdd/` 骨架已建立，scenario glue 已可載入整份 `.feature`。
@@ -89,14 +92,16 @@
    - `nightly-smoke.yml`（TWSE + 可選 LINE sandbox）
 16. 行情 adapter 已支援 `TWSE + OTC` 雙通道查詢（可覆蓋上櫃股票，如 `3293`）。
 17. LINE 通知訊息已改為中文可讀格式（包含股票中文名、代號、現價與門檻描述）：
-   - 例：`台積電(2330)目前1950，低於合理價2000`
-   - `status=2` 例：`台積電(2330)目前1450，低於便宜價1500（合理價2000）`
+    - 例：`台積電(2330)目前1950，低於合理價2000`
+    - `status=2` 例：`台積電(2330)目前1450，低於便宜價1500（合理價2000）`
+18. 規格已新增 FR-14：所有出站 LINE 訊息（彙總/摘要/觸發列/測試推播）需 Template-driven（文案格式不寫死於主流程程式碼）。
 
 ## 6. 下一步要做什麼（建議執行順序）
-1. 完成正式人工 UAT 簽核（PO/QA/Eng Lead）。
-2. 設定 GitHub Secrets（LINE sandbox）並啟用 nightly LINE push 驗證。
-3. 實際交易日觀察 daemon 日誌與通知品質，回填 `test-report.md`/`defect-log.md`。
-4. 持續維持流程：`PDD/EDD -> feature -> tests -> code`。
+1. 依 FR-14 完成全量模板化落地：minute digest / opening summary / trigger row / test push 全部改走 `template_key + context`。
+2. 完成正式人工 UAT 簽核（PO/QA/Eng Lead）。
+3. 設定 GitHub Secrets（LINE sandbox）並啟用 nightly LINE push 驗證。
+4. 實際交易日觀察 daemon 日誌與通知品質，回填 `test-report.md`/`defect-log.md`。
+5. 持續維持流程：`PDD/EDD -> feature -> tests -> code`。
 
 ## 7. 啟動流程（實際可操作）
 ### 7.1 現在就可以跑（開發驗證模式）
@@ -118,8 +123,8 @@ python -m pip install --require-hashes -r requirements-dev.txt
 ```powershell
 python -m pytest -q tests
 ```
-5. 最近一次基線結果（2026-04-13）：
-   - `141 passed`
+5. 最近一次基線結果（2026-04-14）：
+   - `159 passed`
    - coverage `100%`
    - 實際請以你當次執行輸出為準
 
@@ -334,6 +339,12 @@ python scripts/test_line_push.py --dry-run
 
 # 只測 LINE 通道（實際送一則訊息）
 python scripts/test_line_push.py --message "LINE 通道測試"
+
+# 測開盤摘要（只預覽，不送 LINE）
+python scripts/test_opening_summary_push.py --print-message-only
+
+# 測開盤摘要（實際送到 LINE）
+python scripts/test_opening_summary_push.py --send
 
 # 真實外部依賴 smoke（TWSE only）
 python scripts/external_dependency_smoke.py --stock-no 2330 --skip-line

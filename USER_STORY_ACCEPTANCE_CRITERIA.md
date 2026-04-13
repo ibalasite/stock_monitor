@@ -1,7 +1,7 @@
 # User Story + 驗收條件（Stock Monitoring）
 
-版本：v0.3  
-日期：2026-04-10  
+版本：v0.4  
+日期：2026-04-13  
 對應文件：`PDD_Stock_Monitoring_System.md`
 
 ## 1. 文件目的
@@ -120,6 +120,7 @@
 3. 估值失敗時，不覆蓋舊快照。
 4. 快照至少含 `stock_no/method_name/method_version/trade_date/fair/cheap`。
 5. 快照唯一鍵含 `method_version`。
+6. 第一批方法固定包含 `emily_composite_v1`、`oldbull_dividend_yield_v1`、`raysky_blended_margin_v1`。
 
 ### US-009 多方法估值策略
 - Priority：`P2`
@@ -132,6 +133,47 @@
 2. 同 `method_name` 同時間只允許一個 `enabled` 版本。
 3. 任一方法命中即可觸發通知。
 4. 同分鐘同股票多方法命中時，訊息需列出方法清單。
+5. 第一批方法命名與版本需與 PDD/EDD 一致，不得混用舊命名（如 `pe_band`/`pb_band`）。
+
+### US-014 估值資料來源充分性
+- Priority：`P2`
+- Release：`M2/M3`
+- Dependency：`US-008`, `US-009`
+- As 投資者, I want 每日估值有可計算性與來源備援, So that 不會因單一資料缺失導致整體估值停擺。
+
+**Acceptance Criteria**
+1. 每方法需定義 `required_fields` 最小輸入集。
+2. 每日估值對每檔每方法輸出狀態：`SUCCESS` / `SKIP_INSUFFICIENT_DATA` / `SKIP_PROVIDER_ERROR`。
+3. 單方法 `SKIP` 不得阻斷其他方法執行。
+4. 單方法 `SKIP` 不得覆蓋舊快照。
+5. 主來源失敗時若備援可用，應切換並完成該方法估值，且記錄來源切換 log。
+
+### US-015 開盤監控設定摘要通知
+- Priority：`P1`
+- Release：`M2`
+- Dependency：`US-001`, `US-008`, `US-009`
+- As 投資者, I want 開盤時先收到當日監控設定摘要, So that 我能先確認今日監控股票、方法與門檻價格。
+
+**Acceptance Criteria**
+1. 觸發時機為每交易日第一個可交易分鐘。
+2. 同一交易日僅可發送一次摘要通知，重啟後不得重複發送。
+3. 摘要需列出：監控股票清單、啟用方法清單（含 `manual_rule`）、逐股票逐方法 `fair/cheap`。
+4. `manual_rule` 取自 `watchlist`，估值方法取自 `valuation_snapshots`（`trade_date <= today` 最新值）。
+5. 若某股票某方法沒有可用快照，摘要中仍需列出方法並標示 `N/A`。
+6. 摘要訊息需由模板渲染（Template-driven），不得將完整文案格式寫死於業務程式；需支援手機友善精簡格式（例如：`台積電(2330) 手動 2000/1500`）。
+
+### US-016 全量 LINE 訊息模板化
+- Priority：`P1`
+- Release：`M2`
+- Dependency：`US-004`, `US-015`
+- As 投資者與維運者, I want 所有出站 LINE 訊息都由模板渲染, So that 可控文案一致且不需改主流程程式。
+
+**Acceptance Criteria**
+1. 每分鐘彙總通知必須透過 `template_key + context` 渲染，不得在業務層拼接最終文案。
+2. 開盤監控摘要通知必須透過 `template_key + context` 渲染。
+3. 單股觸發內容列（status 1/2）必須透過 `template_key + context` 渲染。
+4. 若系統提供測試推播功能，測試推播文案也必須透過 `template_key + context` 渲染。
+5. 任一模板缺失或渲染失敗需記錄明確錯誤，且不得默默退回未知硬編碼格式。
 
 ### US-010 觀測性與健康檢查
 - Priority：`P0`
@@ -188,8 +230,11 @@
 6. UAT-6 對應 `US-004/US-009`。
 7. UAT-7 對應 `US-003`。
 8. UAT-8 對應 `US-007/US-012`。
+9. UAT-12 對應 `US-008/US-009/US-014`。
+10. UAT-13 對應 `US-015`。
+11. UAT-14 對應 `US-016`。
 
 ## 5. BDD 拆分建議
 1. `P0` 先建 `.feature`：`US-011 -> US-001 -> US-002 -> US-003 -> US-004 -> US-005 -> US-006 -> US-012 -> US-010`。
-2. `P1/P2` 再擴：`US-007`, `US-013`, `US-008`, `US-009`。
+2. `P1/P2` 再擴：`US-007`, `US-013`, `US-008`, `US-009`, `US-014`。
 3. 每個 Acceptance Criteria 至少一個 Scenario。

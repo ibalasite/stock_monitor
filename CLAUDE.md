@@ -1,7 +1,7 @@
 # CLAUDE.md - Stock Monitor AI 開發手冊
 
-最後更新：2026-04-10（Asia/Taipei, v0.7）
-對齊文件：`PDD_Stock_Monitoring_System.md` v0.7、`EDD_Stock_Monitoring_System.md` v0.5、`TEST_PLAN.md` v0.4、`USER_STORY_ACCEPTANCE_CRITERIA.md` v0.3、`API_CONTRACT.md` v0.1、`ADR.md` v0.1、`NFR_SLI_SLO.md` v0.1、`SECURITY_AND_SECRETS.md` v0.1、`OPERATIONS_RUNBOOK.md` v0.1
+最後更新：2026-04-14（Asia/Taipei, v0.8）
+對齊文件：`PDD_Stock_Monitoring_System.md`、`EDD_Stock_Monitoring_System.md`、`TEST_PLAN.md`、`USER_STORY_ACCEPTANCE_CRITERIA.md`、`API_CONTRACT.md`、`ADR.md`、`NFR_SLI_SLO.md`、`SECURITY_AND_SECRETS.md`、`OPERATIONS_RUNBOOK.md`
 
 本檔與 `CODEX.md` 保持同一份規格語意，任一檔更新時需同步另一檔。
 
@@ -72,6 +72,7 @@ Alias（等效）：
 
 ### 5.4 每分鐘訊息與補償
 - 同分鐘所有股票合併成一封 LINE 訊息發送
+- 所有出站 LINE 訊息（彙總/摘要/觸發列/測試推播）都必須透過 `template_key + context` 渲染
 - LINE 失敗：不寫 `message`，寫 `system_logs`
 - LINE 成功 + DB 寫入失敗：寫 `pending_delivery_ledger`，若 DB 不可寫則 fallback `logs/pending_delivery.jsonl`
 - 補償期間視為已通知，避免重複發送
@@ -133,7 +134,7 @@ python -m pytest -q tests/test_integration_workflow.py -k TP-INT-010
 
 ## 10. 完成定義（DoD）
 - `TP-DB-*`, `TP-ENV-*`, `TP-POL-*`, `TP-INT-*`, `TP-TRD-*`, `TP-VAL-*`, `TP-UAT-*` 全部綠燈
-- UAT 11 條可追溯
+- UAT 14 條可追溯
 - coverage gate：`lines/branches/functions/statements = 100%`
 - 文件同步：若規則有變更，`PDD/EDD/TEST_PLAN/feature/CLAUDE/CODEX` 一併更新
 

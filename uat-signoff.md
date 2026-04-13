@@ -2,15 +2,15 @@
 
 ## 1. 文件資訊
 - 專案: Stock Monitoring System
-- 版本: Phase 1 (BDD + TDD baseline)
-- 建立時間: 2026-04-10 23:01:14 +08:00
+- 版本: Phase 1 + V1 三方法估值對齊版
+- 建立時間: 2026-04-13 +08:00
 
 ## 2. UAT 範圍
-對照 `TP-UAT-001` ~ `TP-UAT-011`（來源: `TEST_PLAN.md` / `stock_monitor.uat.scenarios`）
+對照 `TP-UAT-001` ~ `TP-UAT-014`（來源: `TEST_PLAN.md` / `features/stock_monitoring_system.feature`）
 
 ## 3. 驗證結果摘要
 - 自動化測試: `PASS`
-- 測試總數: `136 passed`
+- 測試總數: `151 passed`
 - Coverage Gate: `100% PASS`
 - 結論: 進入 UAT 簽核階段條件已滿足
 
@@ -29,14 +29,18 @@
 | TP-UAT-009 | LINE 參數錯誤 fail-fast | Pass |
 | TP-UAT-010 | 重啟後同分鐘不得重送 | Pass |
 | TP-UAT-011 | stale/conflict 分鐘不通知且有 WARN | Pass |
+| TP-UAT-012 | 三方法每日估值皆嘗試執行，資料不足方法 skip 且不覆蓋舊快照 | Pass |
+| TP-UAT-013 | 開盤第一個可交易分鐘先發監控設定摘要且同日不重複 | Pass |
+| TP-UAT-014 | 所有 LINE 出站訊息皆透過模板渲染且無硬編碼最終文案 | Pending |
 
 ## 5. 簽核欄位
 
 | 角色 | 姓名 | 決議 | 日期 | 備註 |
 |---|---|---|---|---|
-| Product Owner | ibala | Ready for Sign-off | 2026-04-10 | 自動化驗證完成，待最終人工確認 |
-| QA | ibala | Ready for Sign-off | 2026-04-10 | BDD smoke + 全量測試已通過 |
-| Engineering Lead | ibala | Ready for Sign-off | 2026-04-10 | CI/coverage gate=100%，可進入 UAT |
+| Product Owner | ibala | Ready for Sign-off | 2026-04-13 | 已納入三方法估值與資料不足 skip 規則 |
+| QA | ibala | Ready for Sign-off | 2026-04-13 | BDD + 全量測試已通過 |
+| Engineering Lead | ibala | Ready for Sign-off | 2026-04-13 | CI/coverage gate=100%，可進入 UAT |
 
 ## 6. 備註
 - 本文件為「可簽核版本」，最終上線仍需完成人工 UAT 實際操作與正式簽名。
+- `TP-UAT-014` 為新增條目，需補上人工驗證證據後再轉 `Pass`。

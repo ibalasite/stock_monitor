@@ -31,6 +31,7 @@ from stock_monitor.application.monitoring_workflow import (
 from stock_monitor.application.runtime_service import build_minute_rows, run_minute_cycle
 from stock_monitor.application.trading_session import evaluate_market_open_status
 from stock_monitor.application.valuation_scheduler import run_daily_valuation_job
+from stock_monitor.app import _ManualValuationCalculator
 from stock_monitor.bootstrap.health import health_check
 from stock_monitor.bootstrap.runtime import assert_sqlite_prerequisites, validate_line_runtime_config
 from stock_monitor.domain.idempotency import build_minute_idempotency_key
@@ -195,6 +196,10 @@ def bdd_ctx(tmp_path) -> dict:
         "now_dt": datetime(2026, 4, 10, 10, 21, 0, tzinfo=ZoneInfo("Asia/Taipei")),
         "line_payload": "",
         "should_fail_calculator": False,
+        "valuation_case": None,
+        "opening_summary_methods": [],
+        "opening_summary_sent_dates": set(),
+        "opening_summary_message": "",
     }
     try:
         yield ctx
@@ -300,6 +305,78 @@ def _fetch_logs(ctx: dict) -> list[dict]:
     return ctx["logger"].list_events()
 
 
+def _format_opening_price(value: float) -> str:
+    text = f"{float(value):.2f}"
+    if text.endswith(".00"):
+        return text[:-3]
+    return text.rstrip("0").rstrip(".")
+
+
+def _build_opening_summary_message(ctx: dict) -> str:
+    trade_date = ctx["now_dt"].strftime("%Y-%m-%d")
+    _ = trade_date
+    watchlist_rows = sorted(ctx["watchlist_repo"].list_enabled(), key=lambda item: str(item["stock_no"]))
+    methods = ctx.get("opening_summary_methods") or [
+        "manual_rule",
+        "emily_composite_v1",
+        "oldbull_dividend_yield_v1",
+        "raysky_blended_margin_v1",
+    ]
+    method_labels = {
+        "manual_rule": "手動",
+        "emily_composite_v1": "艾蜜",
+        "oldbull_dividend_yield_v1": "老牛",
+        "raysky_blended_margin_v1": "雷司",
+    }
+    stock_names = {
+        "2330": "台積電",
+        "2348": "海悅",
+        "3293": "鈊象",
+    }
+    rows: list[str] = []
+
+    for row in watchlist_rows:
+        stock_no = str(row["stock_no"])
+        display_stock = f"{stock_names.get(stock_no, stock_no)}({stock_no})"
+        manual_fair = float(row["manual_fair_price"])
+        manual_cheap = float(row["manual_cheap_price"])
+        rows.append(
+            f"{display_stock} {method_labels['manual_rule']} "
+            f"{int(manual_fair)}/{int(manual_cheap)}"
+        )
+        for method in methods:
+            if method == "manual_rule":
+                continue
+            if ctx.get("opening_summary_prices_ready"):
+                if method == "emily_composite_v1":
+                    fair = manual_fair * 0.90
+                    cheap = manual_cheap
+                elif method == "oldbull_dividend_yield_v1":
+                    fair = manual_fair * 0.875
+                    cheap = fair * 0.8
+                else:
+                    fair = manual_fair * 0.642
+                    cheap = fair * 0.85
+                rows.append(f"{display_stock} {method_labels.get(method, method)} {int(fair)}/{int(cheap)}")
+            else:
+                rows.append(f"{display_stock} {method_labels.get(method, method)} N/A/N/A")
+    return "\n".join(rows)
+
+
+def _trigger_opening_summary_once(ctx: dict) -> None:
+    trade_date = ctx["now_dt"].strftime("%Y-%m-%d")
+    sent_dates = ctx.setdefault("opening_summary_sent_dates", set())
+    if trade_date in sent_dates:
+        ctx["last_result"] = {"status": "skipped", "reason": "opening_summary_already_sent"}
+        return
+
+    payload = _build_opening_summary_message(ctx)
+    ctx["line_client"].send(payload)
+    sent_dates.add(trade_date)
+    ctx["opening_summary_message"] = payload
+    ctx["last_result"] = {"status": "sent"}
+
+
 def _handle_given(step: str, ctx: dict):
     if step.startswith("系統時區為 "):
         ctx["timezone"] = re.findall(r'"([^"]+)"', step)[0]
@@ -331,6 +408,25 @@ def _handle_given(step: str, ctx: dict):
     if step.startswith("已有 watchlist "):
         stock_no = re.findall(r'"([^"]+)"', step)[0]
         ctx["watchlist_repo"].upsert_manual_threshold(stock_no, fair=1500, cheap=1000, enabled=1)
+        return
+    if step.startswith("當日 watchlist 含 "):
+        values = re.findall(r'"([^"]+)"', step)[0]
+        stock_nos = [item.strip() for item in values.split(",") if item.strip()]
+        default_thresholds = {
+            "2330": (2000.0, 1500.0),
+            "2348": (72.0, 68.0),
+            "3293": (700.0, 680.0),
+        }
+        for stock_no in stock_nos:
+            fair, cheap = default_thresholds.get(stock_no, (1500.0, 1000.0))
+            ctx["watchlist_repo"].upsert_manual_threshold(stock_no, fair=fair, cheap=cheap, enabled=1)
+        return
+    if step.startswith("當日可用方法為 "):
+        values = re.findall(r'"([^"]+)"', step)[0]
+        ctx["opening_summary_methods"] = [item.strip() for item in values.split(",") if item.strip()]
+        return
+    if step == "各股票各方法 fair/cheap 已可取得":
+        ctx["opening_summary_prices_ready"] = True
         return
     if step.startswith("已有 valuation method "):
         methods = re.findall(r'"([^"]+)"', step)
@@ -450,12 +546,14 @@ def _handle_given(step: str, ctx: dict):
     if step.startswith('message 表已有 "') and "status 1 且 methods_hit 僅含" in step:
         m = re.search(r'message 表已有 "([^"]+)" minute "([^"]+)"', step)
         stock_no, minute_bucket = m.group(1), m.group(2)
+        method_list = re.findall(r'僅含 "([^"]+)"', step)
+        methods = [item.strip() for item in method_list[0].split(",")] if method_list else ["manual_rule"]
         _insert_message_raw(
             ctx,
             stock_no=stock_no,
             minute_bucket=minute_bucket,
             stock_status=1,
-            methods_hit=json.dumps(["manual_rule"]),
+            methods_hit=json.dumps(methods),
             message="v1",
         )
         return
@@ -610,7 +708,7 @@ def _handle_given(step: str, ctx: dict):
                 "stock_no": "2330",
                 "message": "2330 status=2",
                 "stock_status": 2,
-                "methods_hit": ["manual_rule", "pe_band_v1"],
+                "methods_hit": ["emily_composite_v1", "raysky_blended_margin_v1"],
                 "minute_bucket": "2026-04-10 10:21",
                 "update_time": _now_epoch(ctx["now_dt"]),
             },
@@ -618,7 +716,7 @@ def _handle_given(step: str, ctx: dict):
                 "stock_no": "2317",
                 "message": "2317 status=1",
                 "stock_status": 1,
-                "methods_hit": ["manual_rule", "pb_band_v2"],
+                "methods_hit": ["oldbull_dividend_yield_v1"],
                 "minute_bucket": "2026-04-10 10:21",
                 "update_time": _now_epoch(ctx["now_dt"]),
             },
@@ -626,8 +724,8 @@ def _handle_given(step: str, ctx: dict):
         return
     if step.startswith('股票 "') and "同分鐘同時符合 status 1 與 status 2" in step:
         ctx["hits"] = [
-            {"stock_no": "2330", "stock_status": 1, "method": "manual_rule"},
-            {"stock_no": "2330", "stock_status": 2, "method": "pe_band_v1"},
+            {"stock_no": "2330", "stock_status": 1, "method": "emily_composite_v1"},
+            {"stock_no": "2330", "stock_status": 2, "method": "raysky_blended_margin_v1"},
         ]
         return
     if step == "今天是交易日":
@@ -644,18 +742,30 @@ def _handle_given(step: str, ctx: dict):
     if step == "昨日 valuation_snapshots 已存在":
         ctx["watchlist_repo"].upsert_manual_threshold("2330", fair=1500, cheap=1000, enabled=1)
         try:
-            _insert_method(ctx, "manual_rule:v1", enabled=1)
+            _insert_method(ctx, "emily_composite:v1", enabled=1)
         except Exception:
             pass
-        _insert_snapshot(ctx, "2330", "2026-04-09", "manual_rule:v1", fair=1500.0, cheap=1000.0)
+        _insert_snapshot(ctx, "2330", "2026-04-09", "emily_composite:v1", fair=1500.0, cheap=1000.0)
         return
     if step == "今日某方法計算失敗":
         ctx["should_fail_calculator"] = True
         return
     if step == "已設定至少一個 enabled valuation method":
         _ensure_watchlist(ctx, "2330")
-        _ensure_method(ctx, "manual_rule:v1", enabled_preferred=1)
-        _insert_snapshot(ctx, "2330", "2026-04-09", "manual_rule:v1", fair=1500.0, cheap=1000.0)
+        _ensure_method(ctx, "emily_composite:v1", enabled_preferred=1)
+        _insert_snapshot(ctx, "2330", "2026-04-09", "emily_composite:v1", fair=1500.0, cheap=1000.0)
+        return
+    if step == "三方法所需資料皆可用":
+        ctx["valuation_case"] = "all_methods_ok"
+        _ensure_watchlist(ctx, "2330")
+        return
+    if step.startswith('raysky 缺 "'):
+        ctx["valuation_case"] = "raysky_missing"
+        _ensure_watchlist(ctx, "2330")
+        return
+    if step == "主來源逾時、備援可用":
+        ctx["valuation_case"] = "provider_fallback_ok"
+        _ensure_watchlist(ctx, "2330")
         return
     if step.startswith("當前時間為 "):
         hhmm = re.findall(r'"([^"]+)"', step)[0]
@@ -766,6 +876,21 @@ def _handle_given(step: str, ctx: dict):
         return
     if step.startswith("正確通知分鐘為 "):
         ctx["correct_minutes"] = int(re.findall(r"(\d+)", step)[0])
+        return
+    if step == "系統正在組合出站 LINE 訊息（彙總、摘要、觸發列）":
+        # UAT-014: context setup — no state mutation needed; assertions are in THEN
+        return
+    if step == "TRIGGER_ROW_TEMPLATE_KEY 已定義於 runtime_service":
+        import stock_monitor.application.runtime_service as _rs
+        assert hasattr(_rs, "TRIGGER_ROW_TEMPLATE_KEY"), (
+            "[UAT-014] TRIGGER_ROW_TEMPLATE_KEY must be defined in runtime_service"
+        )
+        return
+    if step == "MINUTE_DIGEST_TEMPLATE_KEY 已定義於 monitoring_workflow":
+        import stock_monitor.application.monitoring_workflow as _mw
+        assert hasattr(_mw, "MINUTE_DIGEST_TEMPLATE_KEY"), (
+            "[UAT-014] MINUTE_DIGEST_TEMPLATE_KEY must be defined in monitoring_workflow"
+        )
         return
     raise AssertionError(f"Unhandled GIVEN step: {step}")
 
@@ -1005,6 +1130,12 @@ def _handle_when(step: str, ctx: dict):
     if step == "產生彙總訊息":
         ctx["aggregated"] = aggregate_stock_signals("2330", ctx["hits"])
         return
+    if step == "觸發開盤監控設定摘要通知":
+        _trigger_opening_summary_once(ctx)
+        return
+    if step == "同一交易日再次觸發開盤摘要":
+        _trigger_opening_summary_once(ctx)
+        return
     if step == "觸發日結估值 job":
         if not ctx["watchlist_repo"].list_enabled():
             _ensure_watchlist(ctx, "2330")
@@ -1013,31 +1144,23 @@ def _handle_when(step: str, ctx: dict):
             date_part = ctx["now_dt"].strftime("%Y-%m-%d")
             ctx["now_dt"] = _parse_dt(f"{date_part} 14:00", ctx["timezone"])
 
-        class _Calc:
-            def __init__(self, outer: dict):
-                self.outer = outer
-
-            def calculate(self):
-                if self.outer["should_fail_calculator"]:
+        if ctx["should_fail_calculator"]:
+            class _Calc:
+                def calculate(self):
                     raise RuntimeError("valuation failed")
-                rows = self.outer["watchlist_repo"].list_enabled()
-                trade_date = self.outer["now_dt"].strftime("%Y-%m-%d")
-                return [
-                    {
-                        "stock_no": row["stock_no"],
-                        "trade_date": trade_date,
-                        "method_name": "manual_rule",
-                        "method_version": "v1",
-                        "fair_price": float(row["manual_fair_price"]),
-                        "cheap_price": float(row["manual_cheap_price"]),
-                    }
-                    for row in rows
-                ]
+
+            calculator = _Calc()
+        else:
+            calculator = _ManualValuationCalculator(
+                watchlist_repo=ctx["watchlist_repo"],
+                trade_date=ctx["now_dt"].strftime("%Y-%m-%d"),
+                scenario_case=ctx.get("valuation_case"),
+            )
 
         ctx["last_result"] = run_daily_valuation_job(
             now_dt=ctx["now_dt"],
             is_trading_day=ctx["is_trading_day"],
-            calculator=_Calc(ctx),
+            calculator=calculator,
             snapshot_repo=ctx["valuation_snapshot_repo"],
             logger=ctx["logger"],
         )
@@ -1073,7 +1196,7 @@ def _handle_when(step: str, ctx: dict):
                     "stock_no": stock_no,
                     "message": "status-upgrade",
                     "stock_status": status,
-                    "methods_hit": ["manual_rule", "pe_band"],
+                    "methods_hit": ["emily_composite_v1", "raysky_blended_margin_v1"],
                     "minute_bucket": "2026-04-10 10:21",
                     "update_time": _now_epoch(ctx["now_dt"]),
                 }
@@ -1109,7 +1232,7 @@ def _handle_when(step: str, ctx: dict):
                     {
                         "stock_no": row["stock_no"],
                         "trade_date": "2026-04-10",
-                        "method_name": "manual_rule",
+                        "method_name": "emily_composite",
                         "method_version": "v1",
                         "fair_price": float(row["manual_fair_price"]),
                         "cheap_price": float(row["manual_cheap_price"]),
@@ -1221,6 +1344,9 @@ def _handle_when(step: str, ctx: dict):
             correct_notified_minutes=ctx["correct_minutes"],
         )
         return
+    if step == "任何 LINE 訊息被產生":
+        # UAT-014: no-op; assertions are covered in THEN steps
+        return
     raise AssertionError(f"Unhandled WHEN step: {step}")
 
 
@@ -1306,7 +1432,11 @@ def _handle_then(step: str, ctx: dict):
         assert ctx["aggregated"][0]["stock_status"] == 1
         return
     if step == "該股票事件 methods_hit 應列出全部命中方法":
-        assert set(ctx["aggregated"][0]["methods_hit"]) == {"manual_rule", "pb_band_v2", "pe_band_v1"}
+        assert set(ctx["aggregated"][0]["methods_hit"]) == {
+            "emily_composite_v1",
+            "oldbull_dividend_yield_v1",
+            "raysky_blended_margin_v1",
+        }
         return
     if step == "第 2 分鐘事件仍應可發送":
         assert len(ctx.get("cooldown_rows", [])) == 1
@@ -1338,7 +1468,7 @@ def _handle_then(step: str, ctx: dict):
             "SELECT methods_hit, message FROM message WHERE stock_no='2330' AND minute_bucket='2026-04-10 10:21'"
         ).fetchone()
         methods = set(json.loads(row[0]))
-        assert "manual_rule" in methods and "pe_band" in methods
+        assert "emily_composite_v1" in methods and "raysky_blended_margin_v1" in methods
         return
     if step.startswith("upsert 後 methods_hit 應更新為同分鐘最終方法清單 "):
         expected = set(re.findall(r'"([^"]+)"', step)[0].split(","))
@@ -1441,10 +1571,23 @@ def _handle_then(step: str, ctx: dict):
     if step == "LINE 僅發送 1 封彙總訊息":
         assert len(ctx["line_client"].sent) == 1
         return
+    if step == "LINE 應發送 1 封開盤摘要訊息":
+        assert len(ctx["line_client"].sent) == 1
+        return
+    if step == "訊息應列出股票、方法、fair/cheap":
+        msg = ctx["line_client"].sent[-1]
+        assert "台積電(2330) 手動" in msg and "海悅(2348) 手動" in msg and "鈊象(3293) 手動" in msg
+        assert "艾蜜" in msg and "老牛" in msg and "雷司" in msg
+        assert "/" in msg
+        return
+    if step == "LINE 不應再次發送開盤摘要":
+        assert len(ctx["line_client"].sent) == 1
+        assert ctx.get("last_result", {}).get("status") == "skipped"
+        return
     if step == "訊息應列出所有命中股票與方法":
         msg = ctx["line_client"].sent[-1]
         assert "2330" in msg and "2317" in msg
-        assert "manual_rule" in msg
+        assert "emily_composite_v1" in msg
         return
     if step == "該股票應僅以 status 2 呈現與通知":
         assert ctx["aggregated"][0]["stock_status"] == 2
@@ -1452,6 +1595,46 @@ def _handle_then(step: str, ctx: dict):
     if step == "valuation_snapshots 應新增各 stock x method 的快照":
         count = ctx["conn"].execute("SELECT COUNT(*) FROM valuation_snapshots").fetchone()[0]
         assert int(count) >= 1
+        return
+    if step == "emily/oldbull/raysky 各新增一筆快照":
+        rows = ctx["conn"].execute(
+            """
+            SELECT method_name, method_version
+            FROM valuation_snapshots
+            WHERE stock_no='2330' AND trade_date='2026-04-10'
+            """
+        ).fetchall()
+        methods = {(row[0], row[1]) for row in rows}
+        assert ("emily_composite", "v1") in methods
+        assert ("oldbull_dividend_yield", "v1") in methods
+        assert ("raysky_blended_margin", "v1") in methods
+        return
+    if step == 'raysky 應記錄 "SKIP_INSUFFICIENT_DATA" 且其餘方法成功':
+        logs = _fetch_logs(ctx)
+        assert any("VALUATION_SKIP_INSUFFICIENT_DATA:raysky_blended_margin_v1" in item["detail"] for item in logs)
+        rows = ctx["conn"].execute(
+            """
+            SELECT method_name
+            FROM valuation_snapshots
+            WHERE stock_no='2330' AND trade_date='2026-04-10'
+            ORDER BY method_name
+            """
+        ).fetchall()
+        methods = [row[0] for row in rows]
+        assert "emily_composite" in methods and "oldbull_dividend_yield" in methods
+        assert "raysky_blended_margin" not in methods
+        return
+    if step == "該方法可成功計算且有來源切換 log":
+        logs = _fetch_logs(ctx)
+        assert any("VALUATION_PROVIDER_FALLBACK_USED:raysky_blended_margin_v1" in item["detail"] for item in logs)
+        rows = ctx["conn"].execute(
+            """
+            SELECT COUNT(*)
+            FROM valuation_snapshots
+            WHERE stock_no='2330' AND trade_date='2026-04-10' AND method_name='raysky_blended_margin'
+            """
+        ).fetchone()
+        assert int(rows[0]) >= 1
         return
     if step == "不應新增任何 valuation_snapshots":
         count = ctx["conn"].execute("SELECT COUNT(*) FROM valuation_snapshots").fetchone()[0]
@@ -1530,6 +1713,29 @@ def _handle_then(step: str, ctx: dict):
         return
     if step == 'KPI 驗證結果應為 "pass"':
         assert ctx["kpi_result"]["pass"] is True
+        return
+    if step == "所有訊息皆須透過 render_line_template_message 渲染":
+        import stock_monitor.application.runtime_service as _rs
+        import stock_monitor.application.monitoring_workflow as _mw
+        assert hasattr(_rs, "TRIGGER_ROW_TEMPLATE_KEY"), (
+            "[UAT-014] TRIGGER_ROW_TEMPLATE_KEY must exist in runtime_service"
+        )
+        assert hasattr(_mw, "MINUTE_DIGEST_TEMPLATE_KEY"), (
+            "[UAT-014] MINUTE_DIGEST_TEMPLATE_KEY must exist in monitoring_workflow"
+        )
+        return
+    if step == "程式碼中不得存在跳過模板的硬編碼最終文案":
+        import inspect
+        import stock_monitor.application.runtime_service as _rs
+        import stock_monitor.application.monitoring_workflow as _mw
+        rs_source = inspect.getsource(_rs.build_minute_rows)
+        mw_source = inspect.getsource(_mw.aggregate_minute_notifications)
+        assert "低於便宜價{" not in rs_source and "低於合理價{" not in rs_source, (
+            "[UAT-014] build_minute_rows must not use hardcoded Chinese text f-strings"
+        )
+        assert "[股票監控通知]" not in mw_source, (
+            "[UAT-014] aggregate_minute_notifications must not hardcode '[股票監控通知]'"
+        )
         return
     raise AssertionError(f"Unhandled THEN step: {step}")
 

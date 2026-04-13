@@ -1,7 +1,7 @@
 # TEST_PLAN - Stock Monitor System
 
-版本：v0.4  
-日期：2026-04-10  
+版本：v0.7  
+日期：2026-04-14  
 依據文件：[EDD_Stock_Monitoring_System.md](c:/Projects/stock/EDD_Stock_Monitoring_System.md), [PDD_Stock_Monitoring_System.md](c:/Projects/stock/PDD_Stock_Monitoring_System.md), [USER_STORY_ACCEPTANCE_CRITERIA.md](c:/Projects/stock/USER_STORY_ACCEPTANCE_CRITERIA.md)
 
 ## 1. 測試目標
@@ -9,7 +9,9 @@
 2. 驗證通知、冷卻、補償機制在失敗情境下不重複通知。  
 3. 驗證每日 14:00 估值流程與方法版本規則可正確落地。  
 4. 驗證交易時段邊界（08:45/09:00）、時間桶一致性與 KPI 計算。  
-5. 以 TDD 流程實作（先測試再主程式），並達成 coverage gate 100%。  
+5. 驗證開盤第一個可交易分鐘會先發送「監控設定摘要」且同日不重複。  
+6. 以 TDD 流程實作（先測試再主程式），並達成 coverage gate 100%。  
+7. 驗證所有出站 LINE 訊息文案由 Template 渲染（非程式硬編碼），且模板變更可在不改主流程下生效。  
 
 ## 2. 測試範圍
 ### In Scope
@@ -22,6 +24,8 @@
 7. 每日 14:00 估值計算與快照寫入。  
 8. `TimeBucketService` 單一入口規則。  
 9. 通知延遲與準確率 KPI。  
+10. 開盤監控設定摘要通知（股票/方法/fair/cheap 與同日去重）。  
+11. LINE 模板載入與渲染失敗處理（`TEMPLATE_NOT_FOUND` / `TEMPLATE_RENDER_FAILED`），涵蓋彙總/摘要/觸發列/測試推播。  
 
 ### Out of Scope
 1. 自動下單。  
@@ -44,14 +48,14 @@
 
 ### Exit Criteria
 1. Critical/High 缺陷為 0。  
-2. PDD UAT 11 條全數通過。  
+2. PDD UAT 14 條全數通過。  
 3. 補償流程與冷卻流程測試全數通過。  
 4. Coverage 四項指標皆為 100%。  
 
 ## 5. 測試資料
 1. 股票：`2330`, `2317`。  
 2. 手動門檻：`2330 fair=1500, cheap=1000`; `2317 fair=145, cheap=130`。  
-3. 估值方法：`manual_rule:v1`, `pe_band:v1`, `pb_band:v2`。  
+3. 估值方法：`emily_composite_v1`, `oldbull_dividend_yield_v1`, `raysky_blended_margin_v1`。  
 4. 時間桶：`YYYY-MM-DD HH:mm`（Asia/Taipei）。  
 5. 行情來源最大重試次數：`MAX_RETRY_COUNT=3`。  
 6. 報價新鮮度門檻：`STALE_THRESHOLD_SEC=90`。  
@@ -85,6 +89,11 @@
 | TP-INT-009 | EDD §7.3 | Integration | message 批次失敗需整批 rollback（0 筆） |
 | TP-INT-010 | PDD §7 FR-02 | Integration | 行情來源短暫失敗在重試上限內成功可繼續該分鐘流程 |
 | TP-INT-011 | PDD §7 FR-02 | Integration | 行情來源重試耗盡仍失敗時跳過且不得補發 |
+| TP-INT-012 | PDD §7 FR-13/FR-14 | Integration | 開盤第一個可交易分鐘發送監控設定摘要（模板渲染），且同日僅一次 |
+| TP-TPL-001 | PDD §7 FR-14 / EDD §7.6 | Integration | 變更 opening summary template 後，不改主流程程式即可改變 LINE 文案 |
+| TP-TPL-002 | PDD §7 FR-14 / EDD §7.6 | Integration | 模板缺失或渲染失敗時記錄 `TEMPLATE_*` 錯誤且不得默默回退未知格式 |
+| TP-TPL-003 | PDD §7 FR-14 / EDD §7.6 | Integration | 每分鐘彙總通知與單股觸發列需透過 `template_key + context` 產生，不得直接硬編碼最終文案 |
+| TP-TPL-004 | PDD §7 FR-14 / EDD §7.6 | Integration | 若提供測試推播功能，測試推播訊息也必須走模板渲染 |
 | TP-TRD-001 | EDD §5.2 | Integration | 08:45 後有大盤新資料 -> 可交易 |
 | TP-TRD-002 | EDD §5.2 | Integration | 09:00 後無大盤新資料 -> 不開市 |
 | TP-TRD-003 | EDD §8 / UAT-4 | Integration | 13:30 後（TRADING_END）应判定為非交易時段，輪詢應跳過 |
@@ -93,6 +102,9 @@
 | TP-VAL-001 | EDD §4.2 | Integration | 14:00 交易日執行估值 |
 | TP-VAL-002 | EDD §4.2 | Integration | 非交易日不執行估值 |
 | TP-VAL-003 | EDD §6.3 | Integration | 估值失敗不覆蓋舊快照 |
+| TP-VAL-004 | PDD §7 FR-11 / EDD §9.1 | Integration | 三方法同日可同時產生快照 |
+| TP-VAL-005 | PDD §7 FR-12 / EDD §9.2 | Integration | 單方法資料不足僅該方法 skip，不影響其它方法 |
+| TP-VAL-006 | PDD §7 FR-12 / EDD §6.7 | Integration | 主來源失敗時可切換備援並成功估值 |
 | TP-UAT-001 | PDD §12 UAT-1 | UAT | 手動門檻觸發 60 秒內通知 |
 | TP-UAT-002 | PDD §12 UAT-2 | UAT | 5 分鐘冷卻不重複推播 |
 | TP-UAT-003 | PDD §12 UAT-3 | UAT | message 核心欄位可查 |
@@ -104,6 +116,9 @@
 | TP-UAT-009 | PDD §12 UAT-9 | UAT | LINE 必填參數錯誤 fail-fast |
 | TP-UAT-010 | PDD §12 UAT-10 | UAT | 重啟後不得重複通知同分鐘事件 |
 | TP-UAT-011 | PDD §12 UAT-11 | UAT | stale/conflict 分鐘不得通知且有 WARN |
+| TP-UAT-012 | PDD §12 UAT-12 | UAT | 三方法每日皆嘗試估值，資料不足方法 skip 且不覆蓋舊快照 |
+| TP-UAT-013 | PDD §12 UAT-13 | UAT | 開盤第一個可交易分鐘先發監控設定摘要且同日不重複 |
+| TP-UAT-014 | PDD §12 UAT-14 | UAT | 所有 LINE 出站訊息皆透過模板渲染，且程式碼無硬編碼最終文案 |
 
 ## 7. 詳細測試案例
 | 測試ID | 前置條件 | 步驟 | 預期結果 |
@@ -131,6 +146,11 @@
 | TP-INT-009 | 同分鐘兩筆 message 待寫 | 模擬第二筆寫入失敗 | transaction rollback，該分鐘 `message=0` 筆 |
 | TP-INT-010 | Mock 行情來源首輪失敗次輪成功（重試上限=3） | 執行輪詢 | 該分鐘流程可繼續，且 logs 有 retry 記錄 |
 | TP-INT-011 | Mock 行情來源重試耗盡仍失敗（超過3次） | 執行輪詢 | 該分鐘跳過、不通知、不寫 message、不得補發 |
+| TP-INT-012 | 交易日第一個可交易分鐘且 watchlist/方法可用 | 觸發開盤摘要流程，再於同交易日重複觸發 | 首次發送 1 封摘要（由模板渲染，含股票/方法/fair/cheap）；同日第二次不重複發送 |
+| TP-TPL-001 | 已有可用 template v1，且可切換到 template v2 | 不改主流程程式僅替換模板後觸發摘要通知 | LINE 內容跟隨模板變更 |
+| TP-TPL-002 | 指定不存在模板 key 或模板語法錯誤 | 觸發通知渲染流程 | 記錄 `TEMPLATE_NOT_FOUND` 或 `TEMPLATE_RENDER_FAILED`，且不得送出未知格式 |
+| TP-TPL-003 | 盤中有可發送事件且存在摘要/彙總/觸發列模板 | 執行一分鐘流程並檢查 message composition 呼叫鏈 | 所有送 LINE 內容均來自 template render，業務流程不直接拼最終文案 |
+| TP-TPL-004 | 系統提供 test push CLI/腳本 且 test push template 已配置 | 觸發 test push | test push 訊息可送達且使用模板文案 |
 | TP-TRD-001 | 時間 08:45 後 | 大盤有當日新資料 | 判定可交易 |
 | TP-TRD-002 | 時間 09:00 後 | 大盤無當日新資料 | 判定不開市且該分鐘跳過通知 |
 | TP-TRD-003 | 時間 13:31 | 輪詢觸發 | 判定非交易時段，直接跳過輪詢 |
@@ -142,6 +162,9 @@
 | TP-VAL-001 | 交易日 14:00 | 觸發日結 job | 產生各方法估值快照 |
 | TP-VAL-002 | 非交易日 14:00 | 觸發日結 job | 不執行估值，僅記錄 skip/info |
 | TP-VAL-003 | 既有昨日估值 | 模擬今日計算失敗 | 不覆蓋昨日快照，記錄錯誤 |
+| TP-VAL-004 | 三方法所需資料皆可用 | 觸發日結 job | `emily/oldbull/raysky` 各新增一筆快照 |
+| TP-VAL-005 | raysky 缺 `current_assets` | 觸發日結 job | raysky 記錄 `SKIP_INSUFFICIENT_DATA`，其餘方法成功 |
+| TP-VAL-006 | 主來源逾時、備援可用 | 觸發日結 job | 該方法可成功計算，且有來源切換 log |
 | TP-UAT-001 | 系統可運行 | 依 PDD UAT-1 執行並記錄證據 | 通過且具通知時間證據 |
 | TP-UAT-002 | 系統可運行 | 依 PDD UAT-2 執行並記錄證據 | 通過且具冷卻抑制證據 |
 | TP-UAT-003 | 系統可運行 | 依 PDD UAT-3 執行並記錄證據 | 通過且具資料查詢證據 |
@@ -153,6 +176,9 @@
 | TP-UAT-009 | 系統可運行 | 依 PDD UAT-9 執行並記錄證據 | 通過且具 fail-fast 錯誤證據 |
 | TP-UAT-010 | 系統可運行 | 依 PDD UAT-10 執行並記錄證據 | 通過且具重啟去重證據 |
 | TP-UAT-011 | 系統可運行 | 依 PDD UAT-11 執行並記錄證據 | 通過且具 WARN 證據，且該分鐘無補發 |
+| TP-UAT-012 | 系統可運行 | 依 PDD UAT-12 執行並記錄證據 | 通過且具三方法執行/skip與不覆蓋舊值證據 |
+| TP-UAT-013 | 系統可運行 | 依 PDD UAT-13 執行並記錄證據 | 通過且具開盤摘要內容與同日去重證據 |
+| TP-UAT-014 | 系統可運行 | 依 PDD UAT-14 執行並記錄證據 | 通過且具彙總/摘要/觸發列/測試推播模板渲染證據 |
 
 ## 8. 失敗模式測試
 1. LINE 成功、DB 失敗（最關鍵）。  
@@ -163,6 +189,7 @@
 6. 服務重啟後重複通知風險。  
 7. 行情來源重試耗盡仍失敗時，必須跳過該分鐘且不得補發。  
 8. timeout/stale/data conflict 被跳過分鐘，不得補發過期訊號。  
+9. 同一交易日因重啟/排程重複觸發造成開盤摘要重送。  
 
 ## 9. 測試執行順序
 1. Schema/Migration + Environment 測試（TP-DB-* + TP-ENV-*）。  
@@ -193,4 +220,4 @@
 ## 13. 產出物
 1. `test-report.md`（總結與通過率）。  
 2. `defect-log.md`（缺陷列表與修復狀態）。  
-3. `uat-signoff.md`（UAT 11 條簽核）。  
+3. `uat-signoff.md`（UAT 14 條簽核）。  

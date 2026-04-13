@@ -87,3 +87,15 @@
    - 防止需求與測試漂移。
 4. 影響：
    - PR 需附規格追蹤證據（至少對應 TP-ID / Scenario-ID）。
+
+## ADR-010 LINE 訊息文案採 Template-driven Rendering
+1. 狀態：Accepted
+2. 決策：
+   - minute digest 與 opening summary 訊息都改為「模板渲染」。
+   - 主流程僅提供 context，不在業務程式拼接完整文案格式。
+3. 原因：
+   - 文案與排版需要頻繁調整（桌機/手機可讀性差異）。
+   - 降低格式調整時修改核心流程程式的風險。
+4. 影響：
+   - 需新增模板設定鍵與 `MessageTemplatePort`。
+   - 渲染失敗需有明確 `TEMPLATE_*` 錯誤語意與測試覆蓋。

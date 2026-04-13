@@ -4,6 +4,10 @@ from __future__ import annotations
 
 import uuid
 
+from stock_monitor.application.message_template import render_line_template_message
+
+MINUTE_DIGEST_TEMPLATE_KEY = "line.minute_digest.v1"
+
 
 def _normalize_methods(methods) -> list[str]:
     if methods is None:
@@ -15,7 +19,8 @@ def _normalize_methods(methods) -> list[str]:
 
 
 def aggregate_minute_notifications(minute_bucket: str, signals: list[dict]) -> str:
-    lines = [f"[股票監控通知] {minute_bucket}"]
+    header = render_line_template_message(MINUTE_DIGEST_TEMPLATE_KEY, {"minute_bucket": minute_bucket})
+    lines = [header]
     for idx, signal in enumerate(signals, start=1):
         methods = ",".join(_normalize_methods(signal.get("methods_hit")))
         base_message = str(signal.get("message") or f"{signal.get('stock_no')} 觸發監控門檻").strip()

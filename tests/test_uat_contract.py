@@ -17,6 +17,9 @@ UAT_IDS = [
     "TP-UAT-009",
     "TP-UAT-010",
     "TP-UAT-011",
+    "TP-UAT-012",
+    "TP-UAT-013",
+    "TP-UAT-014",
 ]
 
 

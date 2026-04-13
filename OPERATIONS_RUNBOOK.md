@@ -10,6 +10,9 @@
 ## 2. 啟動前檢查清單
 1. 以系統環境變數啟動（不強制 `.env`）：
    - `LINE_CHANNEL_ACCESS_TOKEN`、`LINE_TO_GROUP_ID`（或 alias: `CHANNEL_ACCESS_TOKEN`、`TARGET_GROUP_ID`）
+   - `LINE_TEMPLATE_DIR`（模板目錄）
+   - `LINE_TEMPLATE_MINUTE_DIGEST`、`LINE_TEMPLATE_OPENING_SUMMARY`
+   - `LINE_TEMPLATE_TRIGGER_ROW`、`LINE_TEMPLATE_TEST_PUSH`（若提供 test push）
    - `APP_TIMEZONE=Asia/Taipei`（未設定時預設 `Asia/Taipei`）
    - `MAX_RETRY_COUNT=3`
    - `STALE_THRESHOLD_SEC=90`
@@ -32,6 +35,7 @@
 2. 非交易時段不得發通知。
 3. 每交易日 14:00 執行估值結算一次。
 4. 每分鐘最多 1 封 LINE 訊息。
+5. 所有出站 LINE 訊息需走模板渲染（彙總/摘要/觸發列/測試推播），不得硬編碼最終文案。
 
 ## 4. 巡檢指標
 1. `line_send_success_rate`（近 1 小時）

@@ -295,6 +295,41 @@ class SqliteValuationSnapshotRepository:
             self.conn.rollback()
             raise
 
+    def list_latest_snapshots(self, stock_nos: list[str], as_of_date: str) -> list[dict]:
+        normalized_stock_nos = [str(stock_no).strip() for stock_no in stock_nos if str(stock_no).strip()]
+        if not normalized_stock_nos:
+            return []
+
+        placeholders = ",".join(["?"] * len(normalized_stock_nos))
+        rows = self.conn.execute(
+            f"""
+            WITH latest AS (
+              SELECT stock_no, method_name, method_version, MAX(trade_date) AS trade_date
+              FROM valuation_snapshots
+              WHERE stock_no IN ({placeholders})
+                AND trade_date <= ?
+                AND method_name <> 'manual_rule'
+              GROUP BY stock_no, method_name, method_version
+            )
+            SELECT
+              s.stock_no,
+              s.trade_date,
+              s.method_name,
+              s.method_version,
+              s.fair_price,
+              s.cheap_price
+            FROM valuation_snapshots s
+            JOIN latest l
+              ON s.stock_no = l.stock_no
+             AND s.method_name = l.method_name
+             AND s.method_version = l.method_version
+             AND s.trade_date = l.trade_date
+            ORDER BY s.stock_no, s.method_name, s.method_version
+            """,
+            (*normalized_stock_nos, str(as_of_date)),
+        ).fetchall()
+        return [dict(row) for row in rows]
+
 
 @dataclass
 class SqliteLogger:
@@ -324,3 +359,16 @@ class SqliteLogger:
             """
         ).fetchall()
         return [dict(row) for row in rows]
+
+    def opening_summary_sent_for_date(self, trade_date: str) -> bool:
+        row = self.conn.execute(
+            """
+            SELECT 1
+            FROM system_logs
+            WHERE event = 'OPENING_SUMMARY_SENT'
+              AND detail LIKE ?
+            LIMIT 1
+            """,
+            (f"%date={str(trade_date)}%",),
+        ).fetchone()
+        return row is not None

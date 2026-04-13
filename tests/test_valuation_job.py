@@ -118,3 +118,46 @@ def test_tp_val_003_calculation_failure_does_not_overwrite_previous_snapshot():
     assert any(level == "ERROR" for level, _ in logger.events), (
         "[TP-VAL-003] Failed calculation must generate ERROR log."
     )
+
+
+def test_cov_val_002_event_normalization_and_persist_failure():
+    _iter_calculation_events = require_symbol(
+        "stock_monitor.application.valuation_scheduler",
+        "_iter_calculation_events",
+        "COV-VAL-002",
+    )
+    run_daily_valuation_job = require_symbol(
+        "stock_monitor.application.valuation_scheduler",
+        "run_daily_valuation_job",
+        "COV-VAL-002",
+    )
+
+    class _CalculatorWithGetEvents:
+        def calculate(self):
+            return [{"stock_no": "2330"}]
+
+        def get_events(self):
+            return [("warn", "tuple-event"), "plain-event"]
+
+    normalized_events = _iter_calculation_events(_CalculatorWithGetEvents())
+    assert normalized_events == [("WARN", "tuple-event"), ("INFO", "plain-event")], (
+        "[COV-VAL-002] Event normalization must support get_events() fallback and non-tuple items."
+    )
+
+    class _FailSnapshotRepo:
+        def save_snapshots(self, snapshots: list[dict]):
+            _ = snapshots
+            raise RuntimeError("persist down")
+
+    logger = _FakeLogger(events=[])
+    result = run_daily_valuation_job(
+        now_dt=datetime(2026, 4, 10, 14, 0, 0),
+        is_trading_day=True,
+        calculator=_CalculatorWithGetEvents(),
+        snapshot_repo=_FailSnapshotRepo(),
+        logger=logger,
+    )
+    assert result.get("status") == "failed", "[COV-VAL-002] Snapshot persist failure must return failed."
+    assert any("VALUATION_PERSIST_FAILED" in message for _, message in logger.events), (
+        "[COV-VAL-002] Snapshot persist failure must be logged."
+    )

@@ -1,8 +1,18 @@
 # EDD - 台股監控與 LINE 通知系統
 
-版本：v0.5  
-日期：2026-04-10  
+版本：v0.7  
+日期：2026-04-14  
 對齊文件：[PDD_Stock_Monitoring_System.md](c:/Projects/stock/PDD_Stock_Monitoring_System.md)
+
+變更摘要（v0.7）：
+- 新增 FR-14 對齊：LINE 訊息改為 Template-driven 渲染規格（不得在業務程式寫死完整文案）。
+- 開盤摘要訊息改為支援手機友善精簡模板（例：`台積電(2330) 手動 2000/1500`）。
+- 補充模板設定鍵、渲染失敗處理、測試對應。
+
+變更摘要（v0.6）：
+- 納入三方法基線：`emily_composite_v1`、`oldbull_dividend_yield_v1`、`raysky_blended_margin_v1`。
+- 新增估值資料來源主備援與資料充分性規則（每日可計算）。
+- 新增估值方法執行狀態規格：`SUCCESS / SKIP_INSUFFICIENT_DATA / SKIP_PROVIDER_ERROR`。
 
 變更摘要（v0.5）：
 - `message.methods_hit` 約束加嚴為 JSON array（`json_valid + json_type='array'`）。
@@ -22,6 +32,8 @@
 | v0.3 | 2026-04-10 | requires migration verification | 冷卻/冪等語意分離、upsert 升級、JSON1/rollback 規範 |
 | v0.4 | 2026-04-10 | requires migration verification | 補償流程、DB 硬約束、格式檢核強化 |
 | v0.5 | 2026-04-10 | requires migration verification | methods_hit JSON array 約束、參數顯式化、LINE 命名相容規則 |
+| v0.6 | 2026-04-13 | no schema break | 三方法估值規格、資料來源充分性、日結狀態規範 |
+| v0.7 | 2026-04-14 | no schema break | LINE 訊息模板化（FR-14）、開盤摘要手機友善模板規格 |
 
 ## 1. 目的與範圍
 本文件定義工程實作細節，交付目標：
@@ -31,6 +43,9 @@
 4. 每交易日 14:00 執行估值計算並落地 SQLite。
 5. 多估值方法可啟停，結果按股票+方法寫入。
 6. 每分鐘只發一封彙總訊息（含多股票/多方法命中）。
+7. 每日 14:00 對三方法逐股估值，資料不足時跳過且不覆蓋舊值。
+8. 每交易日開盤第一個可交易分鐘先推送「監控設定摘要」（股票/方法/fair/cheap），同日僅一次。
+9. LINE 訊息文本採模板渲染，不將完整文案硬寫於業務流程程式。
 
 ## 2. 關鍵業務規則（定版）
 ### 2.1 訊號狀態
@@ -61,6 +76,31 @@
 - 發送成功後寫入 `message` 表時，需使用單一 DB transaction 一次提交該分鐘所有股票事件。
 - 若 LINE 已成功但 DB transaction 失敗，需寫入本機補償佇列（JSONL），並在補償完成前視同已通知，避免重複提醒。
 
+### 2.6 開盤監控設定摘要規則
+- 觸發時機：交易日第一個可交易分鐘（通常 09:00，若延後開市則為首個可交易分鐘）。
+- 同一交易日僅允許發送一次；服務重啟不得重複推送同日摘要。
+- 摘要內容必含：
+  - 逐股票逐方法 `fair_price/cheap_price`
+- 價格來源：
+  - `manual_rule` 來自 `watchlist`
+  - 估值方法來自 `valuation_snapshots`（取 `trade_date <= today` 的最新快照）
+- 若某股票某方法無快照，仍要列出方法，價格顯示 `N/A`。
+- 股票顯示格式預設為 `中文名(代號)`（例：`台積電(2330)`）。
+
+### 2.7 LINE 訊息模板規則（FR-14）
+- 所有對外發送至 LINE 的訊息都必須由模板渲染產生，包含：
+  - 每分鐘彙總通知（minute digest）
+  - 開盤監控設定摘要通知（opening summary）
+  - 單股觸發內容列（trigger row / status 1/2）
+  - 測試推播與營運驗證推播（若系統提供）
+- 業務流程層只提供 render context（資料），不直接拼接最終文案字串。
+- 模板需可獨立調整：
+  - 不修改監控主流程程式碼即可調整文案格式。
+  - 可依通道/裝置需求提供不同模板（例如 mobile compact）。
+- 模板錯誤處理：
+  - 模板缺失、語法錯誤、render 失敗需寫 `ERROR` log。
+  - 發送路徑不得默默退回未知硬編碼格式。
+
 ## 3. 架構總覽（Clean Architecture）
 ### 3.1 文字架構圖
 ```text
@@ -73,6 +113,7 @@
 | CheckIntradayPriceUseCase                               |
 | RunDailyValuationUseCase                                |
 | ComposeMinuteDigestUseCase                              |
+| RenderLineMessageUseCase                                |
 +--------------------------+------------------------------+
                            |
                  (Ports / Interfaces)
@@ -86,6 +127,7 @@
                            v
 +------------------ Infrastructure Layer -----------------+
 | MarketDataAdapter | TradingCalendarAdapter | LineAdapter |
+| LineTemplateRenderer | TemplateRepository                |
 | Sqlite repositories (watchlist, valuation, message, log) |
 +---------------------------------------------------------+
 ```
@@ -99,6 +141,7 @@ flowchart TD
     P --> M[MarketData Adapter]
     P --> C[TradingCalendar Adapter]
     P --> L[LINE Messaging Adapter]
+    P --> T[Template Renderer/Repository]
     P --> R[SQLite Repositories]
 ```
 
@@ -108,7 +151,10 @@ flowchart TD
 flowchart TD
     T[Tick every 60s] --> S{Is trading session?}
     S -- No --> E[End]
-    S -- Yes --> W[Load enabled watchlist]
+    S -- Yes --> O{Opening summary sent today?}
+    O -- No --> OS[Send one opening summary LINE]
+    O -- Yes --> W[Load enabled watchlist]
+    OS --> W
     W --> Q[Fetch all stock prices]
     Q --> X[Evaluate all methods per stock]
     X --> P1[Apply status priority per stock: 2 > 1]
@@ -116,8 +162,9 @@ flowchart TD
     C1 --> G[Collect sendable stock events]
     G --> H{Any event to send?}
     H -- No --> E
-    H -- Yes --> M[Build one minute digest message]
-    M --> L[Send LINE once]
+    H -- Yes --> M[Build render context]
+    M --> RND[Render by LINE template]
+    RND --> L[Send LINE once]
     L --> R{Send success?}
     R -- Yes --> DB[Insert message rows for sent stock events]
     R -- No --> LOG[Write system_logs only]
@@ -132,10 +179,11 @@ flowchart TD
     T -- No --> END[End]
     T -- Yes --> W[Load enabled watchlist]
     W --> M[Load enabled valuation methods]
-    M --> C[Compute fair/cheap for each stock x method]
-    C --> R{Compute success?}
-    R -- Yes --> U[Upsert valuation_snapshots]
-    R -- No --> L[Write error log, keep previous snapshot]
+    M --> I[Load valuation input package from providers]
+    I --> C[Compute fair/cheap for each stock x method]
+    C --> R{Method compute status}
+    R -- SUCCESS --> U[Upsert valuation_snapshots]
+    R -- SKIP_* --> L[Write warn/error log, keep previous snapshot]
     U --> END
     L --> END
 ```
@@ -170,7 +218,7 @@ CREATE TABLE IF NOT EXISTS watchlist (
 ### 6.2 `valuation_methods`
 ```sql
 CREATE TABLE IF NOT EXISTS valuation_methods (
-  method_name TEXT NOT NULL,                     -- ex: 'pe_band'
+  method_name TEXT NOT NULL,                     -- ex: 'emily_composite'
   method_version TEXT NOT NULL,                  -- ex: 'v1'
   enabled INTEGER NOT NULL DEFAULT 1 CHECK (enabled IN (0,1)),
   created_at INTEGER NOT NULL,
@@ -218,7 +266,7 @@ CREATE TABLE IF NOT EXISTS message (
     CHECK (
       json_valid(methods_hit)
       AND json_type(methods_hit) = 'array'
-    ),                                           -- JSON array string, ex: ["pe_band","ma_gap"]
+    ),                                           -- JSON array string, ex: ["emily_composite_v1","oldbull_dividend_yield_v1"]
   minute_bucket TEXT NOT NULL
     CHECK (
       length(minute_bucket) = 16
@@ -265,6 +313,22 @@ CREATE TABLE IF NOT EXISTS system_logs (
 );
 ```
 
+### 6.7 估值輸入資料與來源規格（無新增資料表）
+估值日結使用「當日可得的最新有效資料」，不要求每日都有新財報。
+
+| 輸入欄位 | 主來源 | 備援來源 | 主要方法 |
+|---|---|---|---|
+| `price_history_10y` | TWSE/TPEx 歷史價格 | Yahoo Finance | 艾蜜莉歷年股價法、PE/PB 區間 |
+| `avg_dividend` | MOPS 股利資訊 | TWSE 公開欄位 | 艾蜜莉股利法、股海老牛 |
+| `eps_ttm` / `eps_10y_avg` | MOPS 財報 | TWSE 財報彙整 | 艾蜜莉 PE、雷司紀 PE |
+| `bps_latest` / `pb_history` | MOPS 財報 | TWSE 財報彙整 | 艾蜜莉 PB、雷司紀 PB |
+| `current_assets` / `total_liabilities` / `shares_outstanding` | MOPS 資產負債表與基本資料 | TWSE 公開欄位 | 雷司紀 NCAV |
+
+資料充分性規則：
+- 每方法定義 `required_fields`，缺一不可。
+- 財報類資料允許沿用最近一期有效值，但必須記錄 `input_asof_date`。
+- 若來源不可用或回傳空值，該方法當日狀態標記為 `SKIP_*`，且不得覆蓋既有快照。
+
 ## 7. LINE Messaging API 設計
 ### 7.1 環境變數
 - 規範名（Canonical）：
@@ -281,15 +345,16 @@ CREATE TABLE IF NOT EXISTS system_logs (
 
 1) 2330 | status=2 (below_cheap)
    market=998 | fair=1500 | cheap=1000
-   methods_hit=[manual_rule, pe_band_v1]
+   methods_hit=[emily_composite_v1, raysky_blended_margin_v1]
 
 2) 2317 | status=1 (below_fair)
    market=142 | fair=145 | cheap=130
-   methods_hit=[manual_rule, pb_band_v2]
+   methods_hit=[oldbull_dividend_yield_v1]
 ```
 
 ### 7.3 發送與寫庫規則
 - 每分鐘最多發 1 封 LINE 訊息。
+- 開盤摘要屬於「每日一次」通知，與每分鐘訊號通知分開計數。
 - 發送成功後，才寫入 `message` 表（每個股票事件一筆）。
 - `message` 寫入需在同一 transaction 完成；任一筆失敗則整批 rollback。
 - 寫入策略採 `INSERT ... ON CONFLICT(stock_no, minute_bucket) DO UPDATE`：
@@ -313,6 +378,37 @@ WHERE excluded.stock_status > message.stock_status
 ```
 - `minute_bucket` 必須由 `TimeBucketService` 單一入口產生，不得在多處自行拼字串。
 - 發送失敗：不寫 `message`，只寫 `system_logs`。
+
+### 7.6 LINE 訊息模板規格（FR-14）
+- 模板鍵（最小集合）：
+  - `line_minute_digest_v1`
+  - `line_trigger_row_v1`
+  - `line_opening_summary_mobile_compact_v1`
+  - `line_test_push_v1`（若提供測試推播）
+- 載入來源：
+  - 預設為 `LINE_TEMPLATE_DIR` 目錄下模板檔。
+  - 模板內容可獨立調整，不需修改監控主流程程式。
+- Render context（opening summary）最低需提供：
+  - `stock_display`（例：`台積電(2330)`）
+  - `method_label`（例：`手動`、`艾蜜`、`老牛`、`雷司`）
+  - `fair_price`
+  - `cheap_price`
+  - 缺值時允許 `N/A`
+- 開盤摘要 mobile compact 模板範例：
+```text
+{{ stock_display }} {{ method_label }} {{ fair_price }}/{{ cheap_price }}
+```
+- 渲染後訊息範例：
+```text
+台積電(2330) 手動 2000/1500
+台積電(2330) 艾蜜 1800/1500
+台積電(2330) 老牛 1750/1400
+台積電(2330) 雷司 1284/1091
+```
+- 錯誤處理：
+  - 模板缺失：`TEMPLATE_NOT_FOUND`（ERROR）
+  - 渲染失敗：`TEMPLATE_RENDER_FAILED`（ERROR）
+  - 任一模板失敗不得默默回退為程式硬編碼文案。
 
 ### 7.5 補償機制（LINE 成功、DB 失敗）
 - 情境：LINE API 回傳成功，但 `message` transaction rollback。
@@ -350,6 +446,9 @@ PENDING_DELIVERY_LOG_PATH=./logs/pending_delivery.jsonl
 
 LINE_CHANNEL_ACCESS_TOKEN=...
 LINE_TO_GROUP_ID=...
+LINE_TEMPLATE_DIR=./templates/line
+LINE_TEMPLATE_MINUTE_DIGEST=line_minute_digest_v1
+LINE_TEMPLATE_OPENING_SUMMARY=line_opening_summary_mobile_compact_v1
 ```
 
 ### 8.1 執行環境前置條件
@@ -371,6 +470,32 @@ LINE_TO_GROUP_ID=...
   - `compute(stock_no, trade_date) -> {fair_price, cheap_price}`
 - 方法開關採全域（方法本身是否參與計算），不做每股方法開關。
 - 估值結果按 `stock_no + method_name + method_version + trade_date` 寫入快照。
+- 第一批方法固定：
+  - `emily_composite_v1`
+  - `oldbull_dividend_yield_v1`
+  - `raysky_blended_margin_v1`
+
+### 9.1 三方法公式（工程定版）
+1. `emily_composite_v1`
+   - 子法輸出 `fair/cheap`：
+     - 股利法：`cheap = avg_dividend * 15`，`fair = avg_dividend * 20`
+     - 歷年股價法：`cheap = avg(year_low_10y)`，`fair = avg(year_avg_10y)`
+     - PE 法：`base_eps = (eps_ttm + eps_10y_avg)/2`，`cheap = base_eps * pe_low_avg`，`fair = base_eps * pe_mid_avg`
+     - PB 法：`cheap = bps_latest * pb_low_avg`，`fair = bps_latest * pb_mid_avg`
+   - 對可用子法取平均後乘安全邊際（預設 `0.9`）。
+2. `oldbull_dividend_yield_v1`
+   - `fair = avg_dividend / 0.05`
+   - `cheap = avg_dividend / 0.06`
+3. `raysky_blended_margin_v1`
+   - 子法：PE、股利、PB、NCAV 先各自算 `fair/cheap`。
+   - 融合：`fair = median_or_weighted(submethod_fair)`。
+   - `cheap = fair * margin_factor`（預設 `0.9`，可配置）。
+
+### 9.2 估值方法執行狀態規格
+- `SUCCESS`：方法完成計算並寫入 `valuation_snapshots`。
+- `SKIP_INSUFFICIENT_DATA`：缺 required fields，不覆蓋舊快照。
+- `SKIP_PROVIDER_ERROR`：來源逾時/錯誤，不覆蓋舊快照。
+- 日結任務成功條件：至少有一個 `stock x method` 成功即可視為 job completed（含部分 skip）。
 
 ## 10. 測試計畫（補強版）
 ### 10.1 單元測試
@@ -383,11 +508,18 @@ LINE_TO_GROUP_ID=...
 
 ### 10.2 整合測試
 - 同分鐘多股票多方法命中 -> LINE 只呼叫一次。
+- 交易日開盤第一個可交易分鐘 -> 發送 1 封監控設定摘要（股票/方法/fair/cheap），且內容由 template 渲染。
+- 同一交易日再次觸發開盤摘要（含服務重啟）-> 不得重複發送。
 - LINE 發送失敗 -> `message` 無新增、`system_logs` 有 ERROR。
+- 模板缺失或渲染失敗 -> `TEMPLATE_NOT_FOUND` / `TEMPLATE_RENDER_FAILED` 錯誤日誌，且不得用未知硬編碼格式送出。
+- 每分鐘彙總/觸發列/開盤摘要（與測試推播，若提供）都必須經 template renderer；任一路徑不得直接硬編碼最終 LINE 文案。
 - 日結估值部分方法失敗 -> 失敗方法不覆蓋舊值，其它方法正常寫入。
 - `message` 批次寫入時模擬中途失敗 -> 驗證整批 rollback（該分鐘 0 筆落庫）。
 - `status=1` 先寫入後同分鐘升級 `status=2` -> 最終僅保留 `status=2`，內容為最終聚合結果。
 - LINE 成功但 DB 寫入失敗 -> 建立補償紀錄，下一分鐘不重複發送，回補成功後 ledger 狀態為 `RECONCILED`。
+- 三方法在同一交易日皆有足夠輸入 -> 每股產生三筆快照（method/version 不同）。
+- 單方法資料不足 -> 僅該方法 `SKIP_INSUFFICIENT_DATA`，其它方法照常入庫。
+- 單來源失敗但備援可用 -> 該方法仍可 `SUCCESS`（需有來源切換 log）。
 
 ### 10.3 UAT 對齊
 - 依 PDD 驗收條件逐條驗證，外加「每分鐘只一封」。
@@ -399,7 +531,8 @@ LINE_TO_GROUP_ID=...
 4. 實作 `LineMessagingApiAdapter`（單次發送）。
 5. 實作 `pending_delivery` 補償 worker（ledger/jsonl 重試回補）。
 6. 實作 `RunDailyValuationUseCase`（14:00, fail-no-overwrite）。
-7. 補齊單元與整合測試。
+7. 實作 `LineTemplateRenderer` / 模板載入流程（minute digest + opening summary）。
+8. 補齊單元與整合測試。
 
 ## 12. 交付物
 1. 可執行 worker（本機）。

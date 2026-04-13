@@ -70,5 +70,40 @@ UAT_SCENARIOS = {
         "steps": ["執行該分鐘流程"],
         "expected": ["LINE 發送次數 0 且有對應 WARN"],
     },
+    "TP-UAT-012": {
+        "title": "每交易日三方法估值皆嘗試執行，資料不足方法 skip 且不覆蓋舊快照",
+        "preconditions": ["昨日 valuation_snapshots 已存在", "raysky 缺 current_assets"],
+        "steps": ["觸發日結估值 job"],
+        "expected": [
+            "raysky 應記錄 SKIP_INSUFFICIENT_DATA",
+            "其餘方法成功",
+            "既有快照不應被覆蓋",
+        ],
+    },
+    "TP-UAT-013": {
+        "title": "開盤第一個可交易分鐘先發監控設定摘要且同日不重複",
+        "preconditions": [
+            "今天是交易日",
+            "watchlist 含 2330,2348,3293",
+            "可用方法為 manual_rule,emily_composite_v1,oldbull_dividend_yield_v1,raysky_blended_margin_v1",
+        ],
+        "steps": ["觸發開盤監控設定摘要通知", "同一交易日再次觸發開盤摘要"],
+        "expected": [
+            "首次發送 1 封摘要（由模板渲染，含股票/方法/fair/cheap）",
+            "同日第二次不重複發送",
+        ],
+    },
+    "TP-UAT-014": {
+        "title": "所有 LINE 出站訊息皆透過模板渲染，程式碼無硬編碼最終文案",
+        "preconditions": [
+            "TRIGGER_ROW_TEMPLATE_KEY 已定義於 runtime_service",
+            "MINUTE_DIGEST_TEMPLATE_KEY 已定義於 monitoring_workflow",
+        ],
+        "steps": ["觸發任意 LINE 訊息產生（彙總、摘要、觸發列）"],
+        "expected": [
+            "所有訊息皆透過 render_line_template_message 渲染",
+            "程式碼無直接拼接最終文案之 f-string",
+        ],
+    },
 }
 

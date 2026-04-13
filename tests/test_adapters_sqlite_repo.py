@@ -212,3 +212,62 @@ def test_get_last_sent_at_handles_none_row():
 
     repo = SqliteMessageRepository(conn=_Conn())  # type: ignore[arg-type]
     assert repo.get_last_sent_at("2330", 1) is None
+
+
+def test_valuation_snapshot_repo_list_latest_snapshots():
+    conn = connect_sqlite(":memory:")
+    try:
+        apply_schema(conn)
+        watchlist_repo = SqliteWatchlistRepository(conn)
+        watchlist_repo.upsert_manual_threshold("2330", fair=2000, cheap=1500, enabled=1)
+        watchlist_repo.upsert_manual_threshold("2348", fair=72, cheap=68, enabled=1)
+
+        repo = SqliteValuationSnapshotRepository(conn)
+        repo.save_snapshots(
+            [
+                {
+                    "stock_no": "2330",
+                    "trade_date": "2026-04-11",
+                    "method_name": "emily_composite",
+                    "method_version": "v1",
+                    "fair_price": 1800,
+                    "cheap_price": 1500,
+                },
+                {
+                    "stock_no": "2330",
+                    "trade_date": "2026-04-12",
+                    "method_name": "emily_composite",
+                    "method_version": "v1",
+                    "fair_price": 1820,
+                    "cheap_price": 1520,
+                },
+                {
+                    "stock_no": "2348",
+                    "trade_date": "2026-04-10",
+                    "method_name": "oldbull_dividend_yield",
+                    "method_version": "v1",
+                    "fair_price": 70,
+                    "cheap_price": 56,
+                },
+            ]
+        )
+
+        rows = repo.list_latest_snapshots(["2330", "2348"], as_of_date="2026-04-12")
+        assert len(rows) == 2
+
+        row_2330 = [item for item in rows if item["stock_no"] == "2330"][0]
+        assert row_2330["trade_date"] == "2026-04-12"
+        assert float(row_2330["fair_price"]) == 1820.0
+    finally:
+        conn.close()
+
+
+def test_valuation_snapshot_repo_list_latest_snapshots_empty_stock_list():
+    conn = connect_sqlite(":memory:")
+    try:
+        apply_schema(conn)
+        repo = SqliteValuationSnapshotRepository(conn)
+        assert repo.list_latest_snapshots([], as_of_date="2026-04-12") == []
+        assert repo.list_latest_snapshots(["", "   "], as_of_date="2026-04-12") == []
+    finally:
+        conn.close()

@@ -10,10 +10,16 @@ import sys
 import pytest
 
 from stock_monitor.application.runtime_service import (
+    _already_sent_opening_summary,
+    _build_opening_method_pairs,
+    _build_opening_summary_message,
+    _format_compact_price,
     _format_price,
+    _send_opening_summary_if_needed,
     _to_epoch_seconds,
     build_minute_rows,
     evaluate_manual_threshold_hits,
+    evaluate_valuation_snapshot_hits,
     run_minute_cycle,
     run_reconcile_cycle,
 )
@@ -142,6 +148,22 @@ def test_runtime_helpers_for_epoch_hits_and_rows():
     )
     assert no_hits == []
     assert evaluate_manual_threshold_hits(watchlist_rows=watchlist, quotes={}) == []
+
+    valuation_hits = evaluate_valuation_snapshot_hits(
+        snapshot_rows=[
+            {
+                "stock_no": "2330",
+                "method_name": "emily_composite",
+                "method_version": "v1",
+                "fair_price": 1800,
+                "cheap_price": 1500,
+            }
+        ],
+        quotes={"2330": {"price": 1499, "tick_at": 1712710000}},
+    )
+    assert len(valuation_hits) == 1
+    assert valuation_hits[0]["stock_status"] == 2
+    assert valuation_hits[0]["method"] == "emily_composite_v1"
 
     rows = build_minute_rows(
         now_dt=datetime(2026, 4, 10, 10, 21, 0),
@@ -405,6 +427,293 @@ def test_run_minute_cycle_branches_and_reconcile():
     assert reconcile_result["reconciled"] == 1
 
 
+def test_run_minute_cycle_includes_manual_plus_three_valuation_methods():
+    @dataclass
+    class _FakeValuationSnapshotRepo:
+        rows: list[dict]
+
+        def list_latest_snapshots(self, stock_nos: list[str], as_of_date: str) -> list[dict]:
+            _ = (stock_nos, as_of_date)
+            return list(self.rows)
+
+    logger = _FakeLogger(events=[])
+    line_client = _FakeLineClient(sent=[])
+    message_repo = _FakeMessageRepo(last_sent_map={}, rows=[])
+    pending_repo = _FakePendingRepo(items=[])
+    fallback = _FakeFallback(rows=[])
+
+    now_dt = datetime(2026, 4, 10, 10, 0, 0)
+    now_epoch = int(now_dt.timestamp())
+
+    result = run_minute_cycle(
+        now_dt=now_dt,
+        market_data_provider=_FakeMarketProvider(
+            snapshot={"index_tick_at": now_epoch},
+            quotes={"2330": {"name": "台積電", "price": 900.0, "tick_at": now_epoch}},
+        ),
+        line_client=line_client,
+        watchlist_repo=_FakeWatchlistRepo(rows=[{"stock_no": "2330", "manual_fair_price": 1500, "manual_cheap_price": 1000}]),
+        message_repo=message_repo,
+        pending_repo=pending_repo,
+        valuation_snapshot_repo=_FakeValuationSnapshotRepo(
+            rows=[
+                {
+                    "stock_no": "2330",
+                    "trade_date": "2026-04-10",
+                    "method_name": "emily_composite",
+                    "method_version": "v1",
+                    "fair_price": 1200,
+                    "cheap_price": 1000,
+                },
+                {
+                    "stock_no": "2330",
+                    "trade_date": "2026-04-10",
+                    "method_name": "oldbull_dividend_yield",
+                    "method_version": "v1",
+                    "fair_price": 1100,
+                    "cheap_price": 950,
+                },
+                {
+                    "stock_no": "2330",
+                    "trade_date": "2026-04-10",
+                    "method_name": "raysky_blended_margin",
+                    "method_version": "v1",
+                    "fair_price": 1000,
+                    "cheap_price": 900,
+                },
+            ]
+        ),
+        pending_fallback=fallback,
+        logger=logger,
+        cooldown_seconds=300,
+        retry_count=3,
+        stale_threshold_sec=90,
+    )
+
+    assert result["status"] == "persisted"
+    assert len(message_repo.rows) == 1
+    methods = set(message_repo.rows[0]["methods_hit"])
+    assert methods == {
+        "manual_rule",
+        "emily_composite_v1",
+        "oldbull_dividend_yield_v1",
+        "raysky_blended_margin_v1",
+    }
+
+
+def test_opening_summary_helpers_cover_dedupe_na_and_exception_paths():
+    pairs = _build_opening_method_pairs(
+        [
+            {"method_name": "  ", "method_version": "v1"},
+            {"method_name": "custom_method", "method_version": "v2"},
+            {"method_name": "custom_method", "method_version": "v2"},
+            {"method_name": "emily_composite", "method_version": "v1"},
+        ]
+    )
+    assert pairs.count(("custom_method", "v2")) == 1
+    assert pairs.count(("emily_composite", "v1")) == 1
+
+    message = _build_opening_summary_message(
+        trade_date="2026-04-14",
+        watchlist_rows=[{"stock_no": "2330", "manual_fair_price": 2000.0, "manual_cheap_price": 1500.0}],
+        method_pairs=[("custom_method", "v2"), ("missing_method", "v1")],
+        snapshot_rows=[
+            {
+                "stock_no": "2330",
+                "method_name": "custom_method",
+                "method_version": "v2",
+                "fair_price": 1800.0,
+                "cheap_price": 1600.0,
+            }
+        ],
+        stock_name_map={"2330": "台積電"},
+    )
+    assert "台積電(2330) 手動 2000/1500" in message
+    assert "台積電(2330) custom_method_v2 1800/1600" in message
+    assert "台積電(2330) missing_method_v1 N/A/N/A" in message
+
+    class _NoSummaryStateLogger:
+        def log(self, level: str, message: str):
+            _ = (level, message)
+
+    class _RaisesSummaryStateLogger:
+        def log(self, level: str, message: str):
+            _ = (level, message)
+
+        def opening_summary_sent_for_date(self, trade_date: str) -> bool:
+            _ = trade_date
+            raise RuntimeError("state broken")
+
+    assert _already_sent_opening_summary(_NoSummaryStateLogger(), "2026-04-14") is False
+    assert _already_sent_opening_summary(_RaisesSummaryStateLogger(), "2026-04-14") is False
+    assert _format_compact_price("N/A") == "N/A"
+
+    empty_message = _build_opening_summary_message(
+        trade_date="2026-04-14",
+        watchlist_rows=[],
+        method_pairs=[],
+        snapshot_rows=[],
+        stock_name_map={},
+    )
+    assert empty_message == "無監控資料"
+
+
+def test_send_opening_summary_branch_coverage():
+    @dataclass
+    class _SummaryLogger:
+        already_sent: bool
+        events: list[tuple[str, str]]
+
+        def log(self, level: str, message: str):
+            self.events.append((level, message))
+
+        def opening_summary_sent_for_date(self, trade_date: str) -> bool:
+            _ = trade_date
+            return self.already_sent
+
+    @dataclass
+    class _BrokenSnapshotRepo:
+        def list_latest_snapshots(self, stock_nos: list[str], as_of_date: str):
+            _ = (stock_nos, as_of_date)
+            raise RuntimeError("snapshot broken")
+
+    @dataclass
+    class _FailLineClient:
+        def send(self, message: str):
+            _ = message
+            raise RuntimeError("line send broken")
+
+    watchlist_rows = [{"stock_no": "2330", "manual_fair_price": 2000.0, "manual_cheap_price": 1500.0}]
+
+    line_client = _FakeLineClient(sent=[])
+    logger = _SummaryLogger(already_sent=False, events=[])
+    _send_opening_summary_if_needed(
+        now_dt=datetime(2026, 4, 14, 8, 59, 0),
+        watchlist_rows=watchlist_rows,
+        valuation_snapshot_repo=None,
+        line_client=line_client,
+        logger=logger,
+    )
+    assert line_client.sent == []
+
+    line_client = _FakeLineClient(sent=[])
+    logger = _SummaryLogger(already_sent=True, events=[])
+    _send_opening_summary_if_needed(
+        now_dt=datetime(2026, 4, 14, 9, 0, 0),
+        watchlist_rows=watchlist_rows,
+        valuation_snapshot_repo=None,
+        line_client=line_client,
+        logger=logger,
+    )
+    assert line_client.sent == []
+
+    line_client = _FakeLineClient(sent=[])
+    logger = _SummaryLogger(already_sent=False, events=[])
+    _send_opening_summary_if_needed(
+        now_dt=datetime(2026, 4, 14, 9, 0, 0),
+        watchlist_rows=watchlist_rows,
+        valuation_snapshot_repo=None,
+        line_client=line_client,
+        logger=logger,
+    )
+    assert len(line_client.sent) == 1
+    assert any("OPENING_SUMMARY_SENT:date=2026-04-14" in msg for _, msg in logger.events)
+
+    logger = _SummaryLogger(already_sent=False, events=[])
+    _send_opening_summary_if_needed(
+        now_dt=datetime(2026, 4, 14, 9, 0, 0),
+        watchlist_rows=watchlist_rows,
+        valuation_snapshot_repo=_BrokenSnapshotRepo(),
+        line_client=_FailLineClient(),
+        logger=logger,
+    )
+    assert any("OPENING_SUMMARY_SNAPSHOT_FETCH_FAILED" in msg for _, msg in logger.events)
+    assert any("OPENING_SUMMARY_SEND_FAILED" in msg for _, msg in logger.events)
+
+
+def test_evaluate_valuation_snapshot_hits_remaining_paths():
+    hits = evaluate_valuation_snapshot_hits(
+        snapshot_rows=[
+            {
+                "stock_no": "9999",
+                "method_name": "emily_composite",
+                "method_version": "v1",
+                "fair_price": 120.0,
+                "cheap_price": 100.0,
+            },
+            {
+                "stock_no": "2330",
+                "method_name": "oldbull_dividend_yield",
+                "method_version": "v1",
+                "fair_price": 200.0,
+                "cheap_price": 100.0,
+            },
+            {
+                "stock_no": "2348",
+                "method_name": "raysky_blended_margin",
+                "method_version": "v1",
+                "fair_price": 80.0,
+                "cheap_price": 70.0,
+            },
+            {
+                "stock_no": "3293",
+                "method_name": "custom_method",
+                "method_version": "",
+                "fair_price": 110.0,
+                "cheap_price": 95.0,
+            },
+        ],
+        quotes={
+            "2330": {"price": 150.0, "tick_at": 1712710000},
+            "2348": {"price": 100.0, "tick_at": 1712710000},
+            "3293": {"price": 90.0, "tick_at": 1712710000},
+        },
+    )
+
+    assert len(hits) == 2
+    hit_2330 = [row for row in hits if row["stock_no"] == "2330"][0]
+    hit_3293 = [row for row in hits if row["stock_no"] == "3293"][0]
+    assert hit_2330["stock_status"] == 1
+    assert hit_3293["stock_status"] == 2
+    assert hit_3293["method"] == "custom_method"
+
+
+def test_run_minute_cycle_logs_warning_when_valuation_snapshot_lookup_fails():
+    @dataclass
+    class _BrokenValuationSnapshotRepo:
+        def list_latest_snapshots(self, stock_nos: list[str], as_of_date: str):
+            _ = (stock_nos, as_of_date)
+            raise RuntimeError("snapshot query failed")
+
+    now_dt = datetime(2026, 4, 10, 10, 0, 0)
+    now_epoch = int(now_dt.timestamp())
+    logger = _FakeLogger(events=[])
+    line_client = _FakeLineClient(sent=[])
+    message_repo = _FakeMessageRepo(last_sent_map={}, rows=[])
+    pending_repo = _FakePendingRepo(items=[])
+    fallback = _FakeFallback(rows=[])
+
+    result = run_minute_cycle(
+        now_dt=now_dt,
+        market_data_provider=_FakeMarketProvider(
+            snapshot={"index_tick_at": now_epoch},
+            quotes={"2330": {"name": "台積電", "price": 1499.0, "tick_at": now_epoch}},
+        ),
+        line_client=line_client,
+        watchlist_repo=_FakeWatchlistRepo(rows=[{"stock_no": "2330", "manual_fair_price": 1500, "manual_cheap_price": 1000}]),
+        message_repo=message_repo,
+        pending_repo=pending_repo,
+        valuation_snapshot_repo=_BrokenValuationSnapshotRepo(),
+        pending_fallback=fallback,
+        logger=logger,
+        cooldown_seconds=300,
+        retry_count=3,
+        stale_threshold_sec=90,
+    )
+    assert result["status"] == "persisted"
+    assert any("VALUATION_SNAPSHOT_FETCH_FAILED" in msg for _, msg in logger.events)
+
+
 def test_app_main_init_db_run_once_and_reconcile(monkeypatch, tmp_path: Path, capsys):
     db_path = tmp_path / "runtime.db"
 
@@ -510,18 +819,18 @@ def test_manual_valuation_calculator_from_watchlist():
     calculator = _ManualValuationCalculator(
         watchlist_repo=_WatchlistRepo(),
         trade_date="2026-04-10",
+        scenario_case="all_methods_ok",
     )
     snapshots = calculator.calculate()
-    assert snapshots == [
-        {
-            "stock_no": "2330",
-            "trade_date": "2026-04-10",
-            "method_name": "manual_rule",
-            "method_version": "v1",
-            "fair_price": 1500.0,
-            "cheap_price": 1000.0,
-        }
-    ]
+    method_pairs = {(item["method_name"], item["method_version"]) for item in snapshots}
+    assert method_pairs == {
+        ("emily_composite", "v1"),
+        ("oldbull_dividend_yield", "v1"),
+        ("raysky_blended_margin", "v1"),
+    }
+    assert all(item["stock_no"] == "2330" for item in snapshots)
+    assert all(item["trade_date"] == "2026-04-10" for item in snapshots)
+    assert all(float(item["cheap_price"]) <= float(item["fair_price"]) for item in snapshots)
 
 
 def test_message_format_for_fair_price_and_price_formatter():
