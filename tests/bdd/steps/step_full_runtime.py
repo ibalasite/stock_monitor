@@ -892,6 +892,17 @@ def _handle_given(step: str, ctx: dict):
             "[UAT-014] MINUTE_DIGEST_TEMPLATE_KEY must be defined in monitoring_workflow"
         )
         return
+    # TP-SEC-001 / TP-SEC-002 / TP-ARCH-001/002/003 — pending CR-* action items
+    if step.startswith("LinePushClient 以 token "):
+        pytest.skip("Pending CR-SEC-01: field(repr=False) not yet implemented")
+    if step.startswith("使用無效時區名稱 "):
+        pytest.skip("Pending CR-SEC-03/CR-CODE-05: timezone validation not yet enforced")
+    if step == "stock_monitor.application.valuation_calculator 模組可 import":
+        pytest.skip("Pending CR-ARCH-01: ManualValuationCalculator not yet moved to application layer")
+    if step == "已載入 stock_monitor.application.message_template":
+        pytest.skip("Pending CR-ARCH-03: duplicate render_line_template_message not yet removed")
+    if step == "stock_monitor.application.runtime_service 模組可 import":
+        pytest.skip("Pending CR-CODE-03: MinuteCycleConfig not yet introduced")
     raise AssertionError(f"Unhandled GIVEN step: {step}")
 
 
@@ -1347,6 +1358,17 @@ def _handle_when(step: str, ctx: dict):
     if step == "任何 LINE 訊息被產生":
         # UAT-014: no-op; assertions are covered in THEN steps
         return
+    # TP-SEC-001/002 / TP-ARCH-001/002/003 — pending CR-* when steps
+    if step == "對 LinePushClient 實例呼叫 repr()":
+        pytest.skip("Pending CR-SEC-01")
+    if step == "初始化 TimeBucketService 或呼叫 _resolve_timezone":
+        pytest.skip("Pending CR-SEC-03")
+    if step == "執行一次估值計算（正常情境）":
+        pytest.skip("Pending CR-ARCH-01")
+    if step.startswith("在整個專案中搜尋"):
+        pytest.skip("Pending CR-ARCH-03")
+    if step == "從 runtime_service import MinuteCycleConfig":
+        pytest.skip("Pending CR-CODE-03")
     raise AssertionError(f"Unhandled WHEN step: {step}")
 
 
@@ -1737,6 +1759,25 @@ def _handle_then(step: str, ctx: dict):
             "[UAT-014] aggregate_minute_notifications must not hardcode '[股票監控通知]'"
         )
         return
+    # TP-SEC-001 / TP-SEC-002 / TP-ARCH-001/002/003 — pending CR-* then steps
+    _cr_pending_then = {
+        "repr 輸出不應包含",
+        "LinePushClient 仍可正常發出 LINE API 請求",
+        "應立即 raise ValueError",
+        "不應繼續執行後續邏輯",
+        "不應 fallback 至 UTC 時區",
+        "ManualValuationCalculator 應可從 application.valuation_calculator import",
+        "app.py 不應包含估值計算專屬 class 或 function 定義",
+        "system_logs 不應出現 scenario_case 相關的偽造 skip 事件",
+        "只應在 message_template.py 中找到一個定義",
+        "runtime_service.py 不應包含 render_line_template_message 函式定義",
+        "import 應成功",
+        "MinuteCycleConfig 應為 dataclass 或具名 config 型別",
+        "run_minute_cycle 應接受 MinuteCycleConfig 作為設定入口",
+    }
+    for _pending in _cr_pending_then:
+        if step.startswith(_pending):
+            pytest.skip(f"Pending CR-*: {step}")
     raise AssertionError(f"Unhandled THEN step: {step}")
 
 

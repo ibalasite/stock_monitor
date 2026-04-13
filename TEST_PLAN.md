@@ -1,6 +1,6 @@
 # TEST_PLAN - Stock Monitor System
 
-版本：v0.7  
+版本：v0.8  
 日期：2026-04-14  
 依據文件：[EDD_Stock_Monitoring_System.md](c:/Projects/stock/EDD_Stock_Monitoring_System.md), [PDD_Stock_Monitoring_System.md](c:/Projects/stock/PDD_Stock_Monitoring_System.md), [USER_STORY_ACCEPTANCE_CRITERIA.md](c:/Projects/stock/USER_STORY_ACCEPTANCE_CRITERIA.md)
 
@@ -12,6 +12,7 @@
 5. 驗證開盤第一個可交易分鐘會先發送「監控設定摘要」且同日不重複。  
 6. 以 TDD 流程實作（先測試再主程式），並達成 coverage gate 100%。  
 7. 驗證所有出站 LINE 訊息文案由 Template 渲染（非程式硬編碼），且模板變更可在不改主流程下生效。  
+8. 驗證 Code Review 定版的 16 項改善行動（EDD §13）中具可驗證行為的項目均有對應測試案例。
 
 ## 2. 測試範圍
 ### In Scope
@@ -119,6 +120,13 @@
 | TP-UAT-012 | PDD §12 UAT-12 | UAT | 三方法每日皆嘗試估值，資料不足方法 skip 且不覆蓋舊快照 |
 | TP-UAT-013 | PDD §12 UAT-13 | UAT | 開盤第一個可交易分鐘先發監控設定摘要且同日不重複 |
 | TP-UAT-014 | PDD §12 UAT-14 | UAT | 所有 LINE 出站訊息皆透過模板渲染，且程式碼無硬編碼最終文案 |
+| TP-SEC-001 | EDD §13.1 CR-SEC-01 | Unit | `LinePushClient` 的 `repr()` 輸出不得包含 token 明文 |
+| TP-SEC-002 | EDD §13.1 CR-SEC-03 / §13.3 CR-CODE-05 | Unit | 無效時區名稱引發啟動時 `ValueError`，不得靜默 fallback UTC |
+| TP-SEC-003 | EDD §13.1 CR-SEC-04 | Unit | HTTP 回應讀取有大小上限，超大回應不得無限占用記憶體 |
+| TP-ARCH-001 | EDD §13.2 CR-ARCH-01/02 | Unit | `ValuationCalculator` 可從 `stock_monitor.application.valuation_calculator` import；`app.py` 不含計算邏輯；`scenario_case` 分支不存在於生產估值流程 |
+| TP-ARCH-002 | EDD §13.2 CR-ARCH-03 | Unit | `render_line_template_message` 在整個專案內只有一份定義，來源為 `message_template.py` |
+| TP-ARCH-003 | EDD §13.3 CR-CODE-03 | Unit | `MinuteCycleConfig` dataclass 存在於 `runtime_service.py`，`run_minute_cycle` 接受它作為設定入口 |
+| TP-ARCH-004 | EDD §13.2 CR-ARCH-06 / §13.3 CR-CODE-06 | Integration | 開盤摘要冪等狀態儲存於 DB（非 log 字串比對）；daemon 在 09:01 後重啟時數同日仍可發送開盤摘要 |
 
 ## 7. 詳細測試案例
 | 測試ID | 前置條件 | 步驟 | 預期結果 |
@@ -179,6 +187,13 @@
 | TP-UAT-012 | 系統可運行 | 依 PDD UAT-12 執行並記錄證據 | 通過且具三方法執行/skip與不覆蓋舊值證據 |
 | TP-UAT-013 | 系統可運行 | 依 PDD UAT-13 執行並記錄證據 | 通過且具開盤摘要內容與同日去重證據 |
 | TP-UAT-014 | 系統可運行 | 依 PDD UAT-14 執行並記錄證據 | 通過且具彙總/摘要/觸發列/測試推播模板渲染證據 |
+| TP-SEC-001 | `LinePushClient` 已載入 | 呼叫 `repr(LinePushClient(token="abc", to="xyz"))` | 輸出字串不包含 `abc`；欄位顯示為 `***` 或省略 |
+| TP-SEC-002 | 無 | 以無效時區名稱（如 `"Invalid/Tz"`）初始化 `TimeBucketService` 或呼叫 `_resolve_timezone` | 立即 `raise ValueError`，不繼續執行，不返回 UTC |
+| TP-SEC-003 | Mock HTTP server 回傳超過 1 MB 的 body | 呼叫市場資料 adapter 的 URL 讀取路徑 | 只讀取至 `MAX_RESPONSE_BYTES`，不引發 `MemoryError` |
+| TP-ARCH-001 | 空 DB + 一組主僅依數據 | `from stock_monitor.application.valuation_calculator import ManualValuationCalculator`；檢查 `app.py` 不含計算類；執行一次估值確認無 `scenario_case` log 事件 | import 成功；`app.py` grep 不出計算專屬名稱；system_logs 無偽造 skip 事件 |
+| TP-ARCH-002 | 專案已 import | 用 `grep -r "def render_line_template_message"` 掃瞄所有 `.py` | 僅在 `message_template.py` 出現一次；`runtime_service.py` 改用 import |
+| TP-ARCH-003 | DB 設定 + Mock LINE | `from stock_monitor.application.runtime_service import MinuteCycleConfig`；以 `MinuteCycleConfig` 呼叫 `run_minute_cycle` | import 成功；函式接受 config 物件呼叫正常 |
+| TP-ARCH-004 | 交易日 + watchlist 可用 | 設定「當日開盤摘要尚未發送」於 DB；在 09:01 後啟動 daemon 一次輪詢 | daemon 成功發送 1 封開盤摘要；冪等 key 從 DB 表讀取（不依賴 log LIKE 掃描） |
 
 ## 8. 失敗模式測試
 1. LINE 成功、DB 失敗（最關鍵）。  
@@ -190,13 +205,14 @@
 7. 行情來源重試耗盡仍失敗時，必須跳過該分鐘且不得補發。  
 8. timeout/stale/data conflict 被跳過分鐘，不得補發過期訊號。  
 9. 同一交易日因重啟/排程重複觸發造成開盤摘要重送。  
-
+10. **SEC/ARCH 改善失敗模式**：token 輸出在 debug log，無效時區造成時間偏移，HTTP 超大回應耗盡記憶體。
 ## 9. 測試執行順序
 1. Schema/Migration + Environment 測試（TP-DB-* + TP-ENV-*）。  
 2. Unit 測試（TP-POL-* + TP-BKT-* + TP-KPI-*）。  
 3. Integration 測試（TP-INT-* + TP-TRD-* + TP-VAL-*）。  
-4. UAT（TP-UAT-*）。  
-5. Coverage gate（100%）檢查。  
+4. Security / Architecture 合約測試（TP-SEC-* + TP-ARCH-*）。  
+5. UAT（TP-UAT-*）。  
+6. Coverage gate（100%）檢查。  
 
 ## 10. TDD 實作策略（必遵守）
 1. Red：先寫測試案例，確認 fail。  

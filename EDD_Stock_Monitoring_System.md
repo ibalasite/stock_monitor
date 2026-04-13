@@ -1,8 +1,13 @@
 # EDD - 台股監控與 LINE 通知系統
 
-版本：v0.7  
+版本：v0.8  
 日期：2026-04-14  
 對齊文件：[PDD_Stock_Monitoring_System.md](c:/Projects/stock/PDD_Stock_Monitoring_System.md)
+
+變更摘要（v0.8）：
+- 新增 §13 品質改善行動清單（Code Review）：SEC-01~04、ARCH-01~06、CODE-01~06 共 16 項行動，含安全強化（token repr 遮蔽、時區驗證、HTTP 回應邊界）、架構對齊（計算器移至 application 層、render 單一入口、SRP）、API 清潔（MinuteCycleConfig、開盤摘要 DB 冪等、觸發容錯）。
+- 更新 §7.1 加入 token repr 遮蔽強制規則。
+- 更新 §7.6 加入 `render_line_template_message` 單一定義來源規則。
 
 變更摘要（v0.7）：
 - 新增 FR-14 對齊：LINE 訊息改為 Template-driven 渲染規格（不得在業務程式寫死完整文案）。
@@ -34,6 +39,7 @@
 | v0.5 | 2026-04-10 | requires migration verification | methods_hit JSON array 約束、參數顯式化、LINE 命名相容規則 |
 | v0.6 | 2026-04-13 | no schema break | 三方法估值規格、資料來源充分性、日結狀態規範 |
 | v0.7 | 2026-04-14 | no schema break | LINE 訊息模板化（FR-14）、開盤摘要手機友善模板規格 |
+| v0.8 | 2026-04-14 | no schema break | Code Review 品質改善定版：安全強化（token repr、時區驗證、HTTP 回應邊界）、架構對齊（Calculator → application 層、render 單一入口、SRP）、API 清潔（MinuteCycleConfig、開盤摘要 DB 冪等、觸發容錯）|
 
 ## 1. 目的與範圍
 本文件定義工程實作細節，交付目標：
@@ -338,6 +344,7 @@ CREATE TABLE IF NOT EXISTS system_logs (
   - `CHANNEL_ACCESS_TOKEN`
   - `TARGET_GROUP_ID`
 - 若規範名與別名同時存在，優先使用規範名。
+- **安全規則（CR-SEC-01）**：LINE token 持有物件（`LinePushClient`）不得透過 `repr()` 或任何 log 輸出洩漏 token 明文。實作上需設置 `field(repr=False)` 或等效保護。
 
 ### 7.2 每分鐘彙總訊息範例
 ```text
@@ -409,6 +416,7 @@ WHERE excluded.stock_status > message.stock_status
   - 模板缺失：`TEMPLATE_NOT_FOUND`（ERROR）
   - 渲染失敗：`TEMPLATE_RENDER_FAILED`（ERROR）
   - 任一模板失敗不得默默回退為程式硬編碼文案。
+- **架構規則（CR-ARCH-03）**：`render_line_template_message` 函式只能有唯一一份定義，來源為 `stock_monitor.application.message_template`。其他模組一律從該模組 import，不得重複定義。
 
 ### 7.5 補償機制（LINE 成功、DB 失敗）
 - 情境：LINE API 回傳成功，但 `message` transaction rollback。
@@ -539,3 +547,50 @@ LINE_TEMPLATE_OPENING_SUMMARY=line_opening_summary_mobile_compact_v1
 2. SQLite schema/migration。
 3. `.env.example`。
 4. 操作與排障文件。
+
+## 13. 品質改善行動清單（Code Review v0.8）
+
+本節記錄 2026-04-14 Code Review 定版的改善行動項目。所有 🔴 Critical 與 🟠 High 項目列入 DoD 強制目標，🟡 Medium 為建議優化。
+
+測試追蹤 ID 對齊至 TEST_PLAN `TP-SEC-*`、`TP-ARCH-*`。
+
+### 13.1 安全改善（Security）
+
+| 行動 ID | 優先 | 問題描述 | 現況 | 要求行為 | 測試 ID |
+|---|---|---|---|---|---|
+| CR-SEC-01 | 🔴 | `LinePushClient` `@dataclass` 自動生成的 `__repr__` 輸出包含明文 `channel_access_token` | `@dataclass` 未設 `repr=False` | `channel_access_token: str = field(repr=False)`；任何 `repr()` / log 輸出不得包含 token 明文 | TP-SEC-001 |
+| CR-SEC-02 | 🟠 | `_ManualValuationCalculator` 的 `scenario_case = "default"` 分支在生產路徑每次估值都寫入偽造的 `VALUATION_SKIP_INSUFFICIENT_DATA:optional_indicator_v1` log 事件 | `scenario_case` 分支存在於生產計算器 | 移除 `scenario_case` 生產分支；log 事件僅由真實計算結果產生 | TP-ARCH-001 |
+| CR-SEC-03 | 🟠 | `_resolve_timezone(name)` 在無效時區名稱時靜默 fallback 至 `timezone.utc`，造成 +08:00 偏移 8 小時誤差，系統無任何錯誤輸出 | 無效名稱 `→ return timezone.utc` | 無效名稱必須 `raise ValueError(f"Invalid timezone: {name!r}")`，不得靜默降級 | TP-SEC-002 |
+| CR-SEC-04 | 🟡 | `urllib.request.urlopen` 讀取 HTTP 回應使用無邊界 `resp.read()`，存在過大回應耗盡記憶體風險 | 無大小上限 | 讀取回應應設上限（如 `resp.read(MAX_RESPONSE_BYTES)`），`MAX_RESPONSE_BYTES` 預設 `1_048_576`（1 MB） | TP-SEC-003 |
+
+### 13.2 架構改善（Architecture）
+
+| 行動 ID | 優先 | 問題描述 | 現況 | 要求行為 | 測試 ID |
+|---|---|---|---|---|---|
+| CR-ARCH-01 | 🔴 | `_ManualValuationCalculator`（150+ 行 domain 邏輯）定義在 CLI 進入點 `app.py`（Interface Layer）| 計算邏輯在 Interface Layer | 移至 `stock_monitor/application/valuation_calculator.py`；`app.py` 僅保留 CLI 進入、DI 組裝與指令路由 | TP-ARCH-001 |
+| CR-ARCH-02 | 🔴 | `scenario_case="default"` 導致 raysky 估值永遠強制觸發 `TimeoutError`（fallback），主來源資料路徑在生產永遠不執行 | `scenario_case` 測試分支控制生產計算流程 | 移除 `scenario_case` 分支；主來源與備援路徑均可在生產真實執行 | TP-ARCH-001 |
+| CR-ARCH-03 | 🟠 | `render_line_template_message` 函式在 `message_template.py` 與 `runtime_service.py` 中各有一份完全相同的定義 | 重複定義（功能一致） | 唯一定義來源：`stock_monitor.application.message_template`；其他模組改為 import 使用，不得另行定義 | TP-ARCH-002 |
+| CR-ARCH-04 | 🟠 | `app.py` 同時承載 CLI 入口、DI 組裝、daemon 迴圈、估值計算器、指令路由，違反單一職責原則（SRP） | 單檔多職責 | `app.py` 拆分後僅保留進入點與指令路由；計算器移至 application 層（見 CR-ARCH-01）| — |
+| CR-ARCH-05 | 🟠 | `merge_minute_message` 在 `monitoring_workflow.py` 對外 export，但生產程式碼路徑均未呼叫 | 死路徑 export | 若僅作為測試輔助，應標記私有（`_merge_minute_message`）或移入測試層；若為正式 API 需補充真實呼叫點 | — |
+| CR-ARCH-06 | 🟡 | `opening_summary_sent_for_date` 以 `LIKE '%date=YYYY-MM-DD%'` 比對 `system_logs.detail` 欄位判斷同日是否已發送，以 log 字串作業務狀態 | Log-as-state 反模式 | 應以 DB 狀態（新增欄位或獨立表）記錄「已發送日期」，與日誌欄位分離，確保可靠冪等 | TP-ARCH-004 |
+
+### 13.3 程式品質改善（Clean Code）
+
+| 行動 ID | 優先 | 問題描述 | 現況 | 要求行為 | 測試 ID |
+|---|---|---|---|---|---|
+| CR-CODE-01 | 🟠 | `build_minute_rows` 內有 3 段近乎相同的 `render_line_template_message` 呼叫（觸發列、開盤摘要列、測試推播列各一段）| 3 個獨立渲染呼叫 | 統一成 1 個帶參數分派的渲染呼叫，減少重複程式碼 | — |
+| CR-CODE-02 | 🟠 | `reconcile_pending_once` 接受 `line_client` 參數但 body 首行為 `_ = line_client`（實際未使用） | 參數宣告但被忽略 | 若補償流程確實不需要 `line_client`，應從函式簽名移除；若未來需要，應建立 TODO/issue 追蹤 | — |
+| CR-CODE-03 | 🟠 | `run_minute_cycle` 擁有 12 個 keyword-only 參數，呼叫點繁瑣且易出錯 | 函式簽名超長 | 引入 `MinuteCycleConfig` dataclass 封裝所有設定參數，呼叫點改為傳入 config 物件 | TP-ARCH-003 |
+| CR-CODE-04 | 🟡 | `aggregate_minute_notifications` 仍用 f-string 直接組裝 trigger row 字串，未完整施行 FR-14 template render | f-string 直接組裝 | 改用 `render_line_template_message(TRIGGER_ROW_TEMPLATE_KEY, context)` 統一渲染 | — |
+| CR-CODE-05 | 🟡 | `TimeBucketService.__init__` 在時區名稱無效時靜默設置 `self._tz = None`，後續呼叫才顯露錯誤（與 CR-SEC-03 對應） | `self._tz = None` 靜默降級 | `__init__` 發現時區名無效時應立即 `raise ValueError`，不延遲到後續呼叫 | TP-SEC-002 |
+| CR-CODE-06 | 🟡 | 開盤摘要觸發條件為精確 `09:00` 分鐘桶，daemon 在 09:01 後重啟時當日開盤摘要永不發出 | 精確時間點比對 | 觸發條件改為「交易日當日第一個尚未發送開盤摘要的分鐘」，允許 09:00 後 restart 觸發補送 | TP-ARCH-004 |
+
+### 13.4 已確認優點（保留）
+
+以下設計在 Code Review 中獲確認，不需修改：
+- SQL 全部使用參數化查詢，無 SQL injection 風險
+- LINE token 在錯誤訊息與 log 中已正確遮蔽
+- Domain layer 完全無 I/O 相依
+- Schema 已使用 CHECK 約束 + JSON1 型別驗證
+- 補償機制（`pending_delivery_ledger`）正確避免重複通知
+- `truststore` 已整合，無 TLS 驗證繞過

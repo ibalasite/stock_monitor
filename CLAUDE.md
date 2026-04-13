@@ -1,6 +1,6 @@
 # CLAUDE.md - Stock Monitor AI 開發手冊
 
-最後更新：2026-04-14（Asia/Taipei, v0.8）
+最後更新：2026-04-14（Asia/Taipei, v0.9）
 對齊文件：`PDD_Stock_Monitoring_System.md`、`EDD_Stock_Monitoring_System.md`、`TEST_PLAN.md`、`USER_STORY_ACCEPTANCE_CRITERIA.md`、`API_CONTRACT.md`、`ADR.md`、`NFR_SLI_SLO.md`、`SECURITY_AND_SECRETS.md`、`OPERATIONS_RUNBOOK.md`
 
 本檔與 `CODEX.md` 保持同一份規格語意，任一檔更新時需同步另一檔。
@@ -51,8 +51,7 @@ Alias（等效）：
 必須通過：
 - 缺任一必要值 -> fail-fast
 - token/group id 格式明顯錯誤 -> fail-fast
-- 錯誤訊息與 log 不得出現明文 token
-
+- 錯誤訊息與 log 不得出現明文 token- **CR-SEC-01**：`LinePushClient` 持有物件不得透過 `repr()` 或 log 輸出 token 明文；`field(repr=False)` 或等效保護為庞就需求
 ## 5. 核心業務規則
 ### 5.1 訊號規則
 - `status=1`：`market_price <= fair_price`
@@ -102,9 +101,12 @@ Alias（等效）：
 | `stock_monitor.domain.idempotency` | `build_minute_idempotency_key` |
 | `stock_monitor.domain.time_bucket` | `TimeBucketService`, `guard_bucket_source` |
 | `stock_monitor.domain.metrics` | `compute_notification_accuracy` |
+| `stock_monitor.application.message_template` | `render_line_template_message`（唐一定義來源，CR-ARCH-03） |
 | `stock_monitor.application.monitoring_workflow` | `aggregate_minute_notifications`, `merge_minute_message`, `dispatch_and_persist_minute`, `reconcile_pending_once`, `guard_minute_execution`, `persist_message_rows_transactional`, `fetch_market_with_retry` |
 | `stock_monitor.application.trading_session` | `evaluate_market_open_status`, `is_in_trading_session` |
 | `stock_monitor.application.valuation_scheduler` | `run_daily_valuation_job` |
+| `stock_monitor.application.valuation_calculator` | `ManualValuationCalculator`（CR-ARCH-01 完成後） |
+| `stock_monitor.application.runtime_service` | `MinuteCycleConfig`（CR-CODE-03 完成後） |
 | `stock_monitor.uat.scenarios` | `UAT_SCENARIOS` |
 
 ## 8. TDD 執行規範
@@ -134,11 +136,19 @@ python -m pytest -q tests/test_integration_workflow.py -k TP-INT-010
 
 ## 10. 完成定義（DoD）
 - `TP-DB-*`, `TP-ENV-*`, `TP-POL-*`, `TP-INT-*`, `TP-TRD-*`, `TP-VAL-*`, `TP-UAT-*` 全部綠燈
+- `TP-SEC-*`, `TP-ARCH-*` 全部綠燈（Code Review 改善項目）
 - UAT 14 條可追溯
 - coverage gate：`lines/branches/functions/statements = 100%`
-- 文件同步：若規則有變更，`PDD/EDD/TEST_PLAN/feature/CLAUDE/CODEX` 一併更新
+- 文件同步：若規則有變更，`PDD/EDD/TEST_PLAN/feature/CLAUDE/CODEX` 一並更新
 
-## 11. Out of Scope（此階段不做）
+## 11. Code Review 改善禁止清單（v0.9 定版，業務程式禁寫）
+- **禁止** `scenario_case` 分支存在於任何生產估值計算路徑（CR-SEC-02、CR-ARCH-02）
+- **禁止** `_resolve_timezone` 對無效時區名稱靜默 fallback UTC（CR-SEC-03）
+- **禁止** 在 `message_template.py` 以外的模組重複定義 `render_line_template_message`（CR-ARCH-03）
+- **禁止** 在 `app.py`（CLI Interface Layer）內定義估值計算邏輯（CR-ARCH-01）
+- **禁止** `TimeBucketService` 對無效時區名稱靜默設 `self._tz = None`（CR-CODE-05）
+
+## 12. Out of Scope（此階段不做）
 - 自動下單
 - 多市場（美股/加密）
 - 分散式高可用部署

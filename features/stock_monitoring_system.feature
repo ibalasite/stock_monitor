@@ -478,3 +478,52 @@ Feature: 台股監控與 LINE 通知系統（完整 BDD 規格）
       When 任何 LINE 訊息被產生
       Then 所有訊息皆須透過 render_line_template_message 渲染
       And 程式碼中不得存在跳過模板的硬編碼最終文案
+
+  Rule: 安全與架構合約（Code Review EDD §13 / TP-SEC-* / TP-ARCH-*）
+    # EDD §13 Code Review v0.8 定版的可執行行為約束。
+    # 這些 Scenario 對應 TP-SEC-001/002/003 與 TP-ARCH-001/002/003/004，
+    # 全部為 DoD 強制綠燈項目。
+
+    @TP-SEC-001
+    Scenario: [TP-SEC-001] LinePushClient repr 不得洩漏 token 明文
+      # EDD §13.1 CR-SEC-01：token repr 保護為庞就安全需求
+      Given LinePushClient 以 token "secret_token_value" 初始化
+      When 對 LinePushClient 實例呼叫 repr()
+      Then repr 輸出不應包含 "secret_token_value"
+      And LinePushClient 仍可正常發出 LINE API 請求
+
+    @TP-SEC-002
+    Scenario: [TP-SEC-002] 無效時區名稱必須立即引發 ValueError 不得靜默 fallback UTC
+      # EDD §13.1 CR-SEC-03 + §13.3 CR-CODE-05：時區驗證強化
+      Given 使用無效時區名稱 "Invalid/NotAZone"
+      When 初始化 TimeBucketService 或呼叫 _resolve_timezone
+      Then 應立即 raise ValueError
+      And 不應繼續執行後續邏輯
+      And 不應 fallback 至 UTC 時區
+
+    @TP-ARCH-001
+    Scenario: [TP-ARCH-001] 估值計算器在 application 層且 scenario_case 不存在於生產路徑
+      # EDD §13.2 CR-ARCH-01/02 + §13.1 CR-SEC-02：架構與安全合約
+      Given stock_monitor.application.valuation_calculator 模組可 import
+      When 執行一次估值計算（正常情境）
+      Then ManualValuationCalculator 應可從 application.valuation_calculator import
+      And app.py 不應包含估值計算專屬 class 或 function 定義
+      And system_logs 不應出現 scenario_case 相關的偽造 skip 事件
+
+    @TP-ARCH-002
+    Scenario: [TP-ARCH-002] render_line_template_message 全專案唯一定義在 message_template
+      # EDD §13.2 CR-ARCH-03：render 函式唯一性合約
+      Given 已載入 stock_monitor.application.message_template
+      When 在整個專案中搜尋 "def render_line_template_message"
+      Then 只應在 message_template.py 中找到一個定義
+      And runtime_service.py 不應包含 render_line_template_message 函式定義
+
+    @TP-ARCH-003
+    Scenario: [TP-ARCH-003] MinuteCycleConfig dataclass 存在且 run_minute_cycle 接受它
+      # EDD §13.3 CR-CODE-03：API 設計合約
+      Given stock_monitor.application.runtime_service 模組可 import
+      When 從 runtime_service import MinuteCycleConfig
+      Then import 應成功
+      And MinuteCycleConfig 應為 dataclass 或具名 config 型別
+      And run_minute_cycle 應接受 MinuteCycleConfig 作為設定入口
+
