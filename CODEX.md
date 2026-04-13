@@ -105,8 +105,8 @@ Alias（等效）：
 | `stock_monitor.application.monitoring_workflow` | `aggregate_minute_notifications`, `merge_minute_message`, `dispatch_and_persist_minute`, `reconcile_pending_once`, `guard_minute_execution`, `persist_message_rows_transactional`, `fetch_market_with_retry` |
 | `stock_monitor.application.trading_session` | `evaluate_market_open_status`, `is_in_trading_session` |
 | `stock_monitor.application.valuation_scheduler` | `run_daily_valuation_job` |
-| `stock_monitor.application.valuation_calculator` | `ManualValuationCalculator`（CR-ARCH-01 完成後） |
-| `stock_monitor.application.runtime_service` | `MinuteCycleConfig`（CR-CODE-03 完成後） |
+| `stock_monitor.application.valuation_calculator` | `ManualValuationCalculator` |
+| `stock_monitor.application.runtime_service` | `MinuteCycleConfig` |
 | `stock_monitor.uat.scenarios` | `UAT_SCENARIOS` |
 
 ## 8. TDD 執行規範
