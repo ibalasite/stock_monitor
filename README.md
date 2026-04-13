@@ -10,7 +10,7 @@
 4. `pytest-bdd` 已安裝，`stock_monitoring_smoke.feature` 與完整 `stock_monitoring_system.feature` 皆可執行。
 5. `stock_monitor` 主程式套件已建立並實作核心測試契約。
 6. 最新狀態：
-   - `pytest -q tests`：最近一次基線（2026-04-14）為 `177 passed`（含完整 BDD + unit/integration/UAT contract）
+   - `pytest -q tests`：最近一次基線（2026-04-14）為 `196 passed`（含完整 BDD + unit/integration/UAT contract + CR-* 改善驗證）
    - Coverage gate：`100%`（line + branch）
    - CI：`.github/workflows/ci.yml` 已啟用（push / pull_request），且已採用 action SHA pin + 鎖版依賴 + `pip-audit`
    - 可執行入口：`python -m stock_monitor init-db|run-once|reconcile-once|valuation-once|run-daemon`
@@ -99,6 +99,14 @@
     - `MINUTE_DIGEST_TEMPLATE_KEY` 已定義於 `monitoring_workflow`
     - BDD Scenario TP-TPL-003/004/UAT-014 全綠
 19. 新增全情境 LINE smoke 腳本：`scripts/send_all_scenarios_to_line.py`（測試推播 / 開盤摘要 / status=1 / status=2 各送一則）
+20. EDD §13 Code Review 改善已完整實作，全部 🔴 Critical 與 🟠 High 項目已身 TP 測試綠燈：
+    - **CR-SEC-01**：`LinePushClient.channel_access_token = field(repr=False)`，token 不再洩漏至 repr/log
+    - **CR-SEC-02/CR-ARCH-01/02**：`ManualValuationCalculator` 已移至 `application/valuation_calculator.py`；`scenario_case` 生產分支已全面移除
+    - **CR-SEC-03/CR-CODE-05**：無效時區名稱立即 `raise ValueError`（`_resolve_timezone` 與 `TimeBucketService`）
+    - **CR-SEC-04**：`MAX_RESPONSE_BYTES = 1_048_576` + `resp.read(MAX_RESPONSE_BYTES)` 防止記憶體耗盡
+    - **CR-ARCH-03**：`render_line_template_message` 唯一定義於 `message_template.py`
+    - **CR-CODE-03**：`MinuteCycleConfig` dataclass 新增；`run_minute_cycle` 支援 `config:` 參數
+    - **CR-ARCH-06**：新增 `opening_summary_sent_dates` 資料表；開盤摘要冒等改用專屬 DB 個欄，不再靠 LIKE 查訢 system_logs
 
 ## 6. 下一步要做什麼（建議執行順序）
 1. 完成正式人工 UAT 簽核（PO/QA/Eng Lead）。
@@ -127,7 +135,7 @@ python -m pip install --require-hashes -r requirements-dev.txt
 python -m pytest -q tests
 ```
 5. 最近一次基線結果（2026-04-14）：
-   - `177 passed`
+   - `196 passed`
    - coverage `100%`
    - 實際請以你當次執行輸出為準
 
