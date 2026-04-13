@@ -15,6 +15,13 @@ from stock_monitor.domain.policies import CooldownPolicy, aggregate_stock_signal
 from stock_monitor.domain.time_bucket import TimeBucketService
 
 
+def _format_price(value: float) -> str:
+    text = f"{float(value):.2f}"
+    if text.endswith(".00"):
+        return text[:-3]
+    return text.rstrip("0").rstrip(".")
+
+
 def _to_epoch_seconds(dt: datetime) -> int:
     if dt.tzinfo is None:
         return int(dt.timestamp())
@@ -43,6 +50,9 @@ def evaluate_manual_threshold_hits(watchlist_rows: list[dict], quotes: dict[str,
                 "stock_status": status,
                 "method": "manual_rule",
                 "price": price,
+                "stock_name": str(quote.get("name") or "").strip(),
+                "fair_price": fair_price,
+                "cheap_price": cheap_price,
             }
         )
     return hits
@@ -89,6 +99,26 @@ def build_minute_rows(
             continue
 
         prices = sorted({float(hit["price"]) for hit in stock_hits})
+        stock_name = ""
+        for hit in stock_hits:
+            candidate = str(hit.get("stock_name") or "").strip()
+            if candidate:
+                stock_name = candidate
+                break
+        fair_price = next((float(hit["fair_price"]) for hit in stock_hits if hit.get("fair_price") is not None), None)
+        cheap_price = next((float(hit["cheap_price"]) for hit in stock_hits if hit.get("cheap_price") is not None), None)
+        display_label = f"{stock_name}({stock_no})" if stock_name else stock_no
+        current_price = prices[0]
+
+        if status == 2 and cheap_price is not None:
+            message = f"{display_label}目前{_format_price(current_price)}，低於便宜價{_format_price(cheap_price)}"
+            if fair_price is not None and fair_price != cheap_price:
+                message += f"（合理價{_format_price(fair_price)}）"
+        elif fair_price is not None:
+            message = f"{display_label}目前{_format_price(current_price)}，低於合理價{_format_price(fair_price)}"
+        else:
+            message = f"{display_label}目前{_format_price(current_price)}，觸發監控門檻"
+
         rows.append(
             {
                 "stock_no": stock_no,
@@ -96,7 +126,11 @@ def build_minute_rows(
                 "methods_hit": event.get("methods_hit", []),
                 "minute_bucket": minute_bucket,
                 "update_time": now_epoch,
-                "message": f"{stock_no} status={status} price={prices[0]:.2f}",
+                "message": message,
+                "stock_name": stock_name,
+                "current_price": current_price,
+                "fair_price": fair_price,
+                "cheap_price": cheap_price,
             }
         )
     return rows

@@ -15,12 +15,14 @@ def _normalize_methods(methods) -> list[str]:
 
 
 def aggregate_minute_notifications(minute_bucket: str, signals: list[dict]) -> str:
-    lines = [f"[Stock Minute Digest] {minute_bucket}"]
+    lines = [f"[股票監控通知] {minute_bucket}"]
     for idx, signal in enumerate(signals, start=1):
         methods = ",".join(_normalize_methods(signal.get("methods_hit")))
-        lines.append(
-            f"{idx}) {signal.get('stock_no')} | status={signal.get('stock_status')} | methods={methods}"
-        )
+        base_message = str(signal.get("message") or f"{signal.get('stock_no')} 觸發監控門檻").strip()
+        if methods:
+            lines.append(f"{idx}) {base_message}（命中方法: {methods}）")
+        else:
+            lines.append(f"{idx}) {base_message}")
     return "\n".join(lines)
 
 

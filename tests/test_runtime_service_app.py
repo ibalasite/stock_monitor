@@ -10,6 +10,7 @@ import sys
 import pytest
 
 from stock_monitor.application.runtime_service import (
+    _format_price,
     _to_epoch_seconds,
     build_minute_rows,
     evaluate_manual_threshold_hits,
@@ -152,6 +153,7 @@ def test_runtime_helpers_for_epoch_hits_and_rows():
     )
     assert len(rows) == 1
     assert rows[0]["stock_no"] == "2330"
+    assert "低於便宜價1000" in rows[0]["message"]
 
     blocked_rows = build_minute_rows(
         now_dt=datetime(2026, 4, 10, 10, 21, 0),
@@ -295,6 +297,7 @@ def test_run_minute_cycle_branches_and_reconcile():
     )
     assert result_sent["count"] == 1
     assert len(line_client.sent) == 1
+    assert "低於便宜價1000" in line_client.sent[-1]
 
     result_stale_quote = run_minute_cycle(
         now_dt=datetime(2026, 4, 10, 10, 0, 0),
@@ -519,6 +522,54 @@ def test_manual_valuation_calculator_from_watchlist():
             "cheap_price": 1000.0,
         }
     ]
+
+
+def test_message_format_for_fair_price_and_price_formatter():
+    assert _format_price(1950.0) == "1950"
+    assert _format_price(1950.5) == "1950.5"
+    assert _format_price(1950.56) == "1950.56"
+
+    rows = build_minute_rows(
+        now_dt=datetime(2026, 4, 10, 10, 21, 0),
+        hits=[
+            {
+                "stock_no": "2330",
+                "stock_status": 1,
+                "method": "manual_rule",
+                "price": 1950.0,
+                "stock_name": "台積電",
+                "fair_price": 2000.0,
+                "cheap_price": 1500.0,
+            }
+        ],
+        message_repo=_FakeMessageRepo(last_sent_map={}, rows=[]),
+        pending_repo=_FakePendingRepo(items=[]),
+        pending_fallback=_FakeFallback(rows=[]),
+        cooldown_seconds=300,
+    )
+    assert len(rows) == 1
+    assert rows[0]["message"] == "台積電(2330)目前1950，低於合理價2000"
+
+    rows_status2_no_redundant_fair = build_minute_rows(
+        now_dt=datetime(2026, 4, 10, 10, 21, 0),
+        hits=[
+            {
+                "stock_no": "2330",
+                "stock_status": 2,
+                "method": "manual_rule",
+                "price": 1499.0,
+                "stock_name": "台積電",
+                "fair_price": 1500.0,
+                "cheap_price": 1500.0,
+            }
+        ],
+        message_repo=_FakeMessageRepo(last_sent_map={}, rows=[]),
+        pending_repo=_FakePendingRepo(items=[]),
+        pending_fallback=_FakeFallback(rows=[]),
+        cooldown_seconds=300,
+    )
+    assert "低於便宜價1500" in rows_status2_no_redundant_fair[0]["message"]
+    assert "合理價" not in rows_status2_no_redundant_fair[0]["message"]
 
 
 def test_run_daemon_loop_trading_poll_and_valuation(monkeypatch):
