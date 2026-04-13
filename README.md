@@ -1,6 +1,6 @@
 # Stock Monitoring System - README
 
-更新日期：2026-04-11  
+更新日期：2026-04-13  
 專案目標：台股價格監控 + LINE 群組通知 + 每日估值 + SQLite 落盤 + 補償機制
 
 ## 1. 專案現況摘要
@@ -10,7 +10,7 @@
 4. `pytest-bdd` 已安裝，`stock_monitoring_smoke.feature` 與完整 `stock_monitoring_system.feature` 皆可執行。
 5. `stock_monitor` 主程式套件已建立並實作核心測試契約。
 6. 最新狀態：
-   - `pytest -q tests`：最近一次基線（2026-04-11）為 `138 passed`（含完整 BDD + unit/integration/UAT contract）
+   - `pytest -q tests`：最近一次基線（2026-04-13）為 `141 passed`（含完整 BDD + unit/integration/UAT contract）
    - Coverage gate：`100%`（line + branch）
    - CI：`.github/workflows/ci.yml` 已啟用（push / pull_request），且已採用 action SHA pin + 鎖版依賴 + `pip-audit`
    - 可執行入口：`python -m stock_monitor init-db|run-once|reconcile-once|valuation-once|run-daemon`
@@ -87,6 +87,10 @@
 15. 已新增真實外部依賴 smoke：
    - `scripts/external_dependency_smoke.py`
    - `nightly-smoke.yml`（TWSE + 可選 LINE sandbox）
+16. 行情 adapter 已支援 `TWSE + OTC` 雙通道查詢（可覆蓋上櫃股票，如 `3293`）。
+17. LINE 通知訊息已改為中文可讀格式（包含股票中文名、代號、現價與門檻描述）：
+   - 例：`台積電(2330)目前1950，低於合理價2000`
+   - `status=2` 例：`台積電(2330)目前1450，低於便宜價1500（合理價2000）`
 
 ## 6. 下一步要做什麼（建議執行順序）
 1. 完成正式人工 UAT 簽核（PO/QA/Eng Lead）。
@@ -114,8 +118,8 @@ python -m pip install --require-hashes -r requirements-dev.txt
 ```powershell
 python -m pytest -q tests
 ```
-5. 最近一次基線結果（2026-04-11）：
-   - `138 passed`
+5. 最近一次基線結果（2026-04-13）：
+   - `141 passed`
    - coverage `100%`
    - 實際請以你當次執行輸出為準
 
