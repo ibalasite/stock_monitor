@@ -361,14 +361,17 @@ class SqliteLogger:
         return [dict(row) for row in rows]
 
     def opening_summary_sent_for_date(self, trade_date: str) -> bool:
+        """Check dedicated idempotency table (CR-ARCH-06)."""
         row = self.conn.execute(
-            """
-            SELECT 1
-            FROM system_logs
-            WHERE event = 'OPENING_SUMMARY_SENT'
-              AND detail LIKE ?
-            LIMIT 1
-            """,
-            (f"%date={str(trade_date)}%",),
+            "SELECT 1 FROM opening_summary_sent_dates WHERE trade_date = ? LIMIT 1",
+            (str(trade_date),),
         ).fetchone()
         return row is not None
+
+    def mark_opening_summary_sent(self, trade_date: str) -> None:
+        """Record that the opening summary was sent for *trade_date* (CR-ARCH-06)."""
+        self.conn.execute(
+            "INSERT OR IGNORE INTO opening_summary_sent_dates (trade_date) VALUES (?)",
+            (str(trade_date),),
+        )
+        self.conn.commit()

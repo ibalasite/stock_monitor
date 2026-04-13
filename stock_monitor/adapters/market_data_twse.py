@@ -11,6 +11,8 @@ import truststore
 
 truststore.inject_into_ssl()
 
+MAX_RESPONSE_BYTES = 1_048_576  # 1 MB cap to prevent memory exhaustion (CR-SEC-04)
+
 
 def _to_float(value: str | None) -> float | None:
     if value is None:
@@ -56,7 +58,7 @@ class TwseRealtimeMarketDataProvider:
         req = request.Request(url=url, method="GET", headers={"User-Agent": "stock-monitor/1.0"})
         try:
             with request.urlopen(req, timeout=self.timeout_sec) as resp:
-                payload = resp.read().decode("utf-8")
+                payload = resp.read(MAX_RESPONSE_BYTES).decode("utf-8")
         except socket.timeout as exc:
             raise TimeoutError("market data timeout") from exc
         except error.URLError as exc:

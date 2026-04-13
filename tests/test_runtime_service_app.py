@@ -23,7 +23,8 @@ from stock_monitor.application.runtime_service import (
     run_minute_cycle,
     run_reconcile_cycle,
 )
-from stock_monitor.app import _ManualValuationCalculator, _build_runtime, _resolve_timezone, _run_daemon_loop, main
+from stock_monitor.app import _build_runtime, _resolve_timezone, _run_daemon_loop, main
+from stock_monitor.application.valuation_calculator import ManualValuationCalculator as _ManualValuationCalculator
 
 
 @dataclass
@@ -808,7 +809,8 @@ def test_build_runtime_and_timezone_resolution(monkeypatch, tmp_path: Path):
         runtime["conn"].close()
 
     assert _resolve_timezone("Asia/Taipei") is not None
-    assert _resolve_timezone("Invalid/Timezone/Name") is not None
+    with pytest.raises(ValueError):
+        _resolve_timezone("Invalid/Timezone/Name")
 
 
 def test_manual_valuation_calculator_from_watchlist():
@@ -819,7 +821,6 @@ def test_manual_valuation_calculator_from_watchlist():
     calculator = _ManualValuationCalculator(
         watchlist_repo=_WatchlistRepo(),
         trade_date="2026-04-10",
-        scenario_case="all_methods_ok",
     )
     snapshots = calculator.calculate()
     method_pairs = {(item["method_name"], item["method_version"]) for item in snapshots}

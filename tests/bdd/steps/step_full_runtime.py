@@ -31,7 +31,7 @@ from stock_monitor.application.monitoring_workflow import (
 from stock_monitor.application.runtime_service import build_minute_rows, run_minute_cycle
 from stock_monitor.application.trading_session import evaluate_market_open_status
 from stock_monitor.application.valuation_scheduler import run_daily_valuation_job
-from stock_monitor.app import _ManualValuationCalculator
+from stock_monitor.application.valuation_calculator import ManualValuationCalculator as _ManualValuationCalculator
 from stock_monitor.bootstrap.health import health_check
 from stock_monitor.bootstrap.runtime import assert_sqlite_prerequisites, validate_line_runtime_config
 from stock_monitor.domain.idempotency import build_minute_idempotency_key
@@ -756,15 +756,38 @@ def _handle_given(step: str, ctx: dict):
         _insert_snapshot(ctx, "2330", "2026-04-09", "emily_composite:v1", fair=1500.0, cheap=1000.0)
         return
     if step == "三方法所需資料皆可用":
-        ctx["valuation_case"] = "all_methods_ok"
+        ctx["custom_calculator_class"] = _ManualValuationCalculator
         _ensure_watchlist(ctx, "2330")
         return
     if step.startswith('raysky 缺 "'):
-        ctx["valuation_case"] = "raysky_missing"
+        _missing_field = re.findall(r'"([^"]+)"', step)[0]
+        _f = _missing_field  # capture for closure
+        _BaseCalc = _ManualValuationCalculator
+
+        class _RayskyMissingCalc(_BaseCalc):
+            def _build_primary_inputs(self, row):
+                inputs = super()._build_primary_inputs(row)
+                inputs.pop(_f, None)
+                return inputs
+
+        ctx["custom_calculator_class"] = _RayskyMissingCalc
         _ensure_watchlist(ctx, "2330")
         return
     if step == "主來源逾時、備援可用":
-        ctx["valuation_case"] = "provider_fallback_ok"
+        _BaseCalc2 = _ManualValuationCalculator
+
+        class _TimeoutCalc(_BaseCalc2):
+            def _resolve_raysky_inputs(self, stock_no, primary_inputs, fallback_inputs):
+                try:
+                    raise TimeoutError("primary provider timeout")
+                except TimeoutError as exc:
+                    self.events.append((
+                        "INFO",
+                        f"VALUATION_PROVIDER_FALLBACK_USED:raysky_blended_margin_v1:stock={stock_no}:reason={type(exc).__name__}",
+                    ))
+                    return fallback_inputs
+
+        ctx["custom_calculator_class"] = _TimeoutCalc
         _ensure_watchlist(ctx, "2330")
         return
     if step.startswith("當前時間為 "):
@@ -1182,10 +1205,10 @@ def _handle_when(step: str, ctx: dict):
 
             calculator = _Calc()
         else:
-            calculator = _ManualValuationCalculator(
+            calc_class = ctx.pop("custom_calculator_class", _ManualValuationCalculator)
+            calculator = calc_class(
                 watchlist_repo=ctx["watchlist_repo"],
                 trade_date=ctx["now_dt"].strftime("%Y-%m-%d"),
-                scenario_case=ctx.get("valuation_case"),
             )
 
         ctx["last_result"] = run_daily_valuation_job(

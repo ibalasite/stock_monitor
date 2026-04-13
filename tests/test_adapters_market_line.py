@@ -16,7 +16,7 @@ class _FakeHttpResponse:
         self._body = body.encode("utf-8")
         self.status = status
 
-    def read(self):
+    def read(self, *args):
         return self._body
 
     def __enter__(self):

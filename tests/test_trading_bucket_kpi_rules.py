@@ -83,13 +83,8 @@ def test_tp_bkt_001_time_bucket_falls_back_when_timezone_not_found():
         "TP-BKT-001",
     )
 
-    service = TimeBucketService("Not/A-Real-Timezone")
-    aware_dt = datetime.fromisoformat("2026-04-10T10:21:37+00:00")
-    bucket = _call_bucket_service(service, aware_dt)
-
-    assert bucket == "2026-04-10 10:21", (
-        "[TP-BKT-001] Unknown timezone should fallback to input datetime without crashing."
-    )
+    with pytest.raises(ValueError):
+        TimeBucketService("Not/A-Real-Timezone")
 
 
 def test_tp_kpi_001_notification_accuracy_excludes_outage_minutes():

@@ -88,5 +88,9 @@ CREATE TABLE IF NOT EXISTS system_logs (
   detail TEXT,
   created_at INTEGER NOT NULL
 );
+
+CREATE TABLE IF NOT EXISTS opening_summary_sent_dates (
+  trade_date TEXT PRIMARY KEY
+);
 """
 

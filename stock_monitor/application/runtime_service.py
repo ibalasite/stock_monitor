@@ -3,17 +3,38 @@
 from __future__ import annotations
 
 from collections import defaultdict
+from dataclasses import dataclass, field
 from datetime import datetime, timezone
+from typing import Any
 
 from stock_monitor.application.monitoring_workflow import (
     dispatch_and_persist_minute,
     fetch_market_with_retry,
     reconcile_pending_once,
 )
-from stock_monitor.application.message_template import LineTemplateRenderer
+from stock_monitor.application.message_template import LineTemplateRenderer, render_line_template_message
 from stock_monitor.application.trading_session import evaluate_market_open_status, is_in_trading_session
 from stock_monitor.domain.policies import CooldownPolicy, aggregate_stock_signals
 from stock_monitor.domain.time_bucket import TimeBucketService
+
+
+@dataclass
+class MinuteCycleConfig:
+    """Configuration bundle for one-minute monitoring cycle (CR-CODE-03)."""
+
+    now_dt: datetime
+    market_data_provider: Any
+    line_client: Any
+    watchlist_repo: Any
+    message_repo: Any
+    pending_repo: Any
+    pending_fallback: Any
+    logger: Any
+    valuation_snapshot_repo: Any = None
+    cooldown_seconds: int = 300
+    retry_count: int = 3
+    stale_threshold_sec: int = 90
+    timezone_name: str = "Asia/Taipei"
 
 _BASELINE_OPENING_METHODS: tuple[tuple[str, str], ...] = (
     ("emily_composite", "v1"),
@@ -23,10 +44,6 @@ _BASELINE_OPENING_METHODS: tuple[tuple[str, str], ...] = (
 _OPENING_SUMMARY_ROW_TEMPLATE = "line.opening_summary.row.compact.v1"
 TRIGGER_ROW_TEMPLATE_KEY = "line.trigger_row.v1"
 TEST_PUSH_TEMPLATE_KEY = "line.test_push.v1"
-
-
-def render_line_template_message(template_key: str, context: dict) -> str:
-    return LineTemplateRenderer().render(template_key, context)
 
 
 def _format_price(value: float) -> str:
@@ -199,6 +216,11 @@ def _send_opening_summary_if_needed(
     try:
         line_client.send(payload)
         logger.log("INFO", f"OPENING_SUMMARY_SENT:date={trade_date}")
+        if hasattr(logger, "mark_opening_summary_sent"):
+            try:
+                logger.mark_opening_summary_sent(trade_date)
+            except Exception:
+                pass
     except Exception as exc:
         logger.log("ERROR", f"OPENING_SUMMARY_SEND_FAILED: {exc}")
 
@@ -373,20 +395,36 @@ def build_minute_rows(
 
 def run_minute_cycle(
     *,
-    now_dt: datetime,
-    market_data_provider,
-    line_client,
-    watchlist_repo,
-    message_repo,
-    pending_repo,
+    config: MinuteCycleConfig | None = None,
+    now_dt: datetime | None = None,
+    market_data_provider=None,
+    line_client=None,
+    watchlist_repo=None,
+    message_repo=None,
+    pending_repo=None,
     valuation_snapshot_repo=None,
-    pending_fallback,
-    logger,
+    pending_fallback=None,
+    logger=None,
     cooldown_seconds: int = 300,
     retry_count: int = 3,
     stale_threshold_sec: int = 90,
     timezone_name: str = "Asia/Taipei",
 ) -> dict:
+    # Unpack config object if provided (CR-CODE-03)
+    if config is not None:
+        now_dt = config.now_dt
+        market_data_provider = config.market_data_provider
+        line_client = config.line_client
+        watchlist_repo = config.watchlist_repo
+        message_repo = config.message_repo
+        pending_repo = config.pending_repo
+        valuation_snapshot_repo = config.valuation_snapshot_repo
+        pending_fallback = config.pending_fallback
+        logger = config.logger
+        cooldown_seconds = config.cooldown_seconds
+        retry_count = config.retry_count
+        stale_threshold_sec = config.stale_threshold_sec
+        timezone_name = config.timezone_name
     if not is_in_trading_session(now_dt):
         logger.log("INFO", "SKIP_NON_TRADING_SESSION")
         return {"status": "skipped", "reason": "non_trading_session"}

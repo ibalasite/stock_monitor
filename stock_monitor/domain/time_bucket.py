@@ -11,8 +11,8 @@ class TimeBucketService:
         self.timezone_name = timezone_name
         try:
             self._tz = ZoneInfo(timezone_name)
-        except Exception:
-            self._tz = None
+        except Exception as exc:
+            raise ValueError(f"Invalid timezone name: {timezone_name!r}") from exc
 
     def to_minute_bucket(self, dt: datetime) -> str:
         if dt.tzinfo is not None and self._tz is not None:

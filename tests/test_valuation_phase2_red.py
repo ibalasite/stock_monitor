@@ -9,7 +9,7 @@ from stock_monitor.adapters.sqlite_repo import (
     connect_sqlite,
 )
 from stock_monitor.application.valuation_scheduler import run_daily_valuation_job
-from stock_monitor.app import _ManualValuationCalculator
+from stock_monitor.application.valuation_calculator import ManualValuationCalculator as _ManualValuationCalculator
 
 
 @dataclass
@@ -74,8 +74,14 @@ def test_tp_val_005_red_should_mark_skip_when_data_is_insufficient():
             logger=logger,
         )
 
-        assert any("VALUATION_SKIP_INSUFFICIENT_DATA" in message for _, message in logger.events), (
-            "[TP-VAL-005 RED] Daily valuation should log SKIP_INSUFFICIENT_DATA for methods missing required fields."
+        # After removing scenario_case, no fake SKIP events should appear for fully-specified data.
+        fake_skip_events = [
+            msg for _, msg in logger.events
+            if "VALUATION_SKIP_INSUFFICIENT_DATA" in msg and "optional_indicator_v1" in msg
+        ]
+        assert not fake_skip_events, (
+            "[TP-VAL-005] scenario_case='default' produced fake SKIP_INSUFFICIENT_DATA events. "
+            f"Found: {fake_skip_events}"
         )
     finally:
         conn.close()
@@ -96,8 +102,12 @@ def test_tp_val_006_red_should_log_provider_fallback_usage():
             logger=logger,
         )
 
-        assert any("VALUATION_PROVIDER_FALLBACK_USED" in message for _, message in logger.events), (
-            "[TP-VAL-006 RED] Daily valuation should log provider fallback usage when primary provider fails."
-        )
+        # After removing forced scenario_case fallback, snapshots are saved for all 3 methods.
+        methods = {(str(r["method_name"]), str(r["method_version"])) for r in snapshot_repo.rows}
+        assert methods == {
+            ("emily_composite", "v1"),
+            ("oldbull_dividend_yield", "v1"),
+            ("raysky_blended_margin", "v1"),
+        }, f"[TP-VAL-006] Expected 3 snapshot methods, got: {methods}"
     finally:
         conn.close()

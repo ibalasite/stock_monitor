@@ -4,13 +4,13 @@ from __future__ import annotations
 
 import json
 import socket
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from urllib import error, request
 
 
 @dataclass
 class LinePushClient:
-    channel_access_token: str
+    channel_access_token: str = field(repr=False)
     to_group_id: str
     endpoint: str = "https://api.line.me/v2/bot/message/push"
     timeout_sec: int = 10
