@@ -10,7 +10,7 @@
 4. `pytest-bdd` 已安裝，`stock_monitoring_smoke.feature` 與完整 `stock_monitoring_system.feature` 皆可執行。
 5. `stock_monitor` 主程式套件已建立並實作核心測試契約。
 6. 最新狀態：
-   - `pytest -q tests`：最近一次基線（2026-04-14）為 `163 passed`（含完整 BDD + unit/integration/UAT contract）
+   - `pytest -q tests`：最近一次基線（2026-04-14）為 `177 passed`（含完整 BDD + unit/integration/UAT contract）
    - Coverage gate：`100%`（line + branch）
    - CI：`.github/workflows/ci.yml` 已啟用（push / pull_request），且已採用 action SHA pin + 鎖版依賴 + `pip-audit`
    - 可執行入口：`python -m stock_monitor init-db|run-once|reconcile-once|valuation-once|run-daemon`
@@ -94,14 +94,17 @@
 17. LINE 通知訊息已改為中文可讀格式（包含股票中文名、代號、現價與門檻描述）：
     - 例：`台積電(2330)目前1950，低於合理價2000`
     - `status=2` 例：`台積電(2330)目前1450，低於便宜價1500（合理價2000）`
-18. 規格已新增 FR-14：所有出站 LINE 訊息（彙總/摘要/觸發列/測試推播）需 Template-driven（文案格式不寫死於主流程程式碼）。
+18. FR-14 全量模板化已落地：所有出站 LINE 訊息（彙總/摘要/觸發列/測試推播）皆透過 `template_key + context` 渲染。
+    - `TRIGGER_ROW_TEMPLATE_KEY`、`TEST_PUSH_TEMPLATE_KEY` 已定義於 `runtime_service`
+    - `MINUTE_DIGEST_TEMPLATE_KEY` 已定義於 `monitoring_workflow`
+    - BDD Scenario TP-TPL-003/004/UAT-014 全綠
+19. 新增全情境 LINE smoke 腳本：`scripts/send_all_scenarios_to_line.py`（測試推播 / 開盤摘要 / status=1 / status=2 各送一則）
 
 ## 6. 下一步要做什麼（建議執行順序）
-1. 依 FR-14 完成全量模板化落地：minute digest / opening summary / trigger row / test push 全部改走 `template_key + context`。
-2. 完成正式人工 UAT 簽核（PO/QA/Eng Lead）。
-3. 設定 GitHub Secrets（LINE sandbox）並啟用 nightly LINE push 驗證。
-4. 實際交易日觀察 daemon 日誌與通知品質，回填 `test-report.md`/`defect-log.md`。
-5. 持續維持流程：`PDD/EDD -> feature -> tests -> code`。
+1. 完成正式人工 UAT 簽核（PO/QA/Eng Lead）。
+2. 設定 GitHub Secrets（LINE sandbox）並啟用 nightly LINE push 驗證。
+3. 實際交易日觀察 daemon 日誌與通知品質，回填 `test-report.md`/`defect-log.md`。
+4. 持續維持流程：`PDD/EDD -> feature -> tests -> code`。
 
 ## 7. 啟動流程（實際可操作）
 ### 7.1 現在就可以跑（開發驗證模式）
@@ -124,7 +127,7 @@ python -m pip install --require-hashes -r requirements-dev.txt
 python -m pytest -q tests
 ```
 5. 最近一次基線結果（2026-04-14）：
-   - `159 passed`
+   - `177 passed`
    - coverage `100%`
    - 實際請以你當次執行輸出為準
 
@@ -348,6 +351,12 @@ python scripts/test_opening_summary_push.py --send
 
 # 真實外部依賴 smoke（TWSE only）
 python scripts/external_dependency_smoke.py --stock-no 2330 --skip-line
+
+# 各情境 LINE 訊息全量驗證（dry-run 預覽）
+python scripts/send_all_scenarios_to_line.py --dry-run
+
+# 各情境 LINE 訊息全量驗證（實際送出：測試推播 / 開盤摘要 / status=1 / status=2）
+python scripts/send_all_scenarios_to_line.py --send
 
 # 真實外部依賴 smoke（含 LINE sandbox push）
 python scripts/external_dependency_smoke.py --stock-no 2330 --line-send --require-line-config
