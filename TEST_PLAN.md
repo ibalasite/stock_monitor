@@ -127,6 +127,12 @@
 | TP-ARCH-002 | EDD §13.2 CR-ARCH-03 | Unit | `render_line_template_message` 在整個專案內只有一份定義，來源為 `message_template.py` |
 | TP-ARCH-003 | EDD §13.3 CR-CODE-03 | Unit | `MinuteCycleConfig` dataclass 存在於 `runtime_service.py`，`run_minute_cycle` 接受它作為設定入口 |
 | TP-ARCH-004 | EDD §13.2 CR-ARCH-06 / §13.3 CR-CODE-06 | Integration | 開盤摘要冪等狀態儲存於 DB（非 log 字串比對）；daemon 在 09:01 後重啟時數同日仍可發送開盤摘要 |
+| TP-ARCH-005 | EDD §13.2 CR-ARCH-04 | Unit | `app.py` 不得定義 `_run_daemon_loop` 及 `_build_runtime`；只保留入口與指令路由 |
+| TP-ARCH-006 | EDD §13.2 CR-ARCH-05 | Unit | `merge_minute_message` 需有生產呼叫點或標記為私有（`_merge_minute_message`） |
+| TP-CODE-001 | EDD §13.3 CR-CODE-01 | Unit | `build_minute_rows` 中 `render_line_template_message` 呼叫次數 ≤ 1（統一單一 context 呼叫，消除三段重複） |
+| TP-CODE-002 | EDD §13.3 CR-CODE-02 | Unit | `reconcile_pending_once` 函式簽名不含 `line_client` 參數（移除永遠不用的參數） |
+| TP-CODE-003 | EDD §13.3 CR-CODE-04 | Unit | `aggregate_minute_notifications` 不使用 f-string 組裝觸發列；改用 `render_line_template_message` 渲染每列 |
+| TP-CODE-004 | EDD §13.3 CR-CODE-06 | Integration | `_send_opening_summary_if_needed` 不受限於精確 `09:00`；任何交易分鐘且當日尚未發送時均可觸發 |
 
 ## 7. 詳細測試案例
 | 測試ID | 前置條件 | 步驟 | 預期結果 |
