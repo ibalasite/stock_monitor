@@ -3,20 +3,19 @@
 Feature: 雙行情來源 Composite Adapter（TWSE 主 + Yahoo Finance 副）
   As 系統開發者與維運者
   I want 行情資料採 TWSE MIS 為主、Yahoo Finance 為副，以較新的 tick_at 為準
-  So that 即使 TWSE 當下快照 z='-'（兩筆成交之間），系統仍能取得最接近現實的最後成交價，
+  So that 即使 TWSE 當下快照 a 欄位為空（兩筆委賣之間），系統仍能取得最接近現實的最後委賣一，
           且 Yahoo API 失敗不中斷主流程
 
   Background:
     Given TWSE MIS endpoint 為 "https://mis.twse.com.tw/stock/api/getStockInfo.jsp"
-    And Yahoo Finance v8 chart endpoint 為 "https://query2.finance.yahoo.com/v8/finance/chart/"
-    And TSE 上市股票 symbol 後綴為 ".TW"，OTC 上櫃後綴為 ".TWO"
-    And 兩者 HTTP 回應讀取上限均為 1 MB（MAX_RESPONSE_BYTES）
+    And Yahoo Finance TW 端點為 "https://tw.stock.yahoo.com/quote/{stock_no}"（HTML scraping，無 .TW/.TWO suffix）
+    And 兩者 HTTP 回應讀取上限均為 2 MB（MAX_RESPONSE_BYTES）
 
   Rule: TWSE _price_cache 行為（TP-ADP-003）
 
     @TP-ADP-003a
-    Scenario: [TP-ADP-003a] TWSE z 有成交值時更新 cache，回傳含 exchange 欄位
-      Given TWSE API 對 2330 回傳 ex="tse", z="2045.0", tlong="1776100000000"
+    Scenario: [TP-ADP-003a] TWSE a 欄位（委賣一）有値時更新 cache，回傳含 exchange 欄位
+      Given TWSE API 對 2330 回傳 ex="tse", a="2045.0", tlong="1776100000000"
       When 呼叫 TwseRealtimeMarketDataProvider.get_realtime_quotes(["2330"])
       Then quotes["2330"]["price"] == 2045.0
       And quotes["2330"]["exchange"] == "tse"
@@ -24,25 +23,25 @@ Feature: 雙行情來源 Composite Adapter（TWSE 主 + Yahoo Finance 副）
       And _price_cache["2330"] == 2045.0
 
     @TP-ADP-003b
-    Scenario: [TP-ADP-003b] TWSE z='-' 時使用 _price_cache 的最後已知成交價
-      Given 前一輪 TWSE 回傳 z="2045.0" for 2330，_price_cache["2330"] = 2045.0
-      And 本輪 TWSE API 對 2330 回傳 z="-", tlong="1776100060000"
+    Scenario: [TP-ADP-003b] TWSE a='-' 時使用 _price_cache 的最後已知委賣一
+      Given 前一輪 TWSE 回傳 a="2045.0" for 2330，_price_cache["2330"] = 2045.0
+      And 本輪 TWSE API 對 2330 回傳 a="-", tlong="1776100060000"
       When 呼叫 TwseRealtimeMarketDataProvider.get_realtime_quotes(["2330"])
       Then quotes["2330"]["price"] == 2045.0
       And tick_at 為 cache 存入時的時間戳（不是本輪 tlong）
 
     @TP-ADP-003c
-    Scenario: [TP-ADP-003c] TWSE z='-' 且 _price_cache 為空（冷啟動）時不加入 quotes
+    Scenario: [TP-ADP-003c] TWSE a='-' 且 _price_cache 為空（冷啟動）時不加入 quotes
       Given _price_cache 為空
-      And TWSE API 對 2330 回傳 z="-"
+      And TWSE API 對 2330 回傳 a="-"
       When 呼叫 TwseRealtimeMarketDataProvider.get_realtime_quotes(["2330"])
       Then "2330" 不在 quotes dict 中
 
   Rule: Yahoo Finance Adapter 行為（TP-ADP-001）
 
     @TP-ADP-001a
-    Scenario: [TP-ADP-001a] Yahoo API 正常回傳時取得 regularMarketPrice 與 regularMarketTime
-      Given Yahoo Finance v8 chart API 對 2330.TW 回傳 regularMarketPrice=2035.0, regularMarketTime=1776100020
+    Scenario: [TP-ADP-001a] Yahoo TW HTML scraping 正常回傳時取得委賣一與 regularMarketTime
+      Given Yahoo TW HTML page for 2330 包含 委賣一=2035.0, regularMarketTime=1776100020
       And exchange_map = {"2330": "tse"}
       When 呼叫 YahooFinanceMarketDataProvider.get_realtime_quotes(["2330"])
       Then quotes["2330"]["price"] == 2035.0
@@ -50,7 +49,7 @@ Feature: 雙行情來源 Composite Adapter（TWSE 主 + Yahoo Finance 副）
 
     @TP-ADP-001b
     Scenario: [TP-ADP-001b] Yahoo API HTTP 4xx/5xx 失敗時寫 WARN log 且回傳空 dict
-      Given Yahoo Finance API 對 2330.TW 回傳 HTTP 404
+      Given Yahoo Finance TW HTML page for 2330 回傳 HTTP 404
       When 呼叫 YahooFinanceMarketDataProvider.get_realtime_quotes(["2330"])
       Then 回傳空 dict {}
       And system_logs 應新增 level "WARN" 包含 "YAHOO_FETCH_WARN"
@@ -64,19 +63,19 @@ Feature: 雙行情來源 Composite Adapter（TWSE 主 + Yahoo Finance 副）
       And system_logs 應新增 level "WARN" 包含 "YAHOO_FETCH_WARN"
 
     @TP-ADP-001d
-    Scenario: [TP-ADP-001d] OTC 上櫃股票使用 .TWO symbol 查詢
+    Scenario: [TP-ADP-001d] OTC 上櫃股票 URL 不加 .TWO suffix（HTML scraping 直接使用 stock_no）
       Given exchange_map = {"3293": "otc"}
-      And Yahoo Finance API 對 3293.TWO 回傳 regularMarketPrice=766.0, regularMarketTime=1776100020
+      And Yahoo TW HTML page for 3293 包含 委賣一=766.0, regularMarketTime=1776100020
       When 呼叫 YahooFinanceMarketDataProvider.get_realtime_quotes(["3293"])
-      Then 請求 URL 包含 "3293.TWO"
+      Then 請求 URL 不包含 ".TWO"（URL 格式為 tw.stock.yahoo.com/quote/3293）
       And quotes["3293"]["price"] == 766.0
 
     @TP-ADP-001e
-    Scenario: [TP-ADP-001e] 無 exchange_map 時 fallback 使用 .TW symbol
+    Scenario: [TP-ADP-001e] exchange_map 不影響 URL 構成（HTML scraping 永遠使用 stock_no）
       Given exchange_map = {}（無 3293 映射）
-      And Yahoo Finance API 對 3293.TW 回傳任意值
+      And Yahoo TW HTML page for 3293 回傳任意値
       When 呼叫 YahooFinanceMarketDataProvider.get_realtime_quotes(["3293"])
-      Then 請求 URL 包含 "3293.TW"（fallback）
+      Then 請求 URL 不包含 ".TW"（URL 固定為 tw.stock.yahoo.com/quote/3293）
 
   Rule: Composite Freshness-First 合併邏輯（TP-ADP-002）
 

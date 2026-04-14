@@ -87,8 +87,8 @@
 - 行情資料需滿足新鮮度門檻（預設 90 秒內），逾時資料視為 stale，該分鐘跳過通知。
 - 若啟用多資料來源且報價差異超過門檻，標記 `DATA_CONFLICT`，該分鐘跳過通知並記錄 WARN。
 - 被跳過分鐘不得補發過期訊號。
-- 行情資料採雙來源：TWSE MIS（主）與 Yahoo Finance v8 chart API（副），以報價時間戳（`tick_at`）較新者為準。
-  - 若 TWSE `z` 欄位在此輪詢快照為 `'-'`，先嘗試 TWSE 內部 `_price_cache`（本次 daemon 生命週期的最後已知成交價）。
+- 行情資料採雙來源：TWSE MIS（主）與 Yahoo Finance TW HTML scraping（副），以報價時間戳（`tick_at`）較新者為準。
+  - 若 TWSE `a` 欄位（委賣一）在此輪詢快照為空或 `'-'`，先嘗試 TWSE 內部 `_price_cache`（本次 daemon 生命週期的最後已知委賣一）。
   - 若 TWSE cache 有值但 Yahoo 的 `regularMarketTime` 較新，採 Yahoo 的價格與時間。
   - 若 TWSE cache 為空（冷啟動第一輪），直接使用 Yahoo 的值。
   - 若兩者均不可用，該股票該分鐘標記 `STALE_QUOTE`，跳過通知。
@@ -142,6 +142,7 @@
 - 程式呼叫介面保持不變；工程實作細節（Jinja2 FileSystemLoader、路徑安全等）見 EDD §7。
 
 
+### FR-05 通知冷卻（Notification Cooldown）
 - 維度：`stock_no + stock_status`。
 - 規則：若最後一次通知 `update_time` 在 5 分鐘內，則不發送、也不更新該筆時間。
 
@@ -244,10 +245,10 @@
 
 ### 9.2 台股行情（雙來源架構）
 - 以公開可取得網頁/API 為主（個人使用）。
-- 主來源：TWSE MIS `getStockInfo.jsp`（`z` 欄位即時成交快照，`tlong` 毫秒時間戳）。
-- 副來源：Yahoo Finance v8 chart API（`regularMarketPrice` + `regularMarketTime` unix seconds）。
-  - 優點：Yahoo 保留最後一筆成交快取，適合 TWSE `z='-'` 的 daemon 冷啟動暖機。
-  - 限制：Yahoo 可能有數分鐘延遲，時間戳不比 TWSE 精確；故以時間戳較新者為準（Freshness-First）。
+- 主來源：TWSE MIS `getStockInfo.jsp`（`a` 欄位委賣一，`tlong` 毫秒時間戳）。
+- 副來源：Yahoo Finance TW HTML scraping（`tw.stock.yahoo.com/quote/{stock_no}`，不使用 `.TW`/`.TWO` suffix）。
+  - 優點：Yahoo 保留近即時委賣一，適合 TWSE `a` 欄位為空的 daemon 冷啟動暖機。
+  - 限制：Yahoo HTML scraping 依賴頁面版型穩定；故以時間戳較新者為準（Freshness-First）。
 - 需保留 provider 抽換能力，後續可替換成其他 API。
 - 可評估券商 API 作備援或升級。
 
@@ -293,7 +294,7 @@
 ### Infrastructure Layer
 - Adapters：
   - `TwseRealtimeMarketDataProvider`（主行情，含 `_price_cache` 與 `ex` 欄位記憶）
-  - `YahooFinanceMarketDataProvider`（副行情，Yahoo Finance v8 chart API）
+  - `YahooFinanceMarketDataProvider`（副行情，Yahoo Finance TW HTML scraping）
   - `CompositeMarketDataProvider`（Freshness-First 聚合，依 `tick_at` 取較新值）
   - `TaiwanHolidayCalendarAdapter`
   - `LineMessagingApiAdapter`

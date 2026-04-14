@@ -206,7 +206,7 @@ templates/
 
 > **MarketDataAdapter** 由三個 class 共同實現（見 §3.3/3.4）：
 > - `TwseRealtimeMarketDataProvider`（主，含 `_price_cache` 與 `ex` 快取）
-> - `YahooFinanceMarketDataProvider`（副，Yahoo Finance v8 chart API）
+> - `YahooFinanceMarketDataProvider`（副，Yahoo Finance TW HTML scraping）
 > - `CompositeMarketDataProvider`（Freshness-First 聚合，注入以上兩者）
 
 ### 3.2 Mermaid 架構圖
@@ -612,10 +612,9 @@ LINE_TEMPLATE_OPENING_SUMMARY=line_opening_summary_mobile_compact_v1
 ### 8.2 Yahoo Finance Adapter 參數（無需環境變數，為 code 常數）
 | 參數 | 預設值 | 說明 |
 |---|---|---|
-| `YAHOO_BASE_URL` | `https://query2.finance.yahoo.com/v8/finance/chart/` | Yahoo Finance v8 chart 端點 |
+| `YAHOO_BASE_URL` | `https://tw.stock.yahoo.com/quote/` | Yahoo Finance TW HTML scraping 端點（加 `{stock_no}` 即完整 URL）|
 | `YAHOO_TIMEOUT_SEC` | `10` | HTTP 逾時秒數 |
-| `YAHOO_EXCHANGE_FALLBACK` | `".TW"` | 無 `ex` 快取時的 symbol 後綴 |
-| `MAX_RESPONSE_BYTES` | `1_048_576` | HTTP 回應讀取上限（共用同 TWSE adapter 常數）|
+| `MAX_RESPONSE_BYTES` | `2_097_152` | HTTP 回應讀取上限（共用同 TWSE adapter 常數）|
 
 ## 9. Phase 規劃
 ### Phase 1（手動門檻）
