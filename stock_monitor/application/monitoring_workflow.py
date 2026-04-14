@@ -7,6 +7,7 @@ import uuid
 from stock_monitor.application.message_template import render_line_template_message
 
 MINUTE_DIGEST_TEMPLATE_KEY = "line.minute_digest.v1"
+TRIGGER_ROW_DIGEST_TEMPLATE_KEY = "line.trigger_row_digest.v1"
 
 
 def _normalize_methods(methods) -> list[str]:
@@ -24,14 +25,16 @@ def aggregate_minute_notifications(minute_bucket: str, signals: list[dict]) -> s
     for idx, signal in enumerate(signals, start=1):
         methods = ",".join(_normalize_methods(signal.get("methods_hit")))
         base_message = str(signal.get("message") or f"{signal.get('stock_no')} 觸發監控門檻").strip()
-        if methods:
-            lines.append(f"{idx}) {base_message}（命中方法: {methods}）")
-        else:
-            lines.append(f"{idx}) {base_message}")
+        lines.append(
+            render_line_template_message(
+                TRIGGER_ROW_DIGEST_TEMPLATE_KEY,
+                {"idx": idx, "base_message": base_message, "methods": methods},
+            )
+        )
     return "\n".join(lines)
 
 
-def merge_minute_message(existing: dict, incoming: dict) -> dict:
+def _merge_minute_message(existing: dict, incoming: dict) -> dict:
     merged = dict(existing)
     existing_status = int(existing.get("stock_status", 1))
     incoming_status = int(incoming.get("stock_status", 1))
@@ -44,7 +47,6 @@ def merge_minute_message(existing: dict, incoming: dict) -> dict:
     )
     merged["message"] = incoming.get("message", existing.get("message"))
     return merged
-
 
 def dispatch_and_persist_minute(
     minute_bucket: str,
@@ -83,13 +85,12 @@ def dispatch_and_persist_minute(
         return {"status": "pending", "sent": True}
 
 
-def reconcile_pending_once(line_client, message_repo, pending_repo, logger) -> dict:
+def reconcile_pending_once(message_repo, pending_repo, logger) -> dict:
     reconciled = 0
     for item in pending_repo.list_pending():
         try:
             # Pending items represent "LINE already sent, DB persist failed".
             # Reconcile must only backfill DB state and never re-send LINE.
-            _ = line_client
             message_repo.save_batch(item.get("rows", []))
             pending_repo.mark_reconciled(item.get("pending_id"))
             reconciled += 1

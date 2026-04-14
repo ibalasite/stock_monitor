@@ -10,7 +10,7 @@
 4. `pytest-bdd` 已安裝，`stock_monitoring_smoke.feature` 與完整 `stock_monitoring_system.feature` 皆可執行。
 5. `stock_monitor` 主程式套件已建立並實作核心測試契約。
 6. 最新狀態：
-   - `pytest -q tests`：最近一次基線（2026-04-14）為 `196 passed`（含完整 BDD + unit/integration/UAT contract + CR-* 改善驗證）
+   - `pytest -q tests`：最近一次基線（2026-04-14）為 `213 passed`（含完整 BDD + unit/integration/UAT contract + CR-* 改善驗證，100% coverage）
    - Coverage gate：`100%`（line + branch）
    - CI：`.github/workflows/ci.yml` 已啟用（push / pull_request），且已採用 action SHA pin + 鎖版依賴 + `pip-audit`
    - 可執行入口：`python -m stock_monitor init-db|run-once|reconcile-once|valuation-once|run-daemon`
@@ -135,7 +135,7 @@ python -m pip install --require-hashes -r requirements-dev.txt
 python -m pytest -q tests
 ```
 5. 最近一次基線結果（2026-04-14）：
-   - `196 passed`
+   - `213 passed`
    - coverage `100%`
    - 實際請以你當次執行輸出為準
 

@@ -64,6 +64,9 @@ def smoke_ctx(tmp_path) -> dict:
         "reconcile_result": None,
         "now_dt": None,
     }
+    # Pre-mark opening summary as sent for the default test date so run_minute_cycle
+    # calls during smoke scenarios don't fire the opening summary unexpectedly.
+    logger.mark_opening_summary_sent("2026-04-10")
     try:
         yield ctx
     finally:
@@ -158,7 +161,6 @@ def when_execute_monitor_cycle(smoke_ctx: dict):
 @when("I execute reconcile cycle")
 def when_execute_reconcile_cycle(smoke_ctx: dict):
     smoke_ctx["reconcile_result"] = run_reconcile_cycle(
-        line_client=smoke_ctx["line_client"],
         message_repo=smoke_ctx["message_repo"],
         pending_repo=smoke_ctx["pending_repo"],
         logger=smoke_ctx["logger"],

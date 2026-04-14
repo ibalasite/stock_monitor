@@ -207,7 +207,6 @@ def test_cov_workflow_string_normalize_dispatch_success_and_reconcile_error_path
         }
     ]
     reconcile_result = reconcile_pending_once(
-        line_client=_OkLineClient(),
         message_repo=_FailReconcileMessageRepo(),
         pending_repo=pending_repo,
         logger=logger,
@@ -475,3 +474,110 @@ def test_cov_runtime_health_metrics_policy_and_bucket_remaining_paths():
     assert bucket == "2026-04-10 02:21", (
         "[COV-BKT-001] Aware datetime should go through timezone-aware conversion path."
     )
+
+
+def test_cov_run_minute_cycle_config_path_and_mark_opening_summary_exception():
+    """Cover: (1) run_minute_cycle with config= object; (2) mark_opening_summary_sent that raises."""
+    from stock_monitor.application.runtime_service import (
+        MinuteCycleConfig,
+        _send_opening_summary_if_needed,
+        run_minute_cycle,
+    )
+
+    # --- run_minute_cycle via config object (non-trading, early return) ---
+    @dataclass
+    class _NullMarketProvider:
+        def get_market_snapshot(self, now_epoch: int):
+            return {}
+
+        def get_realtime_quotes(self, stock_nos: list):
+            return {}
+
+    @dataclass
+    class _NullWatchlistRepo:
+        def list_enabled(self):
+            return []
+
+    @dataclass
+    class _NullMessageRepo:
+        def get_last_sent_at(self, stock_no: str, stock_status: int):
+            return None
+
+    @dataclass
+    class _NullPendingRepo:
+        def list_pending(self):
+            return []
+
+        def get_last_pending_sent_at(self, stock_no: str, stock_status: int):
+            return None
+
+    @dataclass
+    class _NullFallback:
+        def get_last_pending_sent_at(self, stock_no: str, stock_status: int):
+            return None
+
+    logger = _RecorderLogger(events=[])
+    config = MinuteCycleConfig(
+        now_dt=datetime(2026, 4, 10, 13, 31, 0),  # non-trading
+        market_data_provider=_NullMarketProvider(),
+        line_client=_OkLineClient(),
+        watchlist_repo=_NullWatchlistRepo(),
+        message_repo=_NullMessageRepo(),
+        pending_repo=_NullPendingRepo(),
+        valuation_snapshot_repo=None,
+        pending_fallback=_NullFallback(),
+        logger=logger,
+        cooldown_seconds=300,
+        retry_count=3,
+        stale_threshold_sec=90,
+        timezone_name="Asia/Taipei",
+    )
+    result = run_minute_cycle(config=config)
+    assert result.get("reason") == "non_trading_session", (
+        "[COV-RS-001] run_minute_cycle via MinuteCycleConfig must return non_trading_session."
+    )
+
+    # --- except-pass branch when mark_opening_summary_sent raises ---
+    @dataclass
+    class _BrokenMarkLogger:
+        events: list
+
+        def log(self, level: str, message: str):
+            self.events.append((level, message))
+
+        def opening_summary_sent_for_date(self, trade_date: str) -> bool:
+            return False
+
+        def mark_opening_summary_sent(self, trade_date: str) -> None:
+            raise RuntimeError("DB write failed")
+
+    mark_logger = _BrokenMarkLogger(events=[])
+    _send_opening_summary_if_needed(
+        now_dt=datetime(2026, 4, 10, 9, 0, 0),
+        watchlist_rows=[{"stock_no": "2330", "manual_fair_price": 2000.0, "manual_cheap_price": 1500.0}],
+        valuation_snapshot_repo=None,
+        line_client=_OkLineClient(),
+        logger=mark_logger,
+    )
+    assert any("OPENING_SUMMARY_SENT" in msg for _, msg in mark_logger.events), (
+        "[COV-RS-002] Send should succeed even if mark_opening_summary_sent raises."
+    )
+
+
+def test_cov_valuation_calculator_resolve_returns_primary():
+    """Verify _resolve_raysky_inputs returns primary_inputs on the happy path."""
+    from stock_monitor.application.valuation_calculator import ManualValuationCalculator
+
+    @dataclass
+    class _WatchlistRepo:
+        def list_enabled(self):
+            return [{"stock_no": "2330", "manual_fair_price": 1500, "manual_cheap_price": 1000}]
+
+    calculator = ManualValuationCalculator(
+        watchlist_repo=_WatchlistRepo(),
+        trade_date="2026-04-10",
+    )
+    primary = {"market_price": 1600.0, "fair_price": 1500.0, "cheap_price": 1000.0}
+    fallback = {"market_price": 1600.0, "fair_price": 1400.0, "cheap_price": 900.0}
+    result = calculator._resolve_raysky_inputs("2330", primary, fallback)
+    assert result == primary, "[COV-VC-001] Happy path must return primary_inputs unchanged."

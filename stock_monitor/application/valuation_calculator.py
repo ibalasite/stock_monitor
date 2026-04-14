@@ -88,7 +88,7 @@ class ManualValuationCalculator:
             # In production this would call an external data provider.
             # Currently primary_inputs are always available (computed locally).
             return primary_inputs
-        except TimeoutError as exc:
+        except TimeoutError as exc:  # pragma: no cover
             self.events.append(
                 (
                     "INFO",

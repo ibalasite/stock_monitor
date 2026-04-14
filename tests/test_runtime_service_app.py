@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import json
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
 import runpy
@@ -30,9 +30,17 @@ from stock_monitor.application.valuation_calculator import ManualValuationCalcul
 @dataclass
 class _FakeLogger:
     events: list[tuple[str, str]]
+    _summary_sent_dates: list[str] = field(default_factory=list)
 
     def log(self, level: str, message: str):
         self.events.append((level, message))
+
+    def opening_summary_sent_for_date(self, trade_date: str) -> bool:
+        return trade_date in self._summary_sent_dates
+
+    def mark_opening_summary_sent(self, trade_date: str) -> None:
+        if trade_date not in self._summary_sent_dates:
+            self._summary_sent_dates.append(trade_date)
 
 
 @dataclass
@@ -319,7 +327,8 @@ def test_run_minute_cycle_branches_and_reconcile():
         logger=logger,
     )
     assert result_sent["count"] == 1
-    assert len(line_client.sent) == 1
+    # Opening summary triggered on first watchlist run (result_no_signal), plus trigger here.
+    assert len(line_client.sent) == 2
     assert "低於便宜價1000" in line_client.sent[-1]
 
     result_stale_quote = run_minute_cycle(
@@ -420,7 +429,6 @@ def test_run_minute_cycle_branches_and_reconcile():
         }
     ]
     reconcile_result = run_reconcile_cycle(
-        line_client=line_client,
         message_repo=message_repo,
         pending_repo=pending_repo,
         logger=logger,
@@ -587,7 +595,7 @@ def test_send_opening_summary_branch_coverage():
     watchlist_rows = [{"stock_no": "2330", "manual_fair_price": 2000.0, "manual_cheap_price": 1500.0}]
 
     line_client = _FakeLineClient(sent=[])
-    logger = _SummaryLogger(already_sent=False, events=[])
+    logger = _SummaryLogger(already_sent=True, events=[])
     _send_opening_summary_if_needed(
         now_dt=datetime(2026, 4, 14, 8, 59, 0),
         watchlist_rows=watchlist_rows,
@@ -630,6 +638,33 @@ def test_send_opening_summary_branch_coverage():
     )
     assert any("OPENING_SUMMARY_SNAPSHOT_FETCH_FAILED" in msg for _, msg in logger.events)
     assert any("OPENING_SUMMARY_SEND_FAILED" in msg for _, msg in logger.events)
+
+    # Cover except-pass in mark_opening_summary_sent call
+    @dataclass
+    class _BrokenMarkLogger:
+        already_sent: bool
+        events: list[tuple[str, str]]
+
+        def log(self, level: str, message: str):
+            self.events.append((level, message))
+
+        def opening_summary_sent_for_date(self, trade_date: str) -> bool:
+            return self.already_sent
+
+        def mark_opening_summary_sent(self, trade_date: str) -> None:
+            raise RuntimeError("mark failed")
+
+    line_client_mark = _FakeLineClient(sent=[])
+    logger_mark = _BrokenMarkLogger(already_sent=False, events=[])
+    _send_opening_summary_if_needed(
+        now_dt=datetime(2026, 4, 14, 9, 0, 0),
+        watchlist_rows=watchlist_rows,
+        valuation_snapshot_repo=None,
+        line_client=line_client_mark,
+        logger=logger_mark,
+    )
+    assert len(line_client_mark.sent) == 1
+    assert any("OPENING_SUMMARY_SENT" in msg for _, msg in logger_mark.events)
 
 
 def test_evaluate_valuation_snapshot_hits_remaining_paths():
@@ -904,9 +939,9 @@ def test_run_daemon_loop_trading_poll_and_valuation(monkeypatch):
         calls["reconcile"] += 1
         return {"reconciled": 0}
 
-    monkeypatch.setattr("stock_monitor.app.run_minute_cycle", _fake_run_minute_cycle)
-    monkeypatch.setattr("stock_monitor.app.run_daily_valuation_job", _fake_run_daily_valuation_job)
-    monkeypatch.setattr("stock_monitor.app.run_reconcile_cycle", _fake_run_reconcile_cycle)
+    monkeypatch.setattr("stock_monitor.application.daemon_runner.run_minute_cycle", _fake_run_minute_cycle)
+    monkeypatch.setattr("stock_monitor.application.daemon_runner.run_daily_valuation_job", _fake_run_daily_valuation_job)
+    monkeypatch.setattr("stock_monitor.application.daemon_runner.run_reconcile_cycle", _fake_run_reconcile_cycle)
 
     schedule = iter(
         [
@@ -959,9 +994,9 @@ def test_run_daemon_loop_trading_poll_and_valuation(monkeypatch):
 
 
 def test_run_daemon_loop_keyboard_interrupt(monkeypatch):
-    monkeypatch.setattr("stock_monitor.app.run_minute_cycle", lambda **kwargs: {"status": "no_signal", "count": 0})
-    monkeypatch.setattr("stock_monitor.app.run_daily_valuation_job", lambda **kwargs: {"status": "skipped"})
-    monkeypatch.setattr("stock_monitor.app.run_reconcile_cycle", lambda **kwargs: {"reconciled": 0})
+    monkeypatch.setattr("stock_monitor.application.daemon_runner.run_minute_cycle", lambda **kwargs: {"status": "no_signal", "count": 0})
+    monkeypatch.setattr("stock_monitor.application.daemon_runner.run_daily_valuation_job", lambda **kwargs: {"status": "skipped"})
+    monkeypatch.setattr("stock_monitor.application.daemon_runner.run_reconcile_cycle", lambda **kwargs: {"reconciled": 0})
 
     runtime = {
         "market_provider": object(),

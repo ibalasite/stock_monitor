@@ -24,7 +24,7 @@ from stock_monitor.application.monitoring_workflow import (
     aggregate_minute_notifications,
     dispatch_and_persist_minute,
     fetch_market_with_retry,
-    merge_minute_message,
+    _merge_minute_message,
     persist_message_rows_transactional,
     reconcile_pending_once,
 )
@@ -201,6 +201,10 @@ def bdd_ctx(tmp_path) -> dict:
         "opening_summary_sent_dates": set(),
         "opening_summary_message": "",
     }
+    # Pre-mark opening summary as sent for the default test date so run_minute_cycle
+    # calls during BDD scenarios don't unexpectedly fire the opening summary.
+    # BDD scenarios that specifically test opening summary behaviour manage this state themselves.
+    ctx["logger"].mark_opening_summary_sent("2026-04-10")
     try:
         yield ctx
     finally:
@@ -1152,7 +1156,6 @@ def _handle_when(step: str, ctx: dict):
     if step == "執行補償 worker":
         ctx["before_reconcile_sent"] = len(ctx["line_client"].sent)
         ctx["last_result"] = reconcile_pending_once(
-            line_client=ctx["line_client"],
             message_repo=ctx["message_repo"],
             pending_repo=ctx["pending_repo"],
             logger=ctx["logger"],
@@ -1161,7 +1164,6 @@ def _handle_when(step: str, ctx: dict):
     if step.startswith("補償 worker 再次執行"):
         ctx["before_reconcile_sent_2"] = len(ctx["line_client"].sent)
         ctx["last_result_2"] = reconcile_pending_once(
-            line_client=ctx["line_client"],
             message_repo=ctx["message_repo"],
             pending_repo=ctx["pending_repo"],
             logger=ctx["logger"],
@@ -1365,7 +1367,6 @@ def _handle_when(step: str, ctx: dict):
     if step == "補償 worker 啟動":
         ctx["before_reconcile_sent"] = len(ctx["line_client"].sent)
         ctx["last_result"] = reconcile_pending_once(
-            line_client=ctx["line_client"],
             message_repo=ctx["message_repo"],
             pending_repo=ctx["pending_repo"],
             logger=ctx["logger"],

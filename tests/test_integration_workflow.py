@@ -146,7 +146,7 @@ def test_tp_int_001_one_line_message_per_minute_with_multi_stock_hits():
 def test_tp_int_002_same_minute_status_1_upgrades_to_2():
     merge_minute_message = require_symbol(
         "stock_monitor.application.monitoring_workflow",
-        "merge_minute_message",
+        "_merge_minute_message",
         "TP-INT-002",
     )
     existing = {
@@ -173,7 +173,7 @@ def test_tp_int_002_same_minute_status_1_upgrades_to_2():
 def test_tp_int_003_same_status_content_can_update():
     merge_minute_message = require_symbol(
         "stock_monitor.application.monitoring_workflow",
-        "merge_minute_message",
+        "_merge_minute_message",
         "TP-INT-003",
     )
     existing = {
@@ -279,8 +279,8 @@ def test_tp_int_006_reconcile_pending_marks_reconciled_and_avoids_duplicate_send
     )
     logger = _FakeLogger(events=[])
 
-    reconcile_pending_once(line_client=line, message_repo=message_repo, pending_repo=pending_repo, logger=logger)
-    reconcile_pending_once(line_client=line, message_repo=message_repo, pending_repo=pending_repo, logger=logger)
+    reconcile_pending_once(message_repo=message_repo, pending_repo=pending_repo, logger=logger)
+    reconcile_pending_once(message_repo=message_repo, pending_repo=pending_repo, logger=logger)
 
     assert line.sent_payloads == [], (
         "[TP-INT-006] Reconcile should only backfill DB and must never re-send LINE."

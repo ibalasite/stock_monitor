@@ -190,8 +190,6 @@ def _send_opening_summary_if_needed(
     logger,
     stock_name_map: dict[str, str] | None = None,
 ) -> None:
-    if now_dt.strftime("%H:%M") != "09:00":
-        return
     trade_date = now_dt.strftime("%Y-%m-%d")
     if _already_sent_opening_summary(logger, trade_date):
         return
@@ -342,39 +340,14 @@ def build_minute_rows(
         display_label = f"{stock_name}({stock_no})" if stock_name else stock_no
         current_price = prices[0]
 
-        if status == 2 and cheap_price is not None:
-            message = render_line_template_message(
-                TRIGGER_ROW_TEMPLATE_KEY,
-                {
+        render_context = {
                     "display_label": display_label,
                     "current_price": _format_price(current_price),
                     "stock_status": status,
                     "fair_price": _format_price(fair_price) if fair_price is not None else None,
-                    "cheap_price": _format_price(cheap_price),
-                },
-            )
-        elif fair_price is not None:
-            message = render_line_template_message(
-                TRIGGER_ROW_TEMPLATE_KEY,
-                {
-                    "display_label": display_label,
-                    "current_price": _format_price(current_price),
-                    "stock_status": status,
-                    "fair_price": _format_price(fair_price),
-                    "cheap_price": None,
-                },
-            )
-        else:
-            message = render_line_template_message(
-                TRIGGER_ROW_TEMPLATE_KEY,
-                {
-                    "display_label": display_label,
-                    "current_price": _format_price(current_price),
-                    "stock_status": status,
-                    "fair_price": None,
-                    "cheap_price": None,
-                },
-            )
+                    "cheap_price": _format_price(cheap_price) if (status == 2 and cheap_price is not None) else None,
+                }
+        message = render_line_template_message(TRIGGER_ROW_TEMPLATE_KEY, render_context)
 
         rows.append(
             {
@@ -520,9 +493,8 @@ def run_minute_cycle(
     return {"status": dispatch_result.get("status"), "count": len(rows)}
 
 
-def run_reconcile_cycle(*, line_client, message_repo, pending_repo, logger) -> dict:
+def run_reconcile_cycle(*, message_repo, pending_repo, logger) -> dict:
     return reconcile_pending_once(
-        line_client=line_client,
         message_repo=message_repo,
         pending_repo=pending_repo,
         logger=logger,

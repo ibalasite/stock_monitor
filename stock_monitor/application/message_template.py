@@ -7,6 +7,8 @@ class LineTemplateRenderer:
     """Minimal renderer contract used by runtime message composition."""
 
     def render(self, template_key: str, context: dict) -> str:
+        if "trigger_row_digest" in template_key:
+            return self._render_trigger_row_digest(context)
         if "trigger_row" in template_key:
             return self._render_trigger_row(context)
         if "minute_digest" in template_key:
@@ -16,6 +18,14 @@ class LineTemplateRenderer:
             return f"[測試推播] {context.get('message', '')}"
         # opening_summary and fallback
         return "{stock_display} {method_label} {fair_price}/{cheap_price}".format(**context)
+
+    def _render_trigger_row_digest(self, context: dict) -> str:
+        idx = context.get("idx", "")
+        base_message = context.get("base_message", "")
+        methods = context.get("methods", "")
+        if methods:
+            return f"{idx}) {base_message}（命中方法: {methods}）"
+        return f"{idx}) {base_message}"
 
     def _render_trigger_row(self, context: dict) -> str:
         label = context.get("display_label", context.get("stock_no", ""))
