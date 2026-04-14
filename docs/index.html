@@ -1,0 +1,224 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>台股監控系統 — 文件首頁</title>
+  <link rel="stylesheet" href="site.css">
+</head>
+<body>
+
+<!-- Top Nav -->
+<header class="top-nav">
+  <div class="brand">台股<span>監控</span>系統</div>
+  <nav>
+    <a href="index.html" class="active">首頁</a>
+    <a href="pdd.html">產品規格 (PDD)</a>
+    <a href="edd.html">工程設計 (EDD)</a>
+  </nav>
+  <div class="spacer"></div>
+  <span class="badge">v1.0 · 2026-04-14</span>
+</header>
+
+<!-- Page -->
+<div class="page-wrapper">
+  <main class="main-content" style="padding-top:48px">
+    <div class="content-inner" style="max-width:900px">
+
+      <!-- Hero -->
+      <section class="hero">
+        <h1><span>台股</span>盤中監控 × LINE 群組通知</h1>
+        <p>
+          每分鐘自動檢查個股現價，低於合理價或便宜價時即時推播 LINE 群組。
+          結合三種估值模型、雙行情來源與補償機制，實現 99%+ 通知準確率。
+        </p>
+        <div class="badge-row">
+          <span>⏱ 60 秒輪詢</span>
+          <span>🛡 5 分鐘冷卻</span>
+          <span>📊 三種估值方法</span>
+          <span>🔗 TWSE + Yahoo 雙來源</span>
+          <span>✅ 241 測試 100% 覆蓋</span>
+        </div>
+      </section>
+
+      <!-- Stats -->
+      <div class="stats-row">
+        <div class="stat-card">
+          <div class="stat-num">60s</div>
+          <div class="stat-label">輪詢間隔</div>
+        </div>
+        <div class="stat-card">
+          <div class="stat-num">300s</div>
+          <div class="stat-label">通知冷卻</div>
+        </div>
+        <div class="stat-card">
+          <div class="stat-num">3</div>
+          <div class="stat-label">估值方法</div>
+        </div>
+        <div class="stat-card">
+          <div class="stat-num">241</div>
+          <div class="stat-label">測試案例</div>
+        </div>
+        <div class="stat-card">
+          <div class="stat-num">100%</div>
+          <div class="stat-label">程式覆蓋率</div>
+        </div>
+        <div class="stat-card">
+          <div class="stat-num">14:00</div>
+          <div class="stat-label">每日估值時間</div>
+        </div>
+      </div>
+
+      <!-- Doc nav cards -->
+      <h2>文件導覽</h2>
+      <div class="doc-grid">
+        <a class="doc-card" href="pdd.html">
+          <div class="doc-icon">📋</div>
+          <h3>產品規格文件 (PDD)</h3>
+          <p>業務目標、使用流程、功能需求（FR-01 ~ FR-16）、UAT 驗收標準與風險因應。適合產品與企劃人員閱讀。</p>
+          <div class="arrow">閱讀 PDD →</div>
+        </a>
+        <a class="doc-card" href="edd.html">
+          <div class="doc-icon">⚙️</div>
+          <h3>工程設計文件 (EDD)</h3>
+          <p>Clean Architecture 分層、雙行情來源 Adapter、資料模型 SQL、流程圖（含架構圖）與 Phase 規劃。適合開發人員閱讀。</p>
+          <div class="arrow">閱讀 EDD →</div>
+        </a>
+        <a class="doc-card" href="architecture/README.md">
+          <div class="doc-icon">🗂</div>
+          <h3>架構圖目錄</h3>
+          <p>7 張 Mermaid 架構圖（PNG）：系統脈絡、Clean Architecture、盤中流程、估值流程、行情 Adapter、資料模型、部署拓撲。</p>
+          <div class="arrow">查看圖表 →</div>
+        </a>
+      </div>
+
+      <!-- System overview -->
+      <h2>系統架構總覽</h2>
+      <div class="banner info">
+        系統採用 <strong>Clean Architecture</strong> 分四層：Domain → Application → Adapters → Interface，
+        每層只依賴內層，確保核心業務邏輯與 I/O 實作完全解耦。
+      </div>
+      <div class="diagram-section">
+        <img class="diagram-img" src="architecture/images/01-system-context.png" alt="系統脈絡圖 (C4 L1)">
+        <p class="diagram-label">圖 1 — 系統脈絡：監控系統、台股行情來源、LINE Messaging API、SQLite 儲存</p>
+      </div>
+      <div class="diagram-section">
+        <img class="diagram-img" src="architecture/images/02-clean-architecture.png" alt="Clean Architecture 分層圖">
+        <p class="diagram-label">圖 2 — Clean Architecture 分層：Domain / Application / Adapters / Interface</p>
+      </div>
+
+      <!-- Key features -->
+      <h2>核心功能</h2>
+      <div class="doc-grid" style="grid-template-columns: repeat(auto-fit, minmax(220px,1fr))">
+        <div class="card" style="margin:0">
+          <div class="card-title">盤中即時監控</div>
+          <p style="font-size:.87rem;color:var(--clr-muted)">交易時段（09:00–13:30）每 60 秒抓取一次委賣一價格，與監控清單比對後觸發訊號。</p>
+        </div>
+        <div class="card" style="margin:0">
+          <div class="card-title">雙行情來源</div>
+          <p style="font-size:.87rem;color:var(--clr-muted)">TWSE MIS（主）+ Yahoo Finance HTML（副），Freshness-First 規則以 <code>tick_at</code> 較新者為準。</p>
+        </div>
+        <div class="card" style="margin:0">
+          <div class="card-title">5 分鐘冷卻機制</div>
+          <p style="font-size:.87rem;color:var(--clr-muted)">同 <code>stock_no + stock_status</code> 組合 5 分鐘內不重複推播，避免訊號疲勞。</p>
+        </div>
+        <div class="card" style="margin:0">
+          <div class="card-title">LINE 模板化通知</div>
+          <p style="font-size:.87rem;color:var(--clr-muted)">所有 LINE 訊息（彙總/摘要/測試）均由 <code>template_key + context</code> 渲染，不硬編碼文案。</p>
+        </div>
+        <div class="card" style="margin:0">
+          <div class="card-title">每日 14:00 估值</div>
+          <p style="font-size:.87rem;color:var(--clr-muted)">三種估值模型（艾蜜莉/老牛/雷司紀）逐股運算，結果寫入 SQLite，隔日監控即可使用。</p>
+        </div>
+        <div class="card" style="margin:0">
+          <div class="card-title">補償機制</div>
+          <p style="font-size:.87rem;color:var(--clr-muted)">LINE 成功 + DB 失敗時，寫入 <code>pending_delivery_ledger</code>，補償完成前視同已通知，避免重複推送。</p>
+        </div>
+      </div>
+
+      <!-- Notification flow -->
+      <h2>盤中通知流程</h2>
+      <div class="diagram-section">
+        <img class="diagram-img" src="architecture/images/03-intraday-flow.png" alt="盤中每分鐘通知流程">
+        <p class="diagram-label">圖 3 — 盤中每分鐘流程：行情抓取 → 訊號評估 → 冷卻過濾 → 彙總 → LINE 推送 → 落盤</p>
+      </div>
+
+      <!-- Valuation -->
+      <h2>每日估值流程</h2>
+      <div class="diagram-section">
+        <img class="diagram-img" src="architecture/images/04-valuation-flow.png" alt="每日 14:00 估值流程">
+        <p class="diagram-label">圖 4 — 每日 14:00 估值：三方法逐股計算，資料不足時跳過並保留舊快照</p>
+      </div>
+
+      <!-- Quick start -->
+      <h2>快速啟動</h2>
+      <div class="card">
+        <div class="card-title">環境設定</div>
+        <pre><code># 1. 安裝相依套件
+pip install -r requirements-dev.txt
+
+# 2. 設定 LINE 環境變數
+$env:LINE_CHANNEL_ACCESS_TOKEN = "your_token"
+$env:LINE_TO_GROUP_ID          = "your_group_id"
+
+# 3. 啟動守護行程
+python -m stock_monitor run-daemon
+
+# 4. 執行全部測試
+python -m pytest -q tests</code></pre>
+      </div>
+      <div class="card">
+        <div class="card-title">Windows 排程（開盤/收盤自動啟停）</div>
+        <pre><code># 一次性註冊 Windows 工作排程器
+# 08:50 自動啟動 daemon（週一至週五）
+# 14:30 自動停止 daemon（週一至週五）
+powershell -ExecutionPolicy Bypass -File scripts/register_scheduled_tasks.ps1</code></pre>
+      </div>
+
+      <!-- Links -->
+      <h2>其他文件與資源</h2>
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th>文件</th><th>說明</th></tr></thead>
+          <tbody>
+            <tr><td><a href="../TEST_PLAN.md">TEST_PLAN.md</a></td><td>測試計畫（TP-DB / TP-POL / TP-INT / TP-UAT 等測試集）</td></tr>
+            <tr><td><a href="../USER_STORY_ACCEPTANCE_CRITERIA.md">USER_STORY_ACCEPTANCE_CRITERIA.md</a></td><td>使用者故事與驗收標準</td></tr>
+            <tr><td><a href="../ADR.md">ADR.md</a></td><td>架構決策記錄（Architecture Decision Records）</td></tr>
+            <tr><td><a href="../NFR_SLI_SLO.md">NFR_SLI_SLO.md</a></td><td>非功能需求、SLI/SLO 指標</td></tr>
+            <tr><td><a href="../SECURITY_AND_SECRETS.md">SECURITY_AND_SECRETS.md</a></td><td>安全需求與 Secrets 管理規範</td></tr>
+            <tr><td><a href="../OPERATIONS_RUNBOOK.md">OPERATIONS_RUNBOOK.md</a></td><td>維運操作手冊</td></tr>
+            <tr><td><a href="../API_CONTRACT.md">API_CONTRACT.md</a></td><td>API 合約規格</td></tr>
+          </tbody>
+        </table>
+      </div>
+
+      <footer>
+        <p>台股監控系統 v1.0 &nbsp;·&nbsp; 2026-04-14 &nbsp;·&nbsp; 
+           <a href="https://github.com/ibalasite/stock_monitor" target="_blank" rel="noopener">GitHub</a>
+        </p>
+      </footer>
+
+    </div>
+  </main>
+</div>
+
+<script>
+// Sidebar active link highlight on scroll (for pages with sidebar)
+document.addEventListener('DOMContentLoaded', () => {
+  const sidebar = document.querySelector('.sidebar');
+  if (!sidebar) return;
+  const links = Array.from(sidebar.querySelectorAll('a[href^="#"]'));
+  const observer = new IntersectionObserver(entries => {
+    entries.forEach(e => {
+      if (e.isIntersecting) {
+        links.forEach(l => l.classList.remove('active'));
+        const match = links.find(l => l.getAttribute('href') === '#' + e.target.id);
+        if (match) match.classList.add('active');
+      }
+    });
+  }, { rootMargin: '-20% 0px -70% 0px' });
+  document.querySelectorAll('[id]').forEach(el => observer.observe(el));
+});
+</script>
+</body>
+</html>

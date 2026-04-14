@@ -1,0 +1,444 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>PDD — 台股監控系統產品規格文件</title>
+  <link rel="stylesheet" href="site.css">
+</head>
+<body>
+
+<!-- Top Nav -->
+<header class="top-nav">
+  <div class="brand">台股<span>監控</span>系統</div>
+  <nav>
+    <a href="index.html">首頁</a>
+    <a href="pdd.html" class="active">產品規格 (PDD)</a>
+    <a href="edd.html">工程設計 (EDD)</a>
+  </nav>
+  <div class="spacer"></div>
+  <span class="badge">PDD v1.0</span>
+</header>
+
+<!-- Page -->
+<div class="page-wrapper">
+
+  <!-- Sidebar TOC -->
+  <aside class="sidebar">
+    <div class="sidebar-title">目錄</div>
+    <ul>
+      <li><a href="#overview">文件概要</a></li>
+      <li><a href="#background">背景與問題</a></li>
+      <li><a href="#goals">產品目標</a></li>
+      <li><a href="#users">目標使用者</a></li>
+      <li><a href="#scope">產品範圍</a></li>
+      <li><a href="#userflow">使用流程</a></li>
+      <li><a href="#fr">功能需求 (FR)</a></li>
+      <li><a href="#nfr">非功能需求</a></li>
+      <li><a href="#data-sources">資料來源策略</a></li>
+      <li><a href="#data-model">資料結構摘要</a></li>
+      <li><a href="#architecture">Clean Architecture</a></li>
+      <li><a href="#uat">UAT 驗收標準</a></li>
+      <li><a href="#risks">風險與因應</a></li>
+      <li><a href="#milestones">里程碑</a></li>
+    </ul>
+  </aside>
+
+  <!-- Main -->
+  <main class="main-content">
+    <div class="content-inner">
+
+      <!-- Title -->
+      <h1 id="overview">產品規格文件（PDD）</h1>
+      <p class="section-intro">
+        版本 v1.0 &nbsp;·&nbsp; 2026-04-14 &nbsp;·&nbsp; 狀態：Draft（可進入 review）<br>
+        定義「台股價格監控 + LINE 通知系統」之產品需求，讓工程與企劃可共同對齊。
+      </p>
+
+      <div class="banner success">
+        本文件對齊 EDD、TEST_PLAN、USER_STORY_ACCEPTANCE_CRITERIA 三份文件。
+        如有衝突，以「可執行規格（feature + tests）」為最高優先。
+      </div>
+
+      <!-- ── 背景 ── -->
+      <h2 id="background">§2 背景與問題</h2>
+      <div class="doc-grid" style="grid-template-columns:repeat(auto-fit,minmax(220px,1fr));margin-bottom:0">
+        <div class="card" style="margin:0;border-top:3px solid var(--clr-danger)">
+          <div class="card-title" style="color:var(--clr-danger)">手動盯盤耗時</div>
+          <p style="font-size:.87rem;color:var(--clr-muted)">使用者需全程看盤，容易錯過理想買點，且長時間盯盤難以維持。</p>
+        </div>
+        <div class="card" style="margin:0;border-top:3px solid var(--clr-warn)">
+          <div class="card-title" style="color:var(--clr-warn)">決策延遲成本高</div>
+          <p style="font-size:.87rem;color:var(--clr-muted)">市場波動快，若無自動化通知，進場時機往往已過。</p>
+        </div>
+        <div class="card" style="margin:0;border-top:3px solid var(--clr-primary)">
+          <div class="card-title">通知疲勞問題</div>
+          <p style="font-size:.87rem;color:var(--clr-muted)">同訊號重複通知過多，反而使用者忽略真正重要的訊號。</p>
+        </div>
+      </div>
+
+      <!-- ── 目標 ── -->
+      <h2 id="goals">§3 產品目標</h2>
+      <h3>業務目標</h3>
+      <ul style="padding-left:20px;margin-bottom:16px;font-size:.9rem;line-height:2">
+        <li>降低手動盯盤時間</li>
+        <li>在價格進入可行動區間時即時提醒</li>
+      </ul>
+      <h3>成功指標（初版）</h3>
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th>指標</th><th>目標值</th></tr></thead>
+          <tbody>
+            <tr><td>通知延遲</td><td>觸發後 <strong>60 秒內</strong>送達（P95）</td></tr>
+            <tr><td>通知準確率</td><td><strong>&gt; 99%</strong>（非資料源中斷情況）</td></tr>
+            <tr><td>重複通知控制</td><td>相同訊號 <strong>5 分鐘內</strong>不重複發送</td></tr>
+          </tbody>
+        </table>
+      </div>
+
+      <!-- ── 使用者 ── -->
+      <h2 id="users">§4 目標使用者</h2>
+      <ul style="padding-left:20px;font-size:.9rem;line-height:2">
+        <li><strong>個人投資者</strong>（優先）— 主線使用情境</li>
+        <li>小型投資團隊（後續擴展）— 群組通知模式</li>
+      </ul>
+
+      <!-- ── 範圍 ── -->
+      <h2 id="scope">§5 產品範圍</h2>
+      <div class="doc-grid" style="grid-template-columns:1fr 1fr 1fr;margin-bottom:0">
+        <div class="card" style="margin:0;border-top:3px solid var(--clr-success)">
+          <div class="card-title" style="color:var(--clr-success)">In Scope — V0</div>
+          <ul style="font-size:.83rem;padding-left:16px;line-height:2;color:var(--clr-muted)">
+            <li>監控清單維護</li>
+            <li>每分鐘行情輪詢</li>
+            <li>合理價/便宜價訊號判斷</li>
+            <li>5 分鐘通知冷卻</li>
+            <li>LINE Bot 群組推播</li>
+            <li>SQLite 本機儲存</li>
+            <li>啟動 fail-fast 驗證</li>
+          </ul>
+        </div>
+        <div class="card" style="margin:0;border-top:3px solid var(--clr-primary)">
+          <div class="card-title">In Scope — V1</div>
+          <ul style="font-size:.83rem;padding-left:16px;line-height:2;color:var(--clr-muted)">
+            <li>14:00 每日估值計算</li>
+            <li>三種估值方法</li>
+            <li>方法 enable/disable</li>
+            <li>多方法同分鐘彙總通知</li>
+            <li>開盤監控設定摘要通知</li>
+            <li>雙行情來源（TWSE + Yahoo）</li>
+            <li>LINE 訊息模板化（FR-14）</li>
+          </ul>
+        </div>
+        <div class="card" style="margin:0;border-top:3px solid var(--clr-muted)">
+          <div class="card-title" style="color:var(--clr-muted)">Out of Scope</div>
+          <ul style="font-size:.83rem;padding-left:16px;line-height:2;color:var(--clr-muted)">
+            <li>自動下單</li>
+            <li>多市場（美股/加密）</li>
+            <li>分散式高可用叢集</li>
+          </ul>
+        </div>
+      </div>
+
+      <!-- ── 使用流程 ── -->
+      <h2 id="userflow">§6 使用流程（User Flow）</h2>
+      <ol style="padding-left:20px;font-size:.9rem;line-height:2.2">
+        <li>使用者設定監控股票與手動合理價/便宜價。</li>
+        <li>交易日開盤起始先推播 1 封「當日監控設定摘要」（股票、方法、合理價、便宜價）。</li>
+        <li>系統在交易時段（09:00–13:30）每 1 分鐘抓委賣一價格。</li>
+        <li>若現價低於合理價或便宜價，立即推播 LINE 到指定群組。</li>
+        <li>5 分鐘內同股票同狀態不再推播，且 <code>message.update_time</code> 不更新。</li>
+        <li>每交易日 14:00 執行估值計算並入庫。</li>
+        <li>隔日盤中依各估值方法門檻持續監控並通知。</li>
+      </ol>
+
+      <!-- ── 功能需求 ── -->
+      <h2 id="fr">§7 功能需求（FR）</h2>
+
+      <h3>訊號判斷規則</h3>
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th>status</th><th>觸發條件</th><th>優先序</th></tr></thead>
+          <tbody>
+            <tr><td><span class="tag orange">status=1</span></td><td><code>market_price ≤ fair_price</code>（低於合理價）</td><td>次要</td></tr>
+            <tr><td><span class="tag red">status=2</span></td><td><code>market_price ≤ cheap_price</code>（低於便宜價）</td><td><strong>最高</strong></td></tr>
+          </tbody>
+        </table>
+      </div>
+      <div class="banner info" style="margin-bottom:24px">
+        若同時符合 status=1 與 status=2 → <strong>只發送 status=2</strong>（便宜價優先）。
+        達便宜價必然達合理價，status=2 才是當下最重要訊號。
+      </div>
+
+      <h3>雙行情來源（FR-15）</h3>
+      <div class="card">
+        <p style="font-size:.9rem;color:var(--clr-muted);margin-bottom:12px">
+          行情 <code>price</code> 代表<strong>委賣一</strong>（最佳委賣價）— 當下可立即買入的最低價格。
+          成交價（<code>z</code>）在兩筆成交之間短暫閃爍為 <code>'-'</code>，委賣一維持連續更新，更能反映現況。
+        </p>
+        <div class="table-wrap" style="margin:0">
+          <table>
+            <thead><tr><th>來源</th><th>端點</th><th>欄位</th><th>備註</th></tr></thead>
+            <tbody>
+              <tr>
+                <td><span class="tag blue">主 TWSE</span></td>
+                <td><code>mis.twse.com.tw getStockInfo.jsp</code></td>
+                <td><code>a</code> 欄第一值</td>
+                <td>委賣一；<code>tlong</code> 毫秒時間戳；含 <code>_price_cache</code> 補全機制</td>
+              </tr>
+              <tr>
+                <td><span class="tag green">副 Yahoo</span></td>
+                <td><code>tw.stock.yahoo.com/quote/{stock_no}</code></td>
+                <td>HTML 委賣一</td>
+                <td>HTML scraping；盤後 fallback <code>regularMarketPrice</code>；失敗不中斷主流程</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+      <h3>Freshness-First 取捨規則</h3>
+      <ul class="rule-list">
+        <li><span class="rule-id">Rule 1</span><span class="rule-text">TWSE cache 有值且 Yahoo <code>regularMarketTime</code> ≤ TWSE <code>tick_at</code> → 採 TWSE</span></li>
+        <li><span class="rule-id">Rule 2</span><span class="rule-text">Yahoo <code>regularMarketTime</code> 嚴格 &gt; TWSE <code>tick_at</code> → 採 Yahoo</span></li>
+        <li><span class="rule-id">Rule 3</span><span class="rule-text">TWSE cache 空（冷啟動第一個輪詢）→ 直接採 Yahoo</span></li>
+        <li><span class="rule-id">Rule 4</span><span class="rule-text">兩者均無法取得有效價格 → 標記 <code>STALE_QUOTE</code>，跳過通知</span></li>
+      </ul>
+
+      <h3>通知冷卻（FR-05）</h3>
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th>項目</th><th>規格</th></tr></thead>
+          <tbody>
+            <tr><td>冷卻鍵（維度）</td><td><code>stock_no + stock_status</code></td></tr>
+            <tr><td>冷卻時間</td><td>300 秒（5 分鐘）</td></tr>
+            <tr><td>冷卻中行為</td><td>不發送、不更新 <code>message.update_time</code></td></tr>
+            <tr><td>同分鐘冪等鍵</td><td><code>stock_no | minute_bucket</code>（不含 stock_status）</td></tr>
+          </tbody>
+        </table>
+      </div>
+
+      <h3>每日估值結算（FR-07 / FR-08）</h3>
+      <div class="method-grid">
+        <div class="method-card">
+          <h4>艾蜜莉 複合法</h4>
+          <div class="method-id">emily_composite_v1</div>
+          <p>股利法、歷年股價法、本益比法、淨值比法取平均，再乘安全邊際係數（0.9）。</p>
+        </div>
+        <div class="method-card">
+          <h4>股海老牛 殖利率法</h4>
+          <div class="method-id">oldbull_dividend_yield_v1</div>
+          <p>平均股利 ÷ 5% = 合理價；平均股利 ÷ 6% = 便宜價。</p>
+        </div>
+        <div class="method-card">
+          <h4>雷司紀 四法融合</h4>
+          <div class="method-id">raysky_blended_margin_v1</div>
+          <p>PE、股利、PB、NCAV 取中位數或加權融合，套安全邊際係數（0.9）。</p>
+        </div>
+      </div>
+
+      <h3>開盤摘要通知（FR-13）</h3>
+      <div class="card">
+        <ul style="font-size:.9rem;padding-left:20px;line-height:2;color:var(--clr-muted)">
+          <li>觸發時機：每交易日<strong>第一個可交易分鐘</strong>（通常 09:00）</li>
+          <li>內容：逐股票逐方法 <code>fair_price / cheap_price</code></li>
+          <li>股票格式：<code>中文名(代號)</code>（例：<code>台積電(2330)</code>）</li>
+          <li>無快照方法顯示 <code>N/A</code></li>
+          <li>同一交易日僅允許發送一次，服務重啟不得重複推送</li>
+          <li>必須使用模板渲染（FR-14），不得硬編碼</li>
+        </ul>
+      </div>
+
+      <h3>補償機制（FR-06）</h3>
+      <div class="banner warn">
+        <strong>LINE 發送成功 + DB 落盤失敗</strong>時，寫入 <code>pending_delivery_ledger</code>，
+        補償完成前視同已通知，避免重複推送同分鐘訊號。
+      </div>
+
+      <h3>所有功能需求清單</h3>
+      <ul class="rule-list">
+        <li><span class="rule-id">FR-01</span><span class="rule-text">監控清單管理：新增/停用/刪除，含 stock_no / manual_fair_price / manual_cheap_price / enabled。</span></li>
+        <li><span class="rule-id">FR-02</span><span class="rule-text">盤中每 60 秒輪詢，交易時段限定；失敗重試 MAX_RETRY_COUNT=3；stale/衝突時跳過且不補發。</span></li>
+        <li><span class="rule-id">FR-03</span><span class="rule-text">訊號判斷：status=1（≤fair）/ status=2（≤cheap）；同時命中僅發 2。</span></li>
+        <li><span class="rule-id">FR-05</span><span class="rule-text">通知冷卻：stock_no + stock_status 維度，5 分鐘內不發送也不更新時間。</span></li>
+        <li><span class="rule-id">FR-06</span><span class="rule-text">message 表唯一鍵 UNIQUE(stock_no, minute_bucket)；LINE 失敗僅寫 log；LINE 成功 DB 失敗寫補償佇列。</span></li>
+        <li><span class="rule-id">FR-07</span><span class="rule-text">每交易日 14:00 估值結算，失敗不覆蓋舊資料；寫入 fair/cheap/方法/版本/交易日。</span></li>
+        <li><span class="rule-id">FR-08</span><span class="rule-text">多方法估值：全域 enable/disable；同方法名稱同時僅一個啟用版本；多方法命中附方法清單。</span></li>
+        <li><span class="rule-id">FR-09</span><span class="rule-text">啟動前驗證 LINE_CHANNEL_ACCESS_TOKEN / LINE_TO_GROUP_ID；無效即 fail-fast；不得輸出 token 明文。</span></li>
+        <li><span class="rule-id">FR-10</span><span class="rule-text">重啟後先載入最近通知狀態再輪詢；補償中訊號可續跑，不重複推送同分鐘。</span></li>
+        <li><span class="rule-id">FR-11</span><span class="rule-text">三估值方法定義：emily_composite_v1 / oldbull_dividend_yield_v1 / raysky_blended_margin_v1。</span></li>
+        <li><span class="rule-id">FR-12</span><span class="rule-text">估值結果三態：SUCCESS / SKIP_INSUFFICIENT_DATA / SKIP_PROVIDER_ERROR；單方法失敗不阻斷整體任務。</span></li>
+        <li><span class="rule-id">FR-13</span><span class="rule-text">開盤監控設定摘要通知：每交易日首個可交易分鐘發送一次，內含各股各方法 fair/cheap。</span></li>
+        <li><span class="rule-id">FR-14</span><span class="rule-text">LINE 訊息全模板化：所有對外訊息皆由 template_key + context 渲染，不得硬編碼文案。</span></li>
+        <li><span class="rule-id">FR-15</span><span class="rule-text">雙行情來源：TWSE MIS 主（委賣一 a 欄）+ Yahoo Finance HTML 副（委賣一 scraping）。</span></li>
+        <li><span class="rule-id">FR-16</span><span class="rule-text">MarketDataPort 介面可注入替換；CompositeMarketDataProvider 實作 Freshness-First 聚合。</span></li>
+      </ul>
+
+      <!-- ── NFR ── -->
+      <h2 id="nfr">§8 非功能需求（NFR）</h2>
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th>類別</th><th>規格</th></tr></thead>
+          <tbody>
+            <tr><td>時區</td><td>Asia/Taipei（不接受 fallback UTC）</td></tr>
+            <tr><td>穩定性</td><td>資料源短暫異常不應造成服務終止</td></tr>
+            <tr><td>可追蹤性</td><td>所有通知與錯誤有 DB 日誌，token 不得明文出現</td></tr>
+            <tr><td>可維護性</td><td>估值模型可插拔（版本化），換方法不改 Application layer</td></tr>
+            <tr><td>架構</td><td>Clean Architecture（Domain / Application / Adapters / Interface 分層）</td></tr>
+          </tbody>
+        </table>
+      </div>
+
+      <!-- ── 資料來源 ── -->
+      <h2 id="data-sources">§9 外部服務與資料來源策略</h2>
+      <h3>LINE Messaging API</h3>
+      <ul style="font-size:.9rem;padding-left:20px;line-height:2;margin-bottom:16px">
+        <li>使用 LINE Messaging API（LINE Notify 已終止）</li>
+        <li>需建立 Official Account 與 Channel Access Token</li>
+        <li>環境變數：<code>LINE_CHANNEL_ACCESS_TOKEN</code>、<code>LINE_TO_GROUP_ID</code></li>
+      </ul>
+      <h3>估值資料來源</h3>
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th>資料類型</th><th>主來源</th><th>備援來源</th><th>用途</th></tr></thead>
+          <tbody>
+            <tr><td>歷史股價 / 盤中報價</td><td>TWSE / TPEx 公開行情</td><td>Yahoo Finance 台股</td><td>歷年股價法、監控觸發</td></tr>
+            <tr><td>股利（年/季）</td><td>公開資訊觀測站（MOPS）</td><td>TWSE 公開彙整</td><td>股利法、殖利率法</td></tr>
+            <tr><td>EPS</td><td>MOPS 財報</td><td>TWSE 財報彙整頁</td><td>PE 法</td></tr>
+            <tr><td>每股淨值</td><td>MOPS 財報</td><td>TWSE 財報彙整頁</td><td>PB 法</td></tr>
+            <tr><td>流動資產 / 總負債</td><td>MOPS 資產負債表</td><td>TWSE 公開欄位</td><td>NCAV 法</td></tr>
+          </tbody>
+        </table>
+      </div>
+
+      <!-- ── 資料結構 ── -->
+      <h2 id="data-model">§10 資料結構（摘要）</h2>
+      <div class="doc-grid" style="grid-template-columns:repeat(auto-fit,minmax(180px,1fr));margin-bottom:0">
+        <div class="card" style="margin:0">
+          <div class="card-title">watchlist</div>
+          <p style="font-size:.8rem;color:var(--clr-muted)">監控股票清單；<code>manual_cheap_price ≤ manual_fair_price</code></p>
+        </div>
+        <div class="card" style="margin:0">
+          <div class="card-title">valuation_methods</div>
+          <p style="font-size:.8rem;color:var(--clr-muted)">估值方法版本表；同名稱同時僅一個 enabled=1</p>
+        </div>
+        <div class="card" style="margin:0">
+          <div class="card-title">valuation_snapshots</div>
+          <p style="font-size:.8rem;color:var(--clr-muted)">每日估值結果；唯一鍵含 method_version</p>
+        </div>
+        <div class="card" style="margin:0">
+          <div class="card-title">message</div>
+          <p style="font-size:.8rem;color:var(--clr-muted)">通知紀錄；UNIQUE(stock_no, minute_bucket)；冷卻查詢依賴</p>
+        </div>
+        <div class="card" style="margin:0">
+          <div class="card-title">pending_delivery_ledger</div>
+          <p style="font-size:.8rem;color:var(--clr-muted)">補償佇列；status: PENDING / RECONCILED / FAILED</p>
+        </div>
+        <div class="card" style="margin:0">
+          <div class="card-title">system_logs</div>
+          <p style="font-size:.8rem;color:var(--clr-muted)">系統日誌；level: INFO / WARN / ERROR</p>
+        </div>
+      </div>
+
+      <!-- ── Architecture ── -->
+      <h2 id="architecture">§11 Clean Architecture 建議設計</h2>
+      <div class="card">
+        <div class="table-wrap" style="margin:0">
+          <table>
+            <thead><tr><th>層次</th><th>元件</th></tr></thead>
+            <tbody>
+              <tr>
+                <td><span class="tag blue">Domain</span></td>
+                <td>Entities: Stock, PriceSignal, ValuationResult, MessageRecord<br>
+                    Policies: SignalPolicy, CooldownPolicy, PriorityPolicy</td>
+              </tr>
+              <tr>
+                <td><span class="tag green">Application</span></td>
+                <td>CheckIntradayPriceUseCase, RunDailyValuationUseCase, ComposeMinuteDigestUseCase<br>
+                    Ports: MarketDataPort, LineMessagingPort, MessageRepositoryPort, ValuationRepositoryPort</td>
+              </tr>
+              <tr>
+                <td><span class="tag orange">Adapters</span></td>
+                <td>TwseRealtimeMarketDataProvider (主行情), YahooFinanceMarketDataProvider (副行情),
+                    CompositeMarketDataProvider (Freshness-First 聚合),
+                    LineMessagingApiAdapter, SqliteMessageRepository, SqliteValuationRepository</td>
+              </tr>
+              <tr>
+                <td><span class="tag gray">Interface</span></td>
+                <td>CLI / Config 管理, Health Check, Logger, Scheduler (60s / 14:00)</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+      <!-- ── UAT ── -->
+      <h2 id="uat">§12 UAT 驗收標準（15 條）</h2>
+      <ul class="rule-list">
+        <li><span class="rule-id">UAT-01</span><span class="rule-text">設定 2330 fair=1500, cheap=1000；當價格 ≤ 1500 或 ≤ 1000 時，LINE 在 60 秒內收到群組通知。</span></li>
+        <li><span class="rule-id">UAT-02</span><span class="rule-text">相同 2330 + stock_status 5 分鐘內不重複推送，<code>message.update_time</code> 不更新。</span></li>
+        <li><span class="rule-id">UAT-03</span><span class="rule-text"><code>message</code> 表可查到 stock_no / message / stock_status / update_time。</span></li>
+        <li><span class="rule-id">UAT-04</span><span class="rule-text">非交易時段（含週末與假日）不進行盤中輪詢。</span></li>
+        <li><span class="rule-id">UAT-05</span><span class="rule-text">每交易日 14:00 估值任務執行一次；失敗不覆蓋舊估值。</span></li>
+        <li><span class="rule-id">UAT-06</span><span class="rule-text">同一分鐘多股票/多方法同時觸發，系統只發 1 封彙總訊息，內含所有命中方法資訊。</span></li>
+        <li><span class="rule-id">UAT-07</span><span class="rule-text">同一股票同分鐘同時符合 status=1 與 status=2，僅以 status=2 呈現與通知。</span></li>
+        <li><span class="rule-id">UAT-08</span><span class="rule-text">「LINE 成功 + DB 落盤失敗」時，補償流程可回補；補償期間不重複發送同分鐘訊息。</span></li>
+        <li><span class="rule-id">UAT-09</span><span class="rule-text">缺少或誤設 LINE_CHANNEL_ACCESS_TOKEN / LINE_TO_GROUP_ID，系統啟動 fail-fast 並輸出明確錯誤原因。</span></li>
+        <li><span class="rule-id">UAT-10</span><span class="rule-text">服務重啟後，已送出的同分鐘訊號不得再次發送；補償中訊號可續跑。</span></li>
+        <li><span class="rule-id">UAT-11</span><span class="rule-text">行情 stale 或來源衝突，該分鐘不得通知，需有 STALE_QUOTE 或 DATA_CONFLICT 的 WARN 日誌。</span></li>
+        <li><span class="rule-id">UAT-12</span><span class="rule-text">每交易日 14:00 對三方法逐股估值；資料不足方法 skip + log，不覆蓋舊快照。</span></li>
+        <li><span class="rule-id">UAT-13</span><span class="rule-text">每交易日開盤第一個分鐘先發「監控設定摘要」；同一交易日不重複；由模板渲染。</span></li>
+        <li><span class="rule-id">UAT-14</span><span class="rule-text">所有 LINE 訊息皆透過 template_key + context 渲染；程式碼中不得直接硬編碼最終文案。</span></li>
+        <li><span class="rule-id">UAT-15</span><span class="rule-text">雙行情來源 Freshness-First：Yahoo 失敗不中斷主流程；兩者均無時 STALE_QUOTE。</span></li>
+      </ul>
+
+      <!-- ── Risks ── -->
+      <h2 id="risks">§13 風險與因應</h2>
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th>風險</th><th>因應措施</th></tr></thead>
+          <tbody>
+            <tr><td>資料源中斷</td><td>加重試（MAX_RETRY=3）、Freshness-First fallback、WARN 日誌</td></tr>
+            <tr><td>通知與落盤不一致</td><td>補償佇列 + 回補重試，避免重複告警與狀態遺失</td></tr>
+            <tr><td>行事曆資料延遲</td><td>以「無新大盤資料」作次級判斷避免誤開盤</td></tr>
+            <tr><td>設定錯誤</td><td>啟動前驗證 + fail-fast，明確錯誤訊息</td></tr>
+          </tbody>
+        </table>
+      </div>
+
+      <!-- ── Milestones ── -->
+      <h2 id="milestones">§14 里程碑</h2>
+      <ul class="rule-list">
+        <li><span class="rule-id">M1</span><span class="rule-text">（2–3 天）V0 可用：手動 fair/cheap 監控 + LINE 通知 + cooldown。</span></li>
+        <li><span class="rule-id">M2</span><span class="rule-text">（2–4 天）V1 估值快照入庫 + 多方法 fair/cheap 監控。</span></li>
+        <li><span class="rule-id">M3</span><span class="rule-text">（1–2 天）補齊監控報表與操作文件。</span></li>
+      </ul>
+
+      <footer>
+        <p>PDD v1.0 &nbsp;·&nbsp; 2026-04-14 &nbsp;·&nbsp; 
+           <a href="edd.html">查看 EDD →</a> &nbsp;·&nbsp;
+           <a href="https://github.com/ibalasite/stock_monitor" target="_blank" rel="noopener">GitHub</a>
+        </p>
+      </footer>
+
+    </div><!-- /content-inner -->
+  </main>
+</div>
+
+<script>
+document.addEventListener('DOMContentLoaded', () => {
+  const links = Array.from(document.querySelectorAll('.sidebar a[href^="#"]'));
+  const observer = new IntersectionObserver(entries => {
+    entries.forEach(e => {
+      if (e.isIntersecting) {
+        links.forEach(l => l.classList.remove('active'));
+        const match = links.find(l => l.getAttribute('href') === '#' + e.target.id);
+        if (match) match.classList.add('active');
+      }
+    });
+  }, { rootMargin: '-15% 0px -75% 0px' });
+  document.querySelectorAll('[id]').forEach(el => observer.observe(el));
+});
+</script>
+</body>
+</html>

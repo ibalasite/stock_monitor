@@ -1,0 +1,495 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>EDD — 台股監控系統工程設計文件</title>
+  <link rel="stylesheet" href="site.css">
+</head>
+<body>
+
+<!-- Top Nav -->
+<header class="top-nav">
+  <div class="brand">台股<span>監控</span>系統</div>
+  <nav>
+    <a href="index.html">首頁</a>
+    <a href="pdd.html">產品規格 (PDD)</a>
+    <a href="edd.html" class="active">工程設計 (EDD)</a>
+  </nav>
+  <div class="spacer"></div>
+  <span class="badge">EDD v0.9</span>
+</header>
+
+<!-- Page -->
+<div class="page-wrapper">
+
+  <!-- Sidebar TOC -->
+  <aside class="sidebar">
+    <div class="sidebar-title">目錄</div>
+    <ul>
+      <li><a href="#overview">文件概要</a></li>
+      <li><a href="#business-rules">關鍵業務規則</a></li>
+      <li><a href="#architecture">架構總覽</a></li>
+      <li><a href="#dual-adapter">雙行情來源 Adapter</a></li>
+      <li><a href="#intraday-flow">盤中每分鐘流程</a></li>
+      <li><a href="#valuation-flow">日結估值流程</a></li>
+      <li><a href="#trading-session">交易日判斷</a></li>
+      <li><a href="#data-model">資料模型（SQLite）</a></li>
+      <li><a href="#deployment">部署架構</a></li>
+      <li><a href="#line-config">LINE 設定</a></li>
+      <li><a href="#phases">Phase 規劃</a></li>
+      <li><a href="#code-review">Code Review 禁止清單</a></li>
+    </ul>
+  </aside>
+
+  <!-- Main -->
+  <main class="main-content">
+    <div class="content-inner">
+
+      <!-- Title -->
+      <h1 id="overview">工程設計文件（EDD）</h1>
+      <p class="section-intro">
+        版本 v0.9 &nbsp;·&nbsp; 2026-04-14 &nbsp;·&nbsp; 對齊 PDD v1.0<br>
+        定義工程實作細節：架構分層、Adapter 規格、資料模型、流程設計與 Phase 規劃。
+      </p>
+
+      <div class="banner info">
+        <strong>規格優先順序（衝突時依序採用）：</strong>
+        1. feature + tests（可執行規格）→
+        2. EDD →
+        3. PDD →
+        4. USER_STORY_ACCEPTANCE_CRITERIA
+      </div>
+
+      <!-- ── 業務規則 ── -->
+      <h2 id="business-rules">§2 關鍵業務規則（定版）</h2>
+
+      <h3>訊號狀態定義</h3>
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th>status</th><th>語意</th><th>觸發條件</th></tr></thead>
+          <tbody>
+            <tr><td><span class="tag orange">1</span></td><td>低於合理價（below fair）</td><td><code>market_price ≤ fair_price</code></td></tr>
+            <tr><td><span class="tag red">2</span></td><td>低於便宜價（below cheap）</td><td><code>market_price ≤ cheap_price</code></td></tr>
+          </tbody>
+        </table>
+      </div>
+      <div class="banner info">
+        若同時符合 status=1 與 2 → <strong>只發 status=2</strong>（達便宜價必然達合理價，2 才是當下重點）。
+      </div>
+
+      <h3>多方法命中規則（§2.3）</h3>
+      <ul style="font-size:.9rem;padding-left:20px;line-height:2.2;margin-bottom:16px">
+        <li>同分鐘同股票，多方法都符合 status=1 → 只產生一個股票層級訊號（status=1），訊息附命中方法清單。</li>
+        <li>同分鐘同股票，有方法命中 status=1 且另有方法命中 status=2 → 統一產生 status=2，附完整命中方法清單。</li>
+      </ul>
+
+      <h3>不可變常數</h3>
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th>項目</th><th>值</th></tr></thead>
+          <tbody>
+            <tr><td>時區</td><td><code>Asia/Taipei</code>（不接受 fallback UTC）</td></tr>
+            <tr><td>輪詢間隔</td><td>60 秒</td></tr>
+            <tr><td>冷卻秒數</td><td>300 秒（<code>stock_no + stock_status</code>）</td></tr>
+            <tr><td>交易時段</td><td><code>09:00–13:30</code>（含）</td></tr>
+            <tr><td>開盤檢查起始</td><td><code>08:45</code></td></tr>
+            <tr><td>報價新鮮度門檻</td><td><code>STALE_THRESHOLD_SEC=90</code></td></tr>
+            <tr><td>行情重試上限</td><td><code>MAX_RETRY_COUNT=3</code></td></tr>
+            <tr><td>每分鐘 LINE 訊息數</td><td>最多 1 封（彙總）</td></tr>
+            <tr><td>日結估值時間</td><td><code>14:00</code></td></tr>
+            <tr><td>冪等鍵組成</td><td><code>stock_no + minute_bucket</code>（不含 stock_status）</td></tr>
+          </tbody>
+        </table>
+      </div>
+
+      <!-- ── 架構 ── -->
+      <h2 id="architecture">§3 架構總覽（Clean Architecture）</h2>
+      <div class="diagram-section">
+        <img class="diagram-img" src="architecture/images/02-clean-architecture.png" alt="Clean Architecture 分層圖">
+        <p class="diagram-label">圖 2 — Clean Architecture：Domain / Application / Adapters / Interface 四層分離</p>
+      </div>
+
+      <div class="card">
+        <pre style="margin:0;font-size:.8rem"><code>+-------------------- Interface Layer --------------------+
+| Scheduler(1m/14:00) | CLI | Config | Logger            |
++--------------------------+------------------------------+
+                           v
++-------------------- Application Layer ------------------+
+| CheckIntradayPriceUseCase                               |
+| RunDailyValuationUseCase                                |
+| ComposeMinuteDigestUseCase                              |
+| RenderLineMessageUseCase                                |
++--------------------------+------------------------------+
+                           v  (Ports / Interfaces)
++---------------------- Domain Layer ---------------------+
+| Entities: Stock, SignalEvent, ValuationSnapshot         |
+| Policies: SignalPolicy, CooldownPolicy, PriorityPolicy  |
++--------------------------+------------------------------+
+                           v
++------------------ Infrastructure Layer -----------------+
+| TwseRealtimeMarketDataProvider  (主行情 + _price_cache) |
+| YahooFinanceMarketDataProvider  (副行情 HTML scraping)  |
+| CompositeMarketDataProvider     (Freshness-First 聚合)  |
+| LineMessagingApiAdapter                                 |
+| LineTemplateRenderer / TemplateRepository               |
+| SQLite: watchlist / valuation / message / system_logs   |
++---------------------------------------------------------+</code></pre>
+      </div>
+
+      <!-- ── 雙行情 ── -->
+      <h2 id="dual-adapter">§3.3 雙行情來源 Adapter 規格</h2>
+      <div class="diagram-section">
+        <img class="diagram-img" src="architecture/images/05-market-data-adapter.png" alt="雙行情來源 Adapter — Freshness-First">
+        <p class="diagram-label">圖 5 — Freshness-First 取捨流程：TWSE cache vs. Yahoo tick_at 比較</p>
+      </div>
+
+      <h3>TwseRealtimeMarketDataProvider</h3>
+      <div class="card">
+        <div class="table-wrap" style="margin:0">
+          <table>
+            <thead><tr><th>欄位</th><th>說明</th></tr></thead>
+            <tbody>
+              <tr><td>端點</td><td><code>https://mis.twse.com.tw/stock/api/getStockInfo.jsp</code></td></tr>
+              <tr><td><code>a</code> 欄</td><td>委賣五檔（<code>_</code> 分隔）；<code>a.split('_')[0]</code> = 委賣一 = 系統 price</td></tr>
+              <tr><td><code>tlong</code></td><td>毫秒時間戳 → <code>tick_at = tlong // 1000</code></td></tr>
+              <tr><td><code>_price_cache</code></td><td><code>a</code> 有值時更新；<code>a</code> 為空或 <code>-</code> 時讀取 cache</td></tr>
+              <tr><td>冷啟動 seed</td><td><code>cache</code> 空且 <code>a</code> 無效時，以 <code>y</code>（昨收）種子填充</td></tr>
+              <tr><td><code>_exchange_cache</code></td><td>由 <code>ex</code> 欄更新（<code>tse</code> 或 <code>otc</code>）</td></tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+      <h3>YahooFinanceMarketDataProvider</h3>
+      <div class="card">
+        <div class="table-wrap" style="margin:0">
+          <table>
+            <thead><tr><th>欄位</th><th>說明</th></tr></thead>
+            <tbody>
+              <tr><td>端點</td><td><code>https://tw.stock.yahoo.com/quote/{stock_no}</code></td></tr>
+              <tr><td>price</td><td>HTML 委賣價區塊委賣一（去逗號）；盤後 fallback <code>regularMarketPrice</code></td></tr>
+              <tr><td>tick_at</td><td><code>"regularMarketTime":XXXX</code>（unix seconds）</td></tr>
+              <tr><td>HTTP 失敗</td><td>WARN log，回傳空 dict，不中斷主流程（CR-ADP-01）</td></tr>
+              <tr><td>exchange_map</td><td>接受但不做 URL 建構用途（介面相容性）</td></tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+      <h3>CompositeMarketDataProvider（Freshness-First）</h3>
+      <ul class="rule-list">
+        <li><span class="rule-id">Rule 1</span><span class="rule-text">twse && yahoo 均有值 → <code>tick_at</code> 較新者勝；相等時以 twse 為準。</span></li>
+        <li><span class="rule-id">Rule 2</span><span class="rule-text">僅 twse 有值 → 使用 twse。</span></li>
+        <li><span class="rule-id">Rule 3</span><span class="rule-text">僅 yahoo 有值（twse cache 空，冷啟動）→ 使用 yahoo。</span></li>
+        <li><span class="rule-id">Rule 4</span><span class="rule-text">兩者皆無 → 不加入結果（觸發 STALE_QUOTE）。</span></li>
+      </ul>
+      <div class="banner warn">
+        <strong>CR-ADP-02</strong>：CompositeMarketDataProvider 禁止直接回傳任一來源字典而不做 Freshness-First 比較。
+      </div>
+
+      <!-- ── 盤中流程 ── -->
+      <h2 id="intraday-flow">§4.1 盤中每分鐘流程</h2>
+      <div class="diagram-section">
+        <img class="diagram-img" src="architecture/images/03-intraday-flow.png" alt="盤中每分鐘通知流程">
+        <p class="diagram-label">圖 3 — 盤中流程全圖：交易判斷 → 行情抓取 → 訊號評估 → 冷卻過濾 → 彙總發送 → 落盤</p>
+      </div>
+
+      <h3>流程步驟</h3>
+      <ol style="font-size:.9rem;padding-left:20px;line-height:2.2;margin-bottom:16px">
+        <li>Tick every 60s → 判斷是否交易時段</li>
+        <li>當日開盤摘要是否已發送 → 否則先發一封開盤摘要</li>
+        <li>載入啟用的 watchlist → 抓取所有股票委賣一報價</li>
+        <li>對每股票逐方法評估訊號（status=1 / status=2）</li>
+        <li>套用優先序（2 &gt; 1）和冷卻過濾（<code>stock_no + stock_status</code>）</li>
+        <li>若無可發事件 → 結束；否則建立 render context</li>
+        <li>呼叫 <code>render_line_template_message(template_key, context)</code></li>
+        <li>發送 LINE（每分鐘最多 1 封彙總）</li>
+        <li>發送成功 → DB transaction 一次提交所有 message rows</li>
+        <li>發送失敗 → 只寫 system_logs；DB 失敗 → 寫 pending_delivery_ledger</li>
+      </ol>
+
+      <!-- ── 估值流程 ── -->
+      <h2 id="valuation-flow">§4.2 日結估值流程</h2>
+      <div class="diagram-section">
+        <img class="diagram-img" src="architecture/images/04-valuation-flow.png" alt="每日 14:00 估值流程">
+        <p class="diagram-label">圖 4 — 每日 14:00 估值：逐股逐方法計算，SUCCESS 寫入快照，SKIP_* 保留舊值並記日誌</p>
+      </div>
+
+      <h3>估值方法執行狀態</h3>
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th>狀態</th><th>說明</th><th>動作</th></tr></thead>
+          <tbody>
+            <tr><td><span class="tag green">SUCCESS</span></td><td>資料完整，計算成功</td><td>Upsert valuation_snapshots</td></tr>
+            <tr><td><span class="tag orange">SKIP_INSUFFICIENT_DATA</span></td><td>資料不足（缺 EPS / 股利等）</td><td>不覆蓋舊快照，寫 WARN log</td></tr>
+            <tr><td><span class="tag red">SKIP_PROVIDER_ERROR</span></td><td>來源 API 失敗</td><td>不覆蓋舊快照，寫 ERROR log</td></tr>
+          </tbody>
+        </table>
+      </div>
+      <div class="banner info">
+        單一方法失敗不阻斷整體任務 — 其餘方法需持續執行完畢。
+      </div>
+
+      <!-- ── 交易日 ── -->
+      <h2 id="trading-session">§5 交易日與開盤判斷</h2>
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th>規則</th><th>說明</th></tr></thead>
+          <tbody>
+            <tr><td>時區</td><td>Asia/Taipei（全系統統一）</td></tr>
+            <tr><td>週六/週日</td><td>非交易日，不進入輪詢</td></tr>
+            <tr><td>台灣假日</td><td>參考政府行事曆；09:00 後大盤無當日新資料視為不開市</td></tr>
+            <tr><td>08:45</td><td>開始檢查大盤資料來源是否有當日新資料</td></tr>
+            <tr><td>資料源故障</td><td>非休市情況需寫 system_logs，避免靜默誤判</td></tr>
+          </tbody>
+        </table>
+      </div>
+
+      <!-- ── 資料模型 ── -->
+      <h2 id="data-model">§6 資料模型（SQLite）</h2>
+      <div class="diagram-section">
+        <img class="diagram-img" src="architecture/images/06-data-model.png" alt="資料模型 ER 圖">
+        <p class="diagram-label">圖 6a — 資料模型：watchlist / valuation_methods / valuation_snapshots / message / pending_delivery_ledger</p>
+      </div>
+      <div class="diagram-section">
+        <img class="diagram-img" src="architecture/images/06-data-model-2.png" alt="補償機制流程圖">
+        <p class="diagram-label">圖 6b — 補償機制：LINE 成功 + DB 失敗時寫入 pending_delivery_ledger，補償完成前視同已通知</p>
+      </div>
+
+      <h3>watchlist</h3>
+      <pre><code>CREATE TABLE IF NOT EXISTS watchlist (
+  stock_no TEXT PRIMARY KEY,                     -- ex: '2330'
+  manual_fair_price  NUMERIC NOT NULL CHECK (manual_fair_price > 0),
+  manual_cheap_price NUMERIC NOT NULL CHECK (manual_cheap_price > 0),
+  enabled INTEGER NOT NULL DEFAULT 1 CHECK (enabled IN (0,1)),
+  created_at INTEGER NOT NULL,
+  updated_at INTEGER NOT NULL,
+  CHECK (manual_cheap_price <= manual_fair_price)  -- 業務約束
+);</code></pre>
+
+      <h3>valuation_methods</h3>
+      <pre><code>CREATE TABLE IF NOT EXISTS valuation_methods (
+  method_name    TEXT NOT NULL,
+  method_version TEXT NOT NULL,
+  enabled INTEGER NOT NULL DEFAULT 1 CHECK (enabled IN (0,1)),
+  created_at INTEGER NOT NULL,
+  updated_at INTEGER NOT NULL,
+  PRIMARY KEY (method_name, method_version)
+);
+-- 同名稱同時僅一個 enabled=1
+CREATE UNIQUE INDEX IF NOT EXISTS ux_method_single_enabled
+ON valuation_methods(method_name) WHERE enabled = 1;</code></pre>
+
+      <h3>valuation_snapshots</h3>
+      <pre><code>CREATE TABLE IF NOT EXISTS valuation_snapshots (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  stock_no, trade_date, method_name, method_version,
+  fair_price  NUMERIC NOT NULL CHECK (fair_price > 0),
+  cheap_price NUMERIC NOT NULL CHECK (cheap_price > 0),
+  created_at  INTEGER NOT NULL,
+  CHECK (cheap_price <= fair_price),
+  UNIQUE(stock_no, trade_date, method_name, method_version)
+);</code></pre>
+
+      <h3>message</h3>
+      <pre><code>CREATE TABLE IF NOT EXISTS message (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  stock_no     TEXT    NOT NULL,
+  message      TEXT    NOT NULL,
+  stock_status INTEGER NOT NULL CHECK (stock_status IN (1,2)),
+  methods_hit  TEXT    NOT NULL  -- JSON array, ex: ["emily_composite_v1"]
+    CHECK (json_valid(methods_hit) AND json_type(methods_hit) = 'array'),
+  minute_bucket TEXT  NOT NULL   -- YYYY-MM-DD HH:mm (Asia/Taipei)
+    CHECK (length(minute_bucket) = 16 AND ...),
+  update_time  INTEGER NOT NULL,
+  UNIQUE(stock_no, minute_bucket)  -- 同分鐘冪等鍵
+);
+CREATE INDEX IF NOT EXISTS idx_message_cooldown
+ON message(stock_no, stock_status, update_time DESC);</code></pre>
+
+      <h3>pending_delivery_ledger</h3>
+      <pre><code>CREATE TABLE IF NOT EXISTS pending_delivery_ledger (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  minute_bucket TEXT NOT NULL,
+  payload_json  TEXT NOT NULL CHECK (json_valid(payload_json)),
+  status TEXT NOT NULL CHECK (status IN ('PENDING','RECONCILED','FAILED')),
+  retry_count   INTEGER NOT NULL DEFAULT 0 CHECK (retry_count >= 0),
+  last_error    TEXT,
+  created_at    INTEGER NOT NULL,
+  updated_at    INTEGER NOT NULL
+);</code></pre>
+
+      <!-- ── 部署 ── -->
+      <h2 id="deployment">§ 部署架構</h2>
+      <div class="diagram-section">
+        <img class="diagram-img" src="architecture/images/07-deployment.png" alt="Windows 部署拓撲">
+        <p class="diagram-label">圖 7a — Windows 部署拓撲：Task Scheduler + Python Daemon + SQLite + LINE API</p>
+      </div>
+      <div class="diagram-section">
+        <img class="diagram-img" src="architecture/images/07-deployment-2.png" alt="Daemon 狀態機">
+        <p class="diagram-label">圖 7b — Daemon 狀態機：Init → Running → 各中斷態 → Stopped</p>
+      </div>
+      <div class="card">
+        <div class="card-title">Windows Task Scheduler 設定</div>
+        <div class="table-wrap" style="margin:0">
+          <table>
+            <thead><tr><th>工作名稱</th><th>觸發時間</th><th>執行日</th><th>動作</th></tr></thead>
+            <tbody>
+              <tr><td><code>StockMonitor-Start</code></td><td>08:50</td><td>週一至週五</td><td>啟動 daemon（背景執行）</td></tr>
+              <tr><td><code>StockMonitor-Stop</code></td><td>14:30</td><td>週一至週五</td><td>停止 daemon 程序</td></tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+      <pre><code># 一次性註冊 Windows Task Scheduler
+powershell -ExecutionPolicy Bypass -File scripts/register_scheduled_tasks.ps1</code></pre>
+
+      <!-- ── LINE 設定 ── -->
+      <h2 id="line-config">§8 LINE 設定與安全規範</h2>
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th>環境變數</th><th>說明</th><th>Alias（向後相容）</th></tr></thead>
+          <tbody>
+            <tr><td><code>LINE_CHANNEL_ACCESS_TOKEN</code></td><td>Canonical 名稱</td><td><code>CHANNEL_ACCESS_TOKEN</code></td></tr>
+            <tr><td><code>LINE_TO_GROUP_ID</code></td><td>Canonical 名稱</td><td><code>TARGET_GROUP_ID</code></td></tr>
+          </tbody>
+        </table>
+      </div>
+      <div class="banner warn">
+        <strong>CR-SEC-01</strong>：<code>LinePushClient</code> 持有的 token 不得透過 <code>repr()</code> 或 log 輸出明文。
+        使用 <code>field(repr=False)</code> 或等效保護。
+      </div>
+      <ul style="font-size:.9rem;padding-left:20px;line-height:2">
+        <li>缺任何必要值 → fail-fast，輸出可操作錯誤訊息</li>
+        <li>token / group id 格式明顯錯誤 → fail-fast</li>
+        <li>若 canonical 與 alias 同時存在，優先使用 canonical</li>
+      </ul>
+
+      <!-- ── Phase 規劃 ── -->
+      <h2 id="phases">§9 Phase 規劃</h2>
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th>Phase</th><th>交付內容</th><th>里程碑</th></tr></thead>
+          <tbody>
+            <tr>
+              <td><span class="tag blue">Phase 1 (V0)</span></td>
+              <td>手動 fair/cheap 監控 + LINE 通知 + cooldown + SQLite + fail-fast</td>
+              <td>M1（2–3 天）</td>
+            </tr>
+            <tr>
+              <td><span class="tag green">Phase 2 (V1)</span></td>
+              <td>三方法估值快照 + 多方法訊號 + 開盤摘要 + 模板化 LINE + 雙行情來源</td>
+              <td>M2（2–4 天）</td>
+            </tr>
+            <tr>
+              <td><span class="tag gray">Phase 3</span></td>
+              <td>補償佇列完整實作 + 監控報表 + 操作文件</td>
+              <td>M3（1–2 天）</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+
+      <!-- ── Code Review 禁止 ── -->
+      <h2 id="code-review">§13 Code Review 禁止清單（v1.0 定版）</h2>
+      <div class="banner warn">
+        下列規則一旦違反即視同 CR 不通過。業務程式禁止出現以下模式：
+      </div>
+      <ul class="rule-list">
+        <li>
+          <span class="rule-id" style="background:#fff0d8;color:#7c4200;border-color:#e07b39">CR-SEC-01</span>
+          <span class="rule-text"><code>LinePushClient</code> 持有物件不得透過 <code>repr()</code> 或 log 輸出 token 明文；需用 <code>field(repr=False)</code> 保護。</span>
+        </li>
+        <li>
+          <span class="rule-id" style="background:#fff0d8;color:#7c4200;border-color:#e07b39">CR-SEC-02</span>
+          <span class="rule-text"><code>scenario_case</code> 分支禁止存在於任何生產估值計算路徑。</span>
+        </li>
+        <li>
+          <span class="rule-id" style="background:#fff0d8;color:#7c4200;border-color:#e07b39">CR-SEC-03</span>
+          <span class="rule-text"><code>_resolve_timezone</code> 對無效時區名稱禁止靜默 fallback UTC。</span>
+        </li>
+        <li>
+          <span class="rule-id" style="background:#ffe0e3;color:#7c0009;border-color:#c7303f">CR-ARCH-01</span>
+          <span class="rule-text"><code>app.py</code>（CLI Interface Layer）內禁止定義估值計算邏輯。</span>
+        </li>
+        <li>
+          <span class="rule-id" style="background:#ffe0e3;color:#7c0009;border-color:#c7303f">CR-ARCH-02</span>
+          <span class="rule-text">禁止在估值計算路徑中存在 <code>scenario_case</code> 分支（重申 CR-SEC-02）。</span>
+        </li>
+        <li>
+          <span class="rule-id" style="background:#ffe0e3;color:#7c0009;border-color:#c7303f">CR-ARCH-03</span>
+          <span class="rule-text"><code>render_line_template_message</code> 只允許在 <code>message_template.py</code> 中定義，禁止在其他模組重複定義。</span>
+        </li>
+        <li>
+          <span class="rule-id" style="background:#d8eaff;color:#0a3d62;border-color:#1a6fb5">CR-CODE-05</span>
+          <span class="rule-text"><code>TimeBucketService</code> 對無效時區名稱禁止靜默設 <code>self._tz = None</code>。</span>
+        </li>
+        <li>
+          <span class="rule-id" style="background:#d8eaff;color:#0a3d62;border-color:#1a6fb5">CR-ADP-01</span>
+          <span class="rule-text"><code>YahooFinanceMarketDataProvider</code> 在 HTTP 失敗時禁止 raise exception 向上傳播。</span>
+        </li>
+        <li>
+          <span class="rule-id" style="background:#d8eaff;color:#0a3d62;border-color:#1a6fb5">CR-ADP-02</span>
+          <span class="rule-text"><code>CompositeMarketDataProvider</code> 禁止直接回傳任一來源字典而不做 Freshness-First 比較。</span>
+        </li>
+      </ul>
+
+      <!-- ── Python symbol contract ── -->
+      <h2>Python Symbol Contract</h2>
+      <div class="banner info">
+        測試（<code>tests/_contract.py</code>）驗證以下 symbol 必須存在於對應模組，任何重構都不得破壞。
+      </div>
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th>模組</th><th>Symbol</th></tr></thead>
+          <tbody>
+            <tr><td><code>stock_monitor.db.schema</code></td><td><code>SCHEMA_SQL</code></td></tr>
+            <tr><td><code>stock_monitor.domain.policies</code></td><td><code>PriorityPolicy</code>, <code>CooldownPolicy</code>, <code>aggregate_stock_signals</code></td></tr>
+            <tr><td><code>stock_monitor.domain.idempotency</code></td><td><code>build_minute_idempotency_key</code></td></tr>
+            <tr><td><code>stock_monitor.domain.time_bucket</code></td><td><code>TimeBucketService</code>, <code>guard_bucket_source</code></td></tr>
+            <tr><td><code>stock_monitor.application.message_template</code></td><td><code>render_line_template_message</code>（唯一定義來源，CR-ARCH-03）</td></tr>
+            <tr><td><code>stock_monitor.application.monitoring_workflow</code></td><td><code>aggregate_minute_notifications</code>, <code>merge_minute_message</code>, <code>dispatch_and_persist_minute</code></td></tr>
+            <tr><td><code>stock_monitor.adapters.market_data_twse</code></td><td><code>TwseRealtimeMarketDataProvider</code>（含 <code>_price_cache</code>、<code>_exchange_cache</code>、<code>_tick_cache</code>）</td></tr>
+            <tr><td><code>stock_monitor.adapters.market_data_yahoo</code></td><td><code>YahooFinanceMarketDataProvider</code></td></tr>
+            <tr><td><code>stock_monitor.adapters.market_data_composite</code></td><td><code>CompositeMarketDataProvider</code></td></tr>
+          </tbody>
+        </table>
+      </div>
+
+      <!-- ── 系統全景圖（再次） ── -->
+      <h2>系統脈絡圖</h2>
+      <div class="diagram-section">
+        <img class="diagram-img" src="architecture/images/01-system-context.png" alt="系統脈絡圖">
+        <p class="diagram-label">圖 1 — 系統脈絡：監控 Daemon、TWSE MIS、Yahoo Finance、LINE Messaging API、SQLite</p>
+      </div>
+
+      <footer>
+        <p>EDD v0.9 &nbsp;·&nbsp; 2026-04-14 &nbsp;·&nbsp;
+           <a href="pdd.html">← 產品規格 (PDD)</a> &nbsp;·&nbsp;
+           <a href="architecture/README.md">架構圖目錄</a> &nbsp;·&nbsp;
+           <a href="https://github.com/ibalasite/stock_monitor" target="_blank" rel="noopener">GitHub</a>
+        </p>
+      </footer>
+
+    </div><!-- /content-inner -->
+  </main>
+</div>
+
+<script>
+document.addEventListener('DOMContentLoaded', () => {
+  const links = Array.from(document.querySelectorAll('.sidebar a[href^="#"]'));
+  const observer = new IntersectionObserver(entries => {
+    entries.forEach(e => {
+      if (e.isIntersecting) {
+        links.forEach(l => l.classList.remove('active'));
+        const match = links.find(l => l.getAttribute('href') === '#' + e.target.id);
+        if (match) match.classList.add('active');
+      }
+    });
+  }, { rootMargin: '-15% 0px -75% 0px' });
+  document.querySelectorAll('[id]').forEach(el => observer.observe(el));
+});
+</script>
+</body>
+</html>
