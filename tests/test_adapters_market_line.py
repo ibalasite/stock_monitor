@@ -182,27 +182,27 @@ def test_twse_provider_additional_branches(monkeypatch):
     with pytest.raises(TimeoutError):
         provider.get_realtime_quotes(["2330"])
 
-    # z='-' with best-bid fallback (b field available)
-    def _no_z_with_bid(req, timeout):
+    # First call: z has a valid price → gets cached
+    def _with_price(req, timeout):
         payload = {"msgArray": [
-            {"c": "2330", "z": "-", "b": "2045.0000_2040.0000_", "tlong": "1775802600000", "n": "台積電"},
+            {"c": "2330", "z": "2045.0", "tlong": "1775802600000", "n": "台積電"},
         ]}
         return _FakeHttpResponse(body=json.dumps(payload))
 
-    monkeypatch.setattr("stock_monitor.adapters.market_data_twse.request.urlopen", _no_z_with_bid)
+    monkeypatch.setattr("stock_monitor.adapters.market_data_twse.request.urlopen", _with_price)
     quotes = provider.get_realtime_quotes(["2330"])
-    assert quotes["2330"]["price"] == 2045.0, "should fall back to best bid when z='-'"
+    assert quotes["2330"]["price"] == 2045.0
 
-    # z='-' and b='-', high/low midpoint fallback
-    def _no_z_no_bid(req, timeout):
+    # Second call: z='-' → should return cached last trade price, not None
+    def _no_z(req, timeout):
         payload = {"msgArray": [
-            {"c": "2330", "z": "-", "b": "-", "h": "2050.0000", "l": "2010.0000", "tlong": "1775802600000", "n": "台積電"},
+            {"c": "2330", "z": "-", "tlong": "1775802660000", "n": "台積電"},
         ]}
         return _FakeHttpResponse(body=json.dumps(payload))
 
-    monkeypatch.setattr("stock_monitor.adapters.market_data_twse.request.urlopen", _no_z_no_bid)
+    monkeypatch.setattr("stock_monitor.adapters.market_data_twse.request.urlopen", _no_z)
     quotes = provider.get_realtime_quotes(["2330"])
-    assert quotes["2330"]["price"] == 2030.0, "should fall back to (high+low)/2 when z='-' and no bid"
+    assert quotes["2330"]["price"] == 2045.0, "should return last cached trade price when z='-'"
 
 
 def test_line_push_client_success_and_failures(monkeypatch):

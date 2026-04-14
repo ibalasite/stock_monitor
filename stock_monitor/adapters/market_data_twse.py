@@ -34,6 +34,12 @@ class TwseRealtimeMarketDataProvider:
     index_channel: str = "tse_t00.tw"
     timeout_sec: int = 10
 
+    def __post_init__(self) -> None:
+        # Cache the last known trade price (z field) per stock across polling cycles.
+        # When z='-' (snapshot between ticks), we return the cached last trade price
+        # instead of an approximate fallback like bid or h/l midpoint.
+        self._price_cache: dict[str, float] = {}
+
     def _build_stock_channels(self, stock_nos: list[str]) -> tuple[list[str], list[str]]:
         normalized: list[str] = []
         seen: set[str] = set()
@@ -107,15 +113,13 @@ class TwseRealtimeMarketDataProvider:
             if stock_no not in requested:
                 continue
             price = _to_float(row.get("z"))
-            # When z='-' (no tick at this snapshot moment), fall back to best bid
-            # then midpoint of high/low, so active stocks are not skipped entirely.
-            if price is None:
-                price = _to_float((str(row.get("b") or "").split("_")[0]))
-            if price is None:
-                high = _to_float(row.get("h"))
-                low = _to_float(row.get("l"))
-                if high is not None and low is not None:
-                    price = (high + low) / 2
+            if price is not None:
+                # Fresh tick — update cache with the latest trade price.
+                self._price_cache[stock_no] = price
+            else:
+                # z='-': no new tick at this snapshot instant.
+                # Use the last known trade price from cache if available.
+                price = self._price_cache.get(stock_no)
             if price is None:
                 continue
             try:
