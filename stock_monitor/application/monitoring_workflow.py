@@ -6,8 +6,8 @@ import uuid
 
 from stock_monitor.application.message_template import render_line_template_message
 
-MINUTE_DIGEST_TEMPLATE_KEY = "line.minute_digest.v1"
-TRIGGER_ROW_DIGEST_TEMPLATE_KEY = "line.trigger_row_digest.v1"
+MINUTE_DIGEST_TEMPLATE_KEY = "line_minute_digest_v1"
+TRIGGER_ROW_DIGEST_TEMPLATE_KEY = "line_trigger_row_digest_v1"
 
 
 def _normalize_methods(methods) -> list[str]:

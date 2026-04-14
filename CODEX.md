@@ -144,7 +144,17 @@ python -m pytest -q tests/test_integration_workflow.py -k TP-INT-010
 - coverage gate：`lines/branches/functions/statements = 100%`
 - 文件同步：若規則有變更，`PDD/EDD/TEST_PLAN/feature/CLAUDE/CODEX` 一並更新
 
-## 11. Code Review 改善禁止清單（v0.9 定版，業務程式禁寫）
+## 11. 鐵律：禁止自作主張（Never Add Unrequested Content）
+
+> 對齊 `.github/copilot-instructions.md`，兩檔同步維護。
+
+1. **使用者說改什麼，就改什麼。** 禁止在未要求的地方加任何額外內容、前綴、後綴、標題、標籤、說明文字。
+2. **驗證腳本的輸出必須 100% 等於生產程式碼的輸出。** 禁止加 wrapper、label、`===`、`【】`、額外的行。
+3. **傳遞給生產函式的參數，必須走相同的生產路徑取得**，禁止用字串字面量繞過應有的 template / function 呼叫。
+4. **改 template 就改 template，禁止同時改業務邏輯或輸出格式。** 改成 Jinja2 前後，格式與文字必須完全一致。
+5. **腳本若需區分用 label，只能輸出到 terminal stdout，禁止出現在 LINE 訊息或任何對外輸出中。**
+
+## 12. Code Review 改善禁止清單（v0.9 定版，業務程式禁寫）
 - **禁止** `scenario_case` 分支存在於任何生產估值計算路徑（CR-SEC-02、CR-ARCH-02）
 - **禁止** `_resolve_timezone` 對無效時區名稱靜默 fallback UTC（CR-SEC-03）
 - **禁止** 在 `message_template.py` 以外的模組重複定義 `render_line_template_message`（CR-ARCH-03）

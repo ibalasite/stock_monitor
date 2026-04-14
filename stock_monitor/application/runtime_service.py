@@ -41,9 +41,9 @@ _BASELINE_OPENING_METHODS: tuple[tuple[str, str], ...] = (
     ("oldbull_dividend_yield", "v1"),
     ("raysky_blended_margin", "v1"),
 )
-_OPENING_SUMMARY_ROW_TEMPLATE = "line.opening_summary.row.compact.v1"
-TRIGGER_ROW_TEMPLATE_KEY = "line.trigger_row.v1"
-TEST_PUSH_TEMPLATE_KEY = "line.test_push.v1"
+_OPENING_SUMMARY_ROW_TEMPLATE = "line_opening_summary_row_compact_v1"
+TRIGGER_ROW_TEMPLATE_KEY = "line_trigger_row_v1"
+TEST_PUSH_TEMPLATE_KEY = "line_test_push_v1"
 
 
 def _format_price(value: float) -> str:

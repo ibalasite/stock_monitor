@@ -1,6 +1,6 @@
 # Stock Monitoring System - README
 
-更新日期：2026-04-14（GitHub Pages 網站上線）  
+更新日期：2026-04-15（FR-17 Jinja2 模板系統落地 + 鐵律設定）  
 專案目標：台股價格監控 + LINE 群組通知 + 每日估值 + SQLite 落盤 + 補償機制
 
 ## 📄 線上文件網站（GitHub Pages）
@@ -17,7 +17,7 @@
 4. `pytest-bdd` 已安裝，`stock_monitoring_smoke.feature` 與完整 `stock_monitoring_system.feature` 皆可執行。
 5. `stock_monitor` 主程式套件已建立並實作核心測試契約。
 6. 最新狀態：
-   - `pytest -q tests`：最近一次基線（2026-04-14）為 `241 passed`（含完整 BDD + unit/integration/UAT contract + CR-* 改善驗證 + TP-ADP-001~004 + 委賣一 ask price，100% coverage）
+   - `pytest -q tests`：最近一次基線（2026-04-15）為 `276 passed`（含完整 BDD + unit/integration/UAT contract + CR-* 改善驗證 + TP-ADP-001~004 + TP-FR17-001~009 + 委賣一 ask price，100% coverage）
    - Coverage gate：`100%`（line + branch）
    - CI：`.github/workflows/ci.yml` 已啟用（push / pull_request），且已採用 action SHA pin + 鎖版依賴 + `pip-audit`
    - 可執行入口：`python -m stock_monitor init-db|run-once|reconcile-once|valuation-once|run-daemon`
@@ -210,6 +210,24 @@ Live URL（啟用 Pages 後）：`https://ibalasite.github.io/stock_monitor/`
     - **啟用 GitHub Pages**：Repo → Settings → Pages → Source: branch `main` / folder `/docs` → Save
     - URL：`https://ibalasite.github.io/stock_monitor/`（index）、`/pdd.html`、`/edd.html`
 
+29. **FR-17 Jinja2 檔案型模板系統落地（EDD §2.8）**：
+    - `LineTemplateRenderer` 改用 `Jinja2 Environment(loader=FileSystemLoader, undefined=StrictUndefined, autoescape=False)` 渲染 `.j2` 檔案
+    - Key 白名單：`^[a-z0-9_]+$`（OWASP A01 path traversal 防護）
+    - `LINE_TEMPLATE_DIR` env var 可覆蓋預設 `templates/line/` 目錄
+    - `TemplateNotFound` → WARN log `TEMPLATE_NOT_FOUND` + fallback 至內建 Python 渲染
+    - 渲染失敗（`UndefinedError` / 其他 Exception）→ ERROR log `TEMPLATE_RENDER_FAILED` + fallback
+    - 所有 template key 從 dot notation（`line.trigger_row.v1`）遷移至底線（`line_trigger_row_v1`）
+    - 新增 `templates/line/` 目錄含 6 個 `.j2` 模板：`line_minute_digest_v1`、`line_trigger_row_v1`、`line_trigger_row_digest_v1`、`line_test_push_v1`、`line_opening_summary_row_compact_v1`、`line_opening_summary_mobile_compact_v1`
+    - 新增 BDD 規格：`features/line_template_fr17.feature`（9 scenarios）
+    - 新增測試：`tests/test_line_template_fr17_red.py`（26 條 TP-FR17-001~009）、`tests/bdd/steps/step_line_template_fr17.py`、`tests/bdd/test_line_template_fr17_bdd.py`
+    - 全套測試：241 → **276 passed**，維持 100% coverage
+    - 驗證腳本：`scripts/send_all_templates_preview.py`（4 則真實 LINE 訊息，全部以生產 template 路徑產生，HTTP 200）
+
+30. **鐵律設定：禁止自作主張（Never Add Unrequested Content）**：
+    - 新增 `.github/copilot-instructions.md`（Copilot workspace-level 自動載入）
+    - 同步更新 `CLAUDE.md §11` 與 `CODEX.md §11`
+    - 5 條鐵律：①只改被要求的內容 ②驗證腳本輸出 = 生產輸出（禁止加 wrapper/label） ③參數必須走生產路徑 ④改 template 不改業務邏輯 ⑤label 只輸出至 terminal stdout
+
 ## 6. 下一步要做什麼（建議執行順序）
 1. 在 GitHub 啟用 GitHub Pages：Repo → Settings → Pages → Source: branch `main` / folder `/docs` → Save，讓 `docs/index.html`、`docs/pdd.html`、`docs/edd.html` 正式對外服務。
 2. 完成正式人工 UAT 簽核（PO/QA/Eng Lead），填寫 `uat-signoff.md`。
@@ -237,8 +255,8 @@ python -m pip install --require-hashes -r requirements-dev.txt
 ```powershell
 python -m pytest -q tests
 ```
-5. 最近一次基線結果（2026-04-14）：
-   - `241 passed`
+5. 最近一次基線結果（2026-04-15）：
+   - `276 passed`
    - coverage `100%`
    - 實際請以你當次執行輸出為準
 

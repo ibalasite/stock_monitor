@@ -1,0 +1,1 @@
+{% if stock_status == 2 %}{{ display_label }}目前{{ current_price }}，低於便宜價{{ cheap_price }}{% if fair_price and fair_price != cheap_price %}（合理價{{ fair_price }}）{% endif %}{% else %}{{ display_label }}目前{{ current_price }}，低於合理價{{ fair_price }}{% endif %}
