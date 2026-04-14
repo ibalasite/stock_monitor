@@ -129,7 +129,59 @@
 - LINE 通知文字格式必須由模板驅動（Template-driven），不得在程式中硬編碼完整訊息文案。
 - 通知延遲目標：觸發後送達 P95 <= 60 秒。
 
-### FR-05 通知冷卻
+### FR-17 文字檔模板載入（File-based Jinja2 Templates）
+
+**設計動機**：讓企劃 / 文案人員在不接觸 Python 程式碼的前提下，直接修改 LINE 推播訊息的用字遣詞（wording），同時維持 Clean Architecture 的層次不變動。
+
+**業界標準選型**：
+
+| 方案 | 語法 | 迴圈 | 從檔案載入 | 非工程人員友善 |
+|---|---|---|---|---|
+| `str.format()` / f-string | `{var}` | ❌ | △ 手工讀取 | ⚠️ wording 仍在 .py |
+| `string.Template`（stdlib）| `$var` | ❌ | ✅ | ✅ 語法最簡 |
+| **Jinja2**（✅ 建議採用）| `{{ var }}` | ✅ `{% for %}` | ✅ FileSystemLoader | ✅ 純文字可直接編輯 |
+| Mako / Genshi | 混合語法 | ✅ | ✅ | ⚠️ 較複雜 |
+
+選用 **Jinja2**：業界標準（Flask / Ansible / EDM 行銷平台均採用），支援迴圈與條件，可從純文字 `.j2` 檔讀入，企劃人員用記事本即可編輯。
+
+**規格細項**：
+
+- 模板以獨立 `.j2` 文字檔存放於 `templates/line/` 目錄，隨程式碼一同提交至版本庫。
+- `template_key` 直接對應檔名：`trigger_row` → `templates/line/trigger_row.j2`，無需額外設定檔。
+- Jinja2 語法支援：
+  - `{{ variable }}` 替換變數
+  - `{%- for item in items -%}...{%- endfor -%}`（開盤摘要逐股票列舉）
+  - `{% if stock_status == 2 %}...{% else %}...{% endif %}` 條件判斷
+- 若指定 `.j2` 檔案不存在，系統 fallback 至 `message_template.py` 內嵌預設，並寫入 **WARN** 日誌；不得靜默降格。
+- 既有 `render_line_template_message(template_key, context)` 函式簽名**保持不變**，Application / Domain layer 零感知此實作細節。
+- 模板根目錄可透過環境變數 `LINE_TEMPLATE_DIR` 覆蓋；若未設定，預設 `templates/line/`（相對於 working directory）。
+- `template_key` 必須通過白名單驗證或限定於單一目錄前綴，禁止 `../` 路徑遍歷（Path Traversal，OWASP A01 防護）。
+- 使用 Jinja2 `Environment(loader=FileSystemLoader(...), undefined=StrictUndefined)`，禁止靜默忽略未定義變數。
+
+**範例 — 觸發通知列** (`templates/line/trigger_row.j2`)：
+```
+{{ display_label }}目前{{ current_price }}，
+{%- if stock_status == 2 %}低於便宜價{{ cheap_price }}（合理價{{ fair_price }}）
+{%- else %}低於合理價{{ fair_price }}
+{%- endif %}
+```
+
+**範例 — 開盤摘要** (`templates/line/opening_summary.j2`)：
+```
+[開盤監控設定摘要] {{ trade_date }}
+{% for item in stocks %}
+{{ item.display_label }}
+  合理價 {{ item.fair_price }} ／ 便宜價 {{ item.cheap_price }}
+{% endfor %}
+監控方法：{% for m in methods %}{{ m }}{% if not loop.last %}、{% endif %}{% endfor %}
+```
+
+**架構對齊（MVC 類比）**：
+- **View**：`templates/line/*.j2`（模板文字檔，企劃可編輯）
+- **Model**：`context` dict（資料由 Application layer 組裝）
+- **Controller**：`render_line_template_message`（渲染引擎，介面永不改變）
+
+
 - 維度：`stock_no + stock_status`。
 - 規則：若最後一次通知 `update_time` 在 5 分鐘內，則不發送、也不更新該筆時間。
 
