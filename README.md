@@ -106,13 +106,28 @@
     - **CR-SEC-04**：`MAX_RESPONSE_BYTES = 1_048_576` + `resp.read(MAX_RESPONSE_BYTES)` 防止記憶體耗盡
     - **CR-ARCH-03**：`render_line_template_message` 唯一定義於 `message_template.py`
     - **CR-CODE-03**：`MinuteCycleConfig` dataclass 新增；`run_minute_cycle` 支援 `config:` 參數
-    - **CR-ARCH-06**：新增 `opening_summary_sent_dates` 資料表；開盤摘要冒等改用專屬 DB 個欄，不再靠 LIKE 查訢 system_logs
+    - **CR-ARCH-04**：DI 組裝與 daemon 迴圈移至 `application/daemon_runner.py`；`app.py` 僅保留 CLI 入口（114 行）
+    - **CR-ARCH-05**：`merge_minute_message` 改名為 `_merge_minute_message`（私有），所有呼叫點一併更新
+    - **CR-CODE-01**：`build_minute_rows` 的 3 段重複渲染呼叫統一為 1 個 `render_context` dict
+    - **CR-CODE-02**：`reconcile_pending_once` / `run_reconcile_cycle` 移除未使用的 `line_client` 參數
+    - **CR-CODE-04**：`aggregate_minute_notifications` f-string 改用 `render_line_template_message(TRIGGER_ROW_DIGEST_TEMPLATE_KEY, ...)`
+    - **CR-CODE-06**：移除 `09:00` 精確比對；改以 `opening_summary_sent_for_date` 冪等記錄判斷，允許 restart 後補送
+    - **CR-ARCH-06**：新增 `opening_summary_sent_dates` 資料表；開盤摘要冪等改用專屬 DB 欄，不再靠 LIKE 查詢 system_logs
+21. `scripts/send_all_scenarios_to_line.py` 修正開盤摘要 `stock_display` 格式（補 TWSE `_fetch_stock_name_map`，非交易時段也可取得中文股票名稱）：
+    - 修正前：`2330 手動 2000/1500`
+    - 修正後：`台積電(2330) 手動 2000/1500`（符合 EDD §7.6 規格）
+22. **2026-04-14 正式盤中驗收（UAT live run）**：
+    - 啟動 `run-daemon`，4 個方法（manual_rule / emily_composite_v1 / oldbull_dividend_yield_v1 / raysky_blended_margin_v1）監控 3 檔（2330/2348/3293）
+    - 開盤摘要已自動觸發並推送 LINE（10:27）
+    - 每 60 秒輪詢；14:00 自動執行估值日結
+    - `STALE_QUOTE:3293` WARN 正常記錄（3293 當日交易清淡）
 
 ## 6. 下一步要做什麼（建議執行順序）
-1. 完成正式人工 UAT 簽核（PO/QA/Eng Lead）。
-2. 設定 GitHub Secrets（LINE sandbox）並啟用 nightly LINE push 驗證。
-3. 實際交易日觀察 daemon 日誌與通知品質，回填 `test-report.md`/`defect-log.md`。
-4. 持續維持流程：`PDD/EDD -> feature -> tests -> code`。
+1. 觀察今日 14:00 估值日結結果，確認三方法快照正確入庫。
+2. 完成正式人工 UAT 簽核（PO/QA/Eng Lead），填寫 `uat-signoff.md`。
+3. 設定 GitHub Secrets（LINE sandbox）並啟用 nightly LINE push 驗證。
+4. 實際交易日持續觀察 daemon 日誌與通知品質，回填 `test-report.md`/`defect-log.md`。
+5. 持續維持流程：`PDD/EDD -> feature -> tests -> code`。
 
 ## 7. 啟動流程（實際可操作）
 ### 7.1 現在就可以跑（開發驗證模式）

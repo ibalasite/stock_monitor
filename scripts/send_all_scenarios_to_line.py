@@ -27,6 +27,7 @@ if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
 from stock_monitor.adapters.line_messaging import LinePushClient
+from stock_monitor.adapters.market_data_twse import TwseRealtimeMarketDataProvider
 from stock_monitor.application.message_template import render_line_template_message
 from stock_monitor.application.monitoring_workflow import (
     MINUTE_DIGEST_TEMPLATE_KEY,
@@ -47,6 +48,24 @@ def _mask_token(token: str) -> str:
     if len(text) <= 8:
         return "***"
     return f"{text[:4]}...{text[-4:]}"
+
+
+def _fetch_stock_name_map(stock_nos: list[str]) -> dict[str, str]:
+    """Fetch stock names from TWSE, tolerating no-price rows (works outside trading hours)."""
+    provider = TwseRealtimeMarketDataProvider()
+    _, channels = provider._build_stock_channels(stock_nos)
+    try:
+        rows = provider._fetch_channels(channels)
+    except Exception as exc:
+        print(f"[WARN] stock name fetch failed ({exc}), using stock_no only")
+        return {}
+    name_map: dict[str, str] = {}
+    for row in rows:
+        code = str(row.get("c") or "").strip()
+        name = str(row.get("n") or "").strip()
+        if code and name and code in stock_nos:
+            name_map[code] = name
+    return name_map
 
 
 # ── scenario builders ──────────────────────────────────────────────────────────
@@ -83,12 +102,13 @@ def build_opening_summary(db_path: str, trade_date: str) -> str:
             stock_nos=stock_nos, as_of_date=trade_date
         )
         method_pairs = _build_opening_method_pairs(snapshot_rows)
+        stock_name_map = _fetch_stock_name_map(stock_nos)
         payload = _build_opening_summary_message(
             trade_date=trade_date,
             watchlist_rows=watchlist_rows,
             method_pairs=method_pairs,
             snapshot_rows=snapshot_rows,
-            stock_name_map={},
+            stock_name_map=stock_name_map,
         )
         conn.close()
         return payload
