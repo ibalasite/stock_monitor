@@ -13,7 +13,9 @@ from pathlib import Path
 from zoneinfo import ZoneInfo
 
 from stock_monitor.adapters.line_messaging import LinePushClient
+from stock_monitor.adapters.market_data_composite import CompositeMarketDataProvider
 from stock_monitor.adapters.market_data_twse import TwseRealtimeMarketDataProvider
+from stock_monitor.adapters.market_data_yahoo import YahooFinanceMarketDataProvider
 from stock_monitor.adapters.sqlite_repo import (
     JsonlPendingFallback,
     SqliteLogger,
@@ -53,7 +55,10 @@ def _build_runtime(args) -> dict:
             channel_access_token=line_cfg["channel_token"],
             to_group_id=line_cfg["group_id"],
         ),
-        "market_provider": TwseRealtimeMarketDataProvider(),
+        "market_provider": CompositeMarketDataProvider(
+            primary=TwseRealtimeMarketDataProvider(),
+            secondary=YahooFinanceMarketDataProvider(),
+        ),
         "watchlist_repo": SqliteWatchlistRepository(conn),
         "message_repo": SqliteMessageRepository(conn),
         "pending_repo": SqlitePendingRepository(conn),

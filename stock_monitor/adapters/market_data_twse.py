@@ -35,10 +35,14 @@ class TwseRealtimeMarketDataProvider:
     timeout_sec: int = 10
 
     def __post_init__(self) -> None:
-        # Cache the last known trade price (z field) per stock across polling cycles.
-        # When z='-' (snapshot between ticks), we return the cached last trade price
-        # instead of an approximate fallback like bid or h/l midpoint.
+        # Cache the last known best ask price (委賣一, a field) per stock across polling
+        # cycles. When a='-' or absent (snapshot between ticks or no order book), we
+        # return the cached ask price instead of an approximate fallback.
         self._price_cache: dict[str, float] = {}
+        # Cache the exchange type (tse/otc) per stock from the ex field.
+        self._exchange_cache: dict[str, str] = {}
+        # Cache the last tick_at timestamp per stock.
+        self._tick_cache: dict[str, int] = {}
 
     def _build_stock_channels(self, stock_nos: list[str]) -> tuple[list[str], list[str]]:
         normalized: list[str] = []
@@ -112,13 +116,20 @@ class TwseRealtimeMarketDataProvider:
                 continue
             if stock_no not in requested:
                 continue
-            price = _to_float(row.get("z"))
+            ask_raw = str(row.get("a") or "").split("_")[0].strip()
+            price = _to_float(ask_raw)
             if price is not None:
-                # Fresh tick — update cache with the latest trade price.
+                # Fresh ask — update cache with the best ask price (委賣一).
                 self._price_cache[stock_no] = price
             else:
-                # z='-': no new tick at this snapshot instant.
-                # Use the last known trade price from cache if available.
+                # a='-' or absent: no order book at this snapshot instant.
+                # Use the last known ask price from cache if available.
+                # If cache is cold (first poll), seed with yesterday's close (y)
+                # so Composite never needs to fallback to delayed external sources.
+                if stock_no not in self._price_cache:
+                    yesterday_close = _to_float(row.get("y"))
+                    if yesterday_close is not None:
+                        self._price_cache[stock_no] = yesterday_close
                 price = self._price_cache.get(stock_no)
             if price is None:
                 continue
@@ -126,6 +137,14 @@ class TwseRealtimeMarketDataProvider:
                 tick_epoch = int(str(row.get("tlong"))) // 1000
             except (TypeError, ValueError):
                 tick_epoch = 0
+
+            exchange = str(row.get("ex") or "").strip()
+            if exchange:
+                self._exchange_cache[stock_no] = exchange
+            else:
+                exchange = self._exchange_cache.get(stock_no, "")
+
+            self._tick_cache[stock_no] = tick_epoch
 
             existing = quotes.get(stock_no)
             existing_tick = int(existing["tick_at"]) if existing else -1
@@ -137,5 +156,6 @@ class TwseRealtimeMarketDataProvider:
                 "price": price,
                 "tick_at": tick_epoch,
                 "name": str(row.get("n") or ""),
+                "exchange": exchange,
             }
         return quotes

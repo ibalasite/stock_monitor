@@ -1,6 +1,6 @@
 # CODEX.md - Stock Monitor AI 開發手冊
 
-最後更新：2026-04-14（Asia/Taipei, v0.9）
+最後更新：2026-04-14（Asia/Taipei, v1.0）
 對齊文件：`PDD_Stock_Monitoring_System.md`、`EDD_Stock_Monitoring_System.md`、`TEST_PLAN.md`、`USER_STORY_ACCEPTANCE_CRITERIA.md`、`API_CONTRACT.md`、`ADR.md`、`NFR_SLI_SLO.md`、`SECURITY_AND_SECRETS.md`、`OPERATIONS_RUNBOOK.md`
 
 ## 0. 使用方式
@@ -108,6 +108,9 @@ Alias（等效）：
 | `stock_monitor.application.valuation_calculator` | `ManualValuationCalculator` |
 | `stock_monitor.application.runtime_service` | `MinuteCycleConfig` |
 | `stock_monitor.uat.scenarios` | `UAT_SCENARIOS` |
+| `stock_monitor.adapters.market_data_twse` | `TwseRealtimeMarketDataProvider`（含 `_price_cache`[最後已知委賣一]、`_exchange_cache`、`_tick_cache`） |
+| `stock_monitor.adapters.market_data_yahoo` | `YahooFinanceMarketDataProvider` |
+| `stock_monitor.adapters.market_data_composite` | `CompositeMarketDataProvider` |
 
 ## 8. TDD 執行規範
 1. 先跑對應測試確認紅燈

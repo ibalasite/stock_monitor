@@ -1,13 +1,16 @@
 # EDD - 台股監控與 LINE 通知系統
 
-版本：v0.8  
+版本：v0.9  
 日期：2026-04-14  
 對齊文件：[PDD_Stock_Monitoring_System.md](c:/Projects/stock/PDD_Stock_Monitoring_System.md)
 
-變更摘要（v0.8）：
-- 新增 §13 品質改善行動清單（Code Review）：SEC-01~04、ARCH-01~06、CODE-01~06 共 16 項行動，含安全強化（token repr 遮蔽、時區驗證、HTTP 回應邊界）、架構對齊（計算器移至 application 層、render 單一入口、SRP）、API 清潔（MinuteCycleConfig、開盤摘要 DB 冪等、觸發容錯）。
-- 更新 §7.1 加入 token repr 遮蔽強制規則。
-- 更新 §7.6 加入 `render_line_template_message` 單一定義來源規則。
+變更摘要（v0.9）：
+- 新增 §3.3 雙行情來源架構（`YahooFinanceMarketDataProvider`、`CompositeMarketDataProvider`）。
+- 新增 §3.4 Freshness-First 取捨規則說明。
+- 新增 §8.2 Yahoo Finance adapter 設定參數。
+- 更新 §1 目的範圍：加入 FR-15/FR-16 雙行情來源。
+- 更新 §3.1/3.2 架構圖納入 Yahoo adapter 與 Composite adapter。
+- 新增 §13.5 品質改善行動：CR-ADP-01、CR-ADP-02。
 
 變更摘要（v0.7）：
 - 新增 FR-14 對齊：LINE 訊息改為 Template-driven 渲染規格（不得在業務程式寫死完整文案）。
@@ -40,6 +43,8 @@
 | v0.6 | 2026-04-13 | no schema break | 三方法估值規格、資料來源充分性、日結狀態規範 |
 | v0.7 | 2026-04-14 | no schema break | LINE 訊息模板化（FR-14）、開盤摘要手機友善模板規格 |
 | v0.8 | 2026-04-14 | no schema break | Code Review 品質改善定版：安全強化（token repr、時區驗證、HTTP 回應邊界）、架構對齊（Calculator → application 層、render 單一入口、SRP）、API 清潔（MinuteCycleConfig、開盤摘要 DB 冪等、觸發容錯）|
+| v0.9 | 2026-04-14 | no schema break | 雙行情來源架構：新增 `YahooFinanceMarketDataProvider`（HTML scraping）、`CompositeMarketDataProvider`（Freshness-First）；`TwseRealtimeMarketDataProvider` 加入 `_price_cache` 與 `ex` 快取 |
+| v1.0 | 2026-04-14 | no schema break | 行情 price 改為**委賣一**（最佳委賣價）：TWSE 採 `a` 欄位第一值；Yahoo 採 HTML 委賣價區塊委賣一，盤後 fallback `regularMarketPrice` |
 
 ## 1. 目的與範圍
 本文件定義工程實作細節，交付目標：
@@ -52,6 +57,7 @@
 7. 每日 14:00 對三方法逐股估值，資料不足時跳過且不覆蓋舊值。
 8. 每交易日開盤第一個可交易分鐘先推送「監控設定摘要」（股票/方法/fair/cheap），同日僅一次。
 9. LINE 訊息文本採模板渲染，不將完整文案硬寫於業務流程程式。
+10. 盤中行情採雙來源（TWSE MIS 主 + Yahoo Finance TW HTML 副），以 `tick_at` 較新者為準（Freshness-First，PDD FR-15）。行情 `price` 代表**委賣一**（最佳委賣價），反映當下可立即成交之買入價格。
 
 ## 2. 關鍵業務規則（定版）
 ### 2.1 訊號狀態
@@ -138,6 +144,11 @@
 +---------------------------------------------------------+
 ```
 
+> **MarketDataAdapter** 由三個 class 共同實現（見 §3.3/3.4）：
+> - `TwseRealtimeMarketDataProvider`（主，含 `_price_cache` 與 `ex` 快取）
+> - `YahooFinanceMarketDataProvider`（副，Yahoo Finance v8 chart API）
+> - `CompositeMarketDataProvider`（Freshness-First 聚合，注入以上兩者）
+
 ### 3.2 Mermaid 架構圖
 ```mermaid
 flowchart TD
@@ -149,6 +160,77 @@ flowchart TD
     P --> L[LINE Messaging Adapter]
     P --> T[Template Renderer/Repository]
     P --> R[SQLite Repositories]
+    M --> TWSE[TwseRealtimeMarketDataProvider]
+    M --> YF[YahooFinanceMarketDataProvider]
+    M --> COMP[CompositeMarketDataProvider]
+    COMP --> TWSE
+    COMP --> YF
+```
+
+## 3.3 雙行情來源 Adapter 規格
+### TwseRealtimeMarketDataProvider
+- 端點：`https://mis.twse.com.tw/stock/api/getStockInfo.jsp`
+- 每次輪詢：
+  - 請求所有監控股票的 `tse_{no}.tw` 與 `otc_{no}.tw` channel。
+  - 解析 `a`（委賣五檔，`_` 分隔）、`tlong`（毫秒時間戳）、`n`（中文名稱）、`ex`（`tse` 或 `otc`）。
+  - `a` 第一欄（`a.split('_')[0]`）= 委賣一（最佳委賣價）= 系統使用的 `price`。
+  - `a` 有值 → 更新 `self._price_cache[stock_no]`；回傳 `price=委賣一`、`tick_at=tlong//1000`。
+  - `a` 為空或 `-`（訂單薄短暫消失）→ 從 `self._price_cache` 讀取最後已知委賣一；若 cache 冷卻（首次輪詢），以 `y`（昨收）種子填充 cache。
+  - `ex` 欄位更新 `self._exchange_cache[stock_no]`（`tse` 或 `otc`）。
+  - 若 cache 也為空且無 `y` 可種子 → 該股票本次輪詢不加入 quotes dict。
+- 回傳格式：`dict[stock_no, {"stock_no", "price", "tick_at", "name", "exchange"}]`
+
+### YahooFinanceMarketDataProvider
+- 端點：`https://tw.stock.yahoo.com/quote/{stock_no}`（HTML scraping，不使用 v8 API）
+- URL 格式：`stock_no` only，不需 `.TW`/`.TWO` suffix（TSE/OTC 均可直接查詢）
+- 每次輪詢：對每個 stock_no 發 1 次 HTTP GET，讀取 server-render HTML。
+- 優先解析**委賣一**：HTML 委賣價區塊：`委賣價</span><span>量</span>` 後第一個 `<span>` 的數值（去逗號）。
+- 若委賣一欄位不存在（盤後/休市/版型異動）→ fallback 解析 `"regularMarketPrice":XXXX`。
+- 時間戳：解析 `"regularMarketTime":XXXX`（unix seconds）作為 `tick_at`。
+- HTTP 失敗（4xx/5xx/timeout）→ WARN log，回傳空 dict，不中斷主流程。
+- `exchange_map` 參數接受但不做 URL 建構用途（介面相容性）。
+- 回傳格式：`dict[stock_no, {"stock_no", "price", "tick_at", "name"}]`
+
+### CompositeMarketDataProvider（Freshness-First）
+- 依賴注入：`primary: TwseRealtimeMarketDataProvider`、`secondary: YahooFinanceMarketDataProvider`。
+- `get_realtime_quotes(stock_nos)` 流程：
+  1. 呼叫 `primary.get_realtime_quotes(stock_nos)` → `twse_quotes`。
+  2. 以 `primary._exchange_cache` 建立 `exchange_map`，注入 secondary。
+  3. 呼叫 `secondary.get_realtime_quotes(stock_nos)` → `yahoo_quotes`。
+  4. 對每個 stock_no：
+     - 若 twse 有值且 yahoo 有值：`tick_at` 較新者勝；相等時以 twse 為準。
+     - 若僅 twse 有值 → 使用 twse。
+     - 若僅 yahoo 有值（twse cache 空，冷啟動）→ 使用 yahoo。
+     - 兩者皆無 → 不加入結果（呼叫端觸發 `STALE_QUOTE`）。
+  5. 回傳同格式 dict。
+- `get_market_snapshot(now_epoch)` 直接 delegate 給 `primary`。
+
+## 3.4 取捨流程圖
+```mermaid
+flowchart TD
+    TWSE[TWSE a field 委賣一] --> AOK{a has value?}
+    AOK -- Yes --> UC[Update _price_cache]
+    AOK -- No --> RC[Read _price_cache]
+    UC --> TQ[twse_quote with tick_at]
+    RC --> CE{cache empty?}
+    CE -- No --> TQ
+    CE -- Yes --> YS[Seed from y yesterday close]
+    YS --> YSV{y valid?}
+    YSV -- Yes --> TQ
+    YSV -- No --> NONE_T[twse_quote = None]
+    YF[Yahoo TW HTML scraping] --> YOK{HTTP OK?}
+    YOK -- Yes --> YQ[yahoo_quote 委賣一 or regularMarketPrice]
+    YOK -- No --> WARN[WARN log]
+    WARN --> NONE_Y[yahoo_quote = None]
+    TQ --> COMP[Composite: compare tick_at]
+    NONE_T --> COMP
+    YQ --> COMP
+    NONE_Y --> COMP
+    COMP --> BOTH{Both available?}
+    BOTH -- Yes --> FRESHER[Use fresher tick_at]
+    BOTH -- No --> ANYONE{Either available?}
+    ANYONE -- Yes --> USE_AVAIL[Use available one]
+    ANYONE -- No --> STALE[STALE_QUOTE]
 ```
 
 ## 4. 流程設計
@@ -467,6 +549,14 @@ LINE_TEMPLATE_OPENING_SUMMARY=line_opening_summary_mobile_compact_v1
   - JSON1 是否可用（例如 `SELECT json_valid('[]')` 成功）
 - 若 JSON1 不可用，採 **fail-fast**：服務啟動失敗並輸出明確錯誤，禁止自動降級。
 
+### 8.2 Yahoo Finance Adapter 參數（無需環境變數，為 code 常數）
+| 參數 | 預設值 | 說明 |
+|---|---|---|
+| `YAHOO_BASE_URL` | `https://query2.finance.yahoo.com/v8/finance/chart/` | Yahoo Finance v8 chart 端點 |
+| `YAHOO_TIMEOUT_SEC` | `10` | HTTP 逾時秒數 |
+| `YAHOO_EXCHANGE_FALLBACK` | `".TW"` | 無 `ex` 快取時的 symbol 後綴 |
+| `MAX_RESPONSE_BYTES` | `1_048_576` | HTTP 回應讀取上限（共用同 TWSE adapter 常數）|
+
 ## 9. Phase 規劃
 ### Phase 1（手動門檻）
 - 使用 `watchlist.manual_fair_price/manual_cheap_price`。
@@ -594,3 +684,12 @@ LINE_TEMPLATE_OPENING_SUMMARY=line_opening_summary_mobile_compact_v1
 - Schema 已使用 CHECK 約束 + JSON1 型別驗證
 - 補償機制（`pending_delivery_ledger`）正確避免重複通知
 - `truststore` 已整合，無 TLS 驗證繞過
+
+### 13.5 雙行情來源 Adapter 規格（v0.9 新增）
+
+| 行動 ID | 優先 | 要求行為 | 狀態 | 測試 ID |
+|---|---|---|---|---|
+| CR-ADP-01 | 🟠 | `YahooFinanceMarketDataProvider` HTTP 失敗（4xx/5xx/timeout）必須寫 WARN log 並回傳空 dict，不得 raise 影響主流程 | ⬜ 待實作 | TP-ADP-001 |
+| CR-ADP-02 | 🟠 | `CompositeMarketDataProvider` 必須以 `tick_at` 比較選取較新報價；相等時以 TWSE 為準；兩者皆無時不加入結果 dict（由呼叫端觸發 STALE_QUOTE）| ⬜ 待實作 | TP-ADP-002 |
+| CR-ADP-03 | 🟡 | `TwseRealtimeMarketDataProvider` 回傳的 quotes dict 需含 `exchange` 欄位（值為 `tse` 或 `otc`），供 Composite 注入 Yahoo adapter symbol mapping | ⬜ 待實作 | TP-ADP-003 |
+| CR-ADP-04 | 🟡 | Yahoo adapter 的 HTTP 回應也需受 `MAX_RESPONSE_BYTES` 限制（與 TWSE adapter 相同 1 MB 上限） | ⬜ 待實作 | TP-ADP-004 |

@@ -1,6 +1,6 @@
 # CLAUDE.md - Stock Monitor AI 開發手冊
 
-最後更新：2026-04-14（Asia/Taipei, v0.9）
+最後更新：2026-04-14（Asia/Taipei, v1.0）
 對齊文件：`PDD_Stock_Monitoring_System.md`、`EDD_Stock_Monitoring_System.md`、`TEST_PLAN.md`、`USER_STORY_ACCEPTANCE_CRITERIA.md`、`API_CONTRACT.md`、`ADR.md`、`NFR_SLI_SLO.md`、`SECURITY_AND_SECRETS.md`、`OPERATIONS_RUNBOOK.md`
 
 本檔與 `CODEX.md` 保持同一份規格語意，任一檔更新時需同步另一檔。
@@ -108,6 +108,9 @@ Alias（等效）：
 | `stock_monitor.application.valuation_calculator` | `ManualValuationCalculator` |
 | `stock_monitor.application.runtime_service` | `MinuteCycleConfig` |
 | `stock_monitor.uat.scenarios` | `UAT_SCENARIOS` |
+| `stock_monitor.adapters.market_data_twse` | `TwseRealtimeMarketDataProvider`（含 `_price_cache`、`_exchange_cache`、`_tick_cache`） |
+| `stock_monitor.adapters.market_data_yahoo` | `YahooFinanceMarketDataProvider` |
+| `stock_monitor.adapters.market_data_composite` | `CompositeMarketDataProvider` |
 
 ## 8. TDD 執行規範
 1. 先跑對應測試確認紅燈
@@ -136,17 +139,19 @@ python -m pytest -q tests/test_integration_workflow.py -k TP-INT-010
 
 ## 10. 完成定義（DoD）
 - `TP-DB-*`, `TP-ENV-*`, `TP-POL-*`, `TP-INT-*`, `TP-TRD-*`, `TP-VAL-*`, `TP-UAT-*` 全部綠燈
-- `TP-SEC-*`, `TP-ARCH-*` 全部綠燈（Code Review 改善項目）
+- `TP-SEC-*`, `TP-ARCH-*`, `TP-ADP-*` 全部綠燈（Code Review 改善項目）
 - UAT 14 條可追溯
 - coverage gate：`lines/branches/functions/statements = 100%`
 - 文件同步：若規則有變更，`PDD/EDD/TEST_PLAN/feature/CLAUDE/CODEX` 一並更新
 
-## 11. Code Review 改善禁止清單（v0.9 定版，業務程式禁寫）
-- **禁止** `scenario_case` 分支存在於任何生產估值計算路徑（CR-SEC-02、CR-ARCH-02）
+## 11. Code Review 改善禁止清單（v1.0 定版，業務程式禁寫）
+- **禁止** `scenario_case` 分支存在於任何生產估値計算路徑（CR-SEC-02、CR-ARCH-02）
 - **禁止** `_resolve_timezone` 對無效時區名稱靜默 fallback UTC（CR-SEC-03）
 - **禁止** 在 `message_template.py` 以外的模組重複定義 `render_line_template_message`（CR-ARCH-03）
-- **禁止** 在 `app.py`（CLI Interface Layer）內定義估值計算邏輯（CR-ARCH-01）
+- **禁止** 在 `app.py`（CLI Interface Layer）內定義估値計算邏輯（CR-ARCH-01）
 - **禁止** `TimeBucketService` 對無效時區名稱靜默設 `self._tz = None`（CR-CODE-05）
+- **禁止** `YahooFinanceMarketDataProvider` 在 HTTP 失敗時 raise exception 向上傳播（CR-ADP-01）
+- **禁止** `CompositeMarketDataProvider` 直接回傳任一來源的字典而不做 Freshness-First 比較（CR-ADP-02）
 
 ## 12. Out of Scope（此階段不做）
 - 自動下單

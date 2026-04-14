@@ -10,7 +10,7 @@
 4. `pytest-bdd` 已安裝，`stock_monitoring_smoke.feature` 與完整 `stock_monitoring_system.feature` 皆可執行。
 5. `stock_monitor` 主程式套件已建立並實作核心測試契約。
 6. 最新狀態：
-   - `pytest -q tests`：最近一次基線（2026-04-14）為 `213 passed`（含完整 BDD + unit/integration/UAT contract + CR-* 改善驗證，100% coverage）
+   - `pytest -q tests`：最近一次基線（2026-04-14）為 `241 passed`（含完整 BDD + unit/integration/UAT contract + CR-* 改善驗證 + TP-ADP-001~004 + 委賣一 ask price，100% coverage）
    - Coverage gate：`100%`（line + branch）
    - CI：`.github/workflows/ci.yml` 已啟用（push / pull_request），且已採用 action SHA pin + 鎖版依賴 + `pip-audit`
    - 可執行入口：`python -m stock_monitor init-db|run-once|reconcile-once|valuation-once|run-daemon`
@@ -121,6 +121,25 @@
     - 開盤摘要已自動觸發並推送 LINE（10:27）
     - 每 60 秒輪詢；14:00 自動執行估值日結
     - `STALE_QUOTE:3293` WARN 正常記錄（3293 當日交易清淡）
+23. **2026-04-14 雙來源行情 adapter 實作（TP-ADP-001 ~ TP-ADP-004）**：
+    - 新增 `adapters/market_data_yahoo.py`：`YahooFinanceMarketDataProvider`，Yahoo TW HTML scraping（秒級近即時；v8 API 改為 HTML 因 v8 有 ~20 分鐘強制延遲），HTTP 失敗 WARN+跳過不 raise（CR-ADP-01）
+    - 新增 `adapters/market_data_composite.py`：`CompositeMarketDataProvider`，Freshness-First 合併（ADR-014），tick_at 相同 TWSE 優先（CR-ADP-02）；冷啟動 TWSE `a='-'` 時自動 fallback Yahoo
+    - 更新 `adapters/market_data_twse.py`：新增 `_exchange_cache`（tse/otc 對應）、`_tick_cache`，quotes 回傳增加 `exchange` 欄位
+    - 測試：`tests/test_adapters_yahoo_composite_red.py`（25 條 TP-ADP-001~004 + coverage edge cases）
+    - 測試計數：213 → **237 passed**，維持 100% coverage
+24. **2026-04-14 行情 price 改為委賣一（最佳委賣價）**：
+    - 改採委賣一而非最後成交價（`z`），原因：委賣一代表當下可立即買入的最低價，更穩定且持續存在（`z` 在兩筆成交之間顯示 `-`）
+    - TWSE adapter：從 `a` 欄位（委賣五檔 `_` 分隔）取第一個值；`a` 為空時 cache → 冷啟動 `y`（昨收）種子
+    - Yahoo adapter：新增 `_RE_ASK` regex 從 HTML 委賣價區塊抓委賣一；找不到區塊（盤後/休市）fallback `regularMarketPrice`
+    - 測試計數：240 → **241 passed**（新增 `test_yahoo_ask_price_extracted_from_order_book_table`），維持 100% coverage
+    - 對應文件更新：ADR-014、PDD FR-15、EDD §3.3/§3.4、TEST_PLAN TP-ADP-003、CODEX.md §7
+    - 盤中實測（2026-04-14 12:52）：TWSE 與 Yahoo 委賣一完全一致（見下表）
+
+    | 代號 | TWSE 委賣一 | Yahoo 委賣一 | tick（CST） |
+    |---|---|---|---|
+    | 2330 台積電 | 2,055.00 | 2,055.00 | 12:52 |
+    | 2348 海悅   | 78.00    | 78.00    | 12:51–52 |
+    | 3293 鈊象   | 762.00   | 762.00   | 12:52–53 |
 
 ## 6. 下一步要做什麼（建議執行順序）
 1. 觀察今日 14:00 估值日結結果，確認三方法快照正確入庫。
@@ -150,7 +169,7 @@ python -m pip install --require-hashes -r requirements-dev.txt
 python -m pytest -q tests
 ```
 5. 最近一次基線結果（2026-04-14）：
-   - `213 passed`
+   - `241 passed`
    - coverage `100%`
    - 實際請以你當次執行輸出為準
 

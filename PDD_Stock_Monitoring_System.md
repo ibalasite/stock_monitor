@@ -1,6 +1,6 @@
 # PDD - 台股價格監控與 LINE 通知系統（V0/V1）
 
-版本：v0.9  
+版本：v1.0  
 日期：2026-04-14  
 狀態：Draft（可進入 review）
 
@@ -87,6 +87,11 @@
 - 行情資料需滿足新鮮度門檻（預設 90 秒內），逾時資料視為 stale，該分鐘跳過通知。
 - 若啟用多資料來源且報價差異超過門檻，標記 `DATA_CONFLICT`，該分鐘跳過通知並記錄 WARN。
 - 被跳過分鐘不得補發過期訊號。
+- 行情資料採雙來源：TWSE MIS（主）與 Yahoo Finance v8 chart API（副），以報價時間戳（`tick_at`）較新者為準。
+  - 若 TWSE `z` 欄位在此輪詢快照為 `'-'`，先嘗試 TWSE 內部 `_price_cache`（本次 daemon 生命週期的最後已知成交價）。
+  - 若 TWSE cache 有值但 Yahoo 的 `regularMarketTime` 較新，採 Yahoo 的價格與時間。
+  - 若 TWSE cache 為空（冷啟動第一輪），直接使用 Yahoo 的值。
+  - 若兩者均不可用，該股票該分鐘標記 `STALE_QUOTE`，跳過通知。
 
 ### FR-03 訊號判斷
 - `stock_status=1`：`market_price <= fair_price`（低於合理價）
@@ -94,7 +99,29 @@
 - 若同時符合 `1` 與 `2`，僅發送 `2`（便宜價優先）。
 - Phase 1 優先使用手動價格（例如：2330 fair=1500, cheap=1000）。
 
-### FR-04 LINE 通知
+### FR-15 雙行情來源（TWSE 主 + Yahoo Finance 副）
+- 盤中行情採雙來源抓取：
+  - **主來源**：TWSE MIS `getStockInfo.jsp`（`a` 欄位第一筆，委賣一，即最佳委賣價）。  
+    - TWSE 在委買委賣訂單薄短暫消失時 `a` 為空或 `-`；系統以 `_price_cache`（daemon 生命週期內最後已知委賣一）補全。
+    - 冷啟動 cache 為空時，以 `y`（昨日收盤）種子填充。
+  - **副來源**：Yahoo Finance TW quote 頁面 HTML scraping（`tw.stock.yahoo.com/quote/{stock_no}`）。  
+    - 從 server-render HTML 的委賣價區塊解析**委賣一**（最佳委賣價），作為 `price`。  
+    - 若 委賣一欄位不存在（盤後或休市），fallback 使用 `regularMarketPrice`。  
+    - URL 格式：`stock_no` only，不需 `.TW`/`.TWO` suffix（TSE/OTC 均可）。  
+    - 採用 HTML scraping（近即時，秒級延遲），不使用 v8 chart API（後者有 ~20 分鐘延遲）。
+- **取捨規則（Freshness-First）**：
+  1. 若 TWSE cache 有值且 Yahoo 的 `regularMarketTime` 不比 TWSE cache 的 `tick_at` 新 → 採 TWSE cache 值。
+  2. 若 Yahoo 的 `regularMarketTime` 嚴格大於 TWSE cache 的 `tick_at` → 採 Yahoo 值（包含 Yahoo 的 `regularMarketTime` 作為 `tick_at`）。
+  3. 若 TWSE cache 為空（冷啟動第一個輪詢 TWSE `a='-'` 且 cache 為空）→ 直接採 Yahoo 值。
+  4. 若兩者均無法取得有效價格 → 該股票該分鐘標記 `STALE_QUOTE`，跳過通知。
+- Yahoo Finance 頁面請求失敗（逾時、HTTP 錯誤）不得中斷主流程：記錄 WARN，回退使用 TWSE cache。
+- TWSE `ex` 欄位快取（`tse/otc`）需由 `TwseRealtimeMarketDataProvider` 在每輪詢更新；Yahoo adapter 接受 exchange_map dict 作為輸入（interface 相容性，不用於 URL 建構）。
+- **採用委賣一而非成交價（`z`）的原因**：委賣一代表當下可立即買到的最低價格（明確且即時），成交價 `z` 在兩筆成交之間顯示為 `'-'`（短暫閃爍），委賣一維持連續更新，更能反映現況。
+
+### FR-16 行情 adapter 可獨立替換
+- `MarketDataPort` 定義 `get_realtime_quotes(stock_nos) -> dict[str, dict]` 與 `get_market_snapshot(now_epoch) -> dict`。
+- `CompositeMarketDataProvider` 實作 Freshness-First 合併邏輯，不直接依賴 TWSE 或 Yahoo 的具體實作細節；只依賴 `MarketDataPort` 介面（可注入任何 provider）。
+- 未來可在不改 Application layer 的情況下替換任一 provider。
 - 使用者以自己的 LINE Official Account / Messaging API Bot 發送。
 - 預設發送至使用者指定群組（groupId）。
 - 每分鐘最多發送 1 封彙總訊息（不並發發送）。
@@ -203,8 +230,12 @@
 - 使用 `LINE Messaging API`（LINE Notify 已終止）。
 - 需建立 Official Account 與 Channel Access Token。
 
-### 9.2 台股行情
+### 9.2 台股行情（雙來源架構）
 - 以公開可取得網頁/API 為主（個人使用）。
+- 主來源：TWSE MIS `getStockInfo.jsp`（`z` 欄位即時成交快照，`tlong` 毫秒時間戳）。
+- 副來源：Yahoo Finance v8 chart API（`regularMarketPrice` + `regularMarketTime` unix seconds）。
+  - 優點：Yahoo 保留最後一筆成交快取，適合 TWSE `z='-'` 的 daemon 冷啟動暖機。
+  - 限制：Yahoo 可能有數分鐘延遲，時間戳不比 TWSE 精確；故以時間戳較新者為準（Freshness-First）。
 - 需保留 provider 抽換能力，後續可替換成其他 API。
 - 可評估券商 API 作備援或升級。
 
@@ -249,7 +280,9 @@
 
 ### Infrastructure Layer
 - Adapters：
-  - `TwsePublicDataAdapter`
+  - `TwseRealtimeMarketDataProvider`（主行情，含 `_price_cache` 與 `ex` 欄位記憶）
+  - `YahooFinanceMarketDataProvider`（副行情，Yahoo Finance v8 chart API）
+  - `CompositeMarketDataProvider`（Freshness-First 聚合，依 `tick_at` 取較新值）
   - `TaiwanHolidayCalendarAdapter`
   - `LineMessagingApiAdapter`
   - `SqliteMessageRepository`
@@ -274,6 +307,7 @@
 12. 每交易日 14:00 應對每檔股票嘗試執行三個方法（`emily_composite_v1`、`oldbull_dividend_yield_v1`、`raysky_blended_margin_v1`）；資料不足方法需 `skip + log` 且不得覆蓋舊快照。
 13. 每交易日開盤第一個可交易分鐘，系統需先發送 1 封「監控設定摘要」至 LINE，內容含股票、方法、各方法 `fair/cheap`，且同一交易日不得重複發送；該摘要需由模板渲染（非程式硬編碼）。
 14. 所有發送到 LINE 的訊息（彙總、摘要、觸發列、測試推播）皆須透過 `template_key + context` 渲染；程式碼中不得直接硬編碼最終文案。
+15. 盤中行情採雙來源（TWSE 主 + Yahoo Finance 副）：以 `tick_at` 較新者為準（Freshness-First）；Yahoo Finance 呼叫失敗不得中斷主流程；兩者均無法取得時該分鐘 `STALE_QUOTE`。
 
 ## 13. 風險與因應
 - 資料源中斷：加重試、fallback、錯誤告警。
@@ -288,7 +322,7 @@
 
 ## 15. 待決策事項
 - 三方法融合權重（`raysky_blended_margin_v1`）預設值是否採等權重。
-- 多來源行情衝突時的優先權規則。
+- 多來源行情衝突時的優先權規則。✅ 已定版：Freshness-First（`tick_at` 較新者勝出）
 - NCAV 子法於金融股是否預設停用。
 
 ## 16. 參考來源

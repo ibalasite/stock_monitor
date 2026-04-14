@@ -130,3 +130,23 @@
 4. 影響：
    - 每次 `evaluate_market_open_status` 前必須查詢 DB，確認當日是否已送出。
    - CR-CODE-06 對應實作改善：開盤檢查起始時間 08:45～09:00 區間唇均可評估，不定式限定在整分点 09:00。
+
+## ADR-014 雙行情來源採 Freshness-First 策略，行情 price 代表委賣一
+1. 狀態：Accepted
+2. 決策：
+   - 盤中行情以 TWSE MIS（`getStockInfo.jsp`）為主，Yahoo Finance TW 頁面 HTML scraping 為副。
+   - 合併邏輯由 `CompositeMarketDataProvider` 負責：比較兩來源的 `tick_at`（unix seconds），取較新者；相等時以 TWSE 為準。
+   - **行情 `price` 代表委賣一（最佳委賣價，即當下可立即買到的最低價格）**，而非成交價。
+   - TWSE：解析 `a` 欄位（委賣五檔，`_` 分隔），取第一個值。`a` 為空或 `-` 時以 `_price_cache` 補全；cache 冷時以 `y`（昨收）種子填充。
+   - Yahoo：從 HTML 委賣價區塊解析委賣一；若該區塊不存在（盤後/休市）fallback `regularMarketPrice`。
+3. 原因：
+   - 委賣一代表**當下可立即買入的市場價**，比最後成交價更即時且穩定：成交價 `z` 在兩筆成交之間顯示 `-`，委賣一則持續存在於委託簿中。
+   - TWSE `getStockInfo.jsp` 的 `a` 欄位與網站委賣五檔直接對應，數據一致。
+   - Yahoo Finance TW HTML scraping 為近即時（秒級）；v8 chart API 有 ~20 分鐘強制延遲，已改用 HTML scraping。
+   - Yahoo 的時間來源（`regularMarketTime`）以秒為單位，TWSE 為毫秒；兩者比較前統一換算為 unix seconds。
+4. 影響：
+   - 新增 `YahooFinanceMarketDataProvider`（`stock_monitor/adapters/market_data_yahoo.py`）。
+   - 新增 `CompositeMarketDataProvider`（`stock_monitor/adapters/market_data_composite.py`）。
+   - `TwseRealtimeMarketDataProvider` 新增 `_price_cache`（現儲存最後已知委賣一）、`_exchange_cache`，並在 `get_realtime_quotes` 回傳欄位中加入 `exchange`。
+   - `daemon_runner.py` 的 `_build_runtime` 改為注入 `CompositeMarketDataProvider`。
+   - CLAUDE.md §11 禁止清單登錄 CR-ADP-01、CR-ADP-02。

@@ -1,6 +1,6 @@
 # TEST_PLAN - Stock Monitor System
 
-版本：v0.8  
+版本：v0.9  
 日期：2026-04-14  
 依據文件：[EDD_Stock_Monitoring_System.md](c:/Projects/stock/EDD_Stock_Monitoring_System.md), [PDD_Stock_Monitoring_System.md](c:/Projects/stock/PDD_Stock_Monitoring_System.md), [USER_STORY_ACCEPTANCE_CRITERIA.md](c:/Projects/stock/USER_STORY_ACCEPTANCE_CRITERIA.md)
 
@@ -13,6 +13,7 @@
 6. 以 TDD 流程實作（先測試再主程式），並達成 coverage gate 100%。  
 7. 驗證所有出站 LINE 訊息文案由 Template 渲染（非程式硬編碼），且模板變更可在不改主流程下生效。  
 8. 驗證 Code Review 定版的 16 項改善行動（EDD §13）中具可驗證行為的項目均有對應測試案例。
+9. 驗證雙行情來源（TWSE + Yahoo Finance）Composite Adapter 的 Freshness-First 邏輯與 Yahoo 失敗容錯（EDD §13.5 / PDD FR-15，TP-ADP-001~004）。
 
 ## 2. 測試範圍
 ### In Scope
@@ -128,6 +129,10 @@
 | TP-ARCH-003 | EDD §13.3 CR-CODE-03 | Unit | `MinuteCycleConfig` dataclass 存在於 `runtime_service.py`，`run_minute_cycle` 接受它作為設定入口 |
 | TP-ARCH-004 | EDD §13.2 CR-ARCH-06 / §13.3 CR-CODE-06 | Integration | 開盤摘要冪等狀態儲存於 DB（非 log 字串比對）；daemon 在 09:01 後重啟時數同日仍可發送開盤摘要 |
 | TP-ARCH-005 | EDD §13.2 CR-ARCH-04 | Unit | `app.py` 不得定義 `_run_daemon_loop` 及 `_build_runtime`；只保留入口與指令路由 |
+| TP-ADP-001 | EDD §13.5 CR-ADP-01 / PDD §7 FR-15 | Unit | `YahooFinanceMarketDataProvider` HTTP 4xx/5xx/timeout 失敗時寫 WARN log 並回傳空 dict，不 raise exception 影響主流程 |
+| TP-ADP-002 | EDD §13.5 CR-ADP-02 / PDD §7 FR-15 | Unit | `CompositeMarketDataProvider` 以 `tick_at` 較新者勝；相等時 TWSE 優先；兩者皆無時不加入結果 dict（呼叫端觸發 STALE_QUOTE）|
+| TP-ADP-003 | EDD §13.5 CR-ADP-03 / PDD §7 FR-15 | Unit | `TwseRealtimeMarketDataProvider` quotes 含 `exchange` 欄位（`tse`/`otc`）；`_price_cache` 在 `a` 欄为空/`-` 時回傳最後已知委賣一；冷啟動 cache 空回傳無此股票 |
+| TP-ADP-004 | EDD §13.5 CR-ADP-04 / EDD §13.1 CR-SEC-04 | Unit | `YahooFinanceMarketDataProvider` HTTP 回應受 `MAX_RESPONSE_BYTES` 限制；截斷後 JSON 無效時 WARN 且回傳空 dict |
 | TP-ARCH-006 | EDD §13.2 CR-ARCH-05 | Unit | `merge_minute_message` 需有生產呼叫點或標記為私有（`_merge_minute_message`） |
 | TP-CODE-001 | EDD §13.3 CR-CODE-01 | Unit | `build_minute_rows` 中 `render_line_template_message` 呼叫次數 ≤ 1（統一單一 context 呼叫，消除三段重複） |
 | TP-CODE-002 | EDD §13.3 CR-CODE-02 | Unit | `reconcile_pending_once` 函式簽名不含 `line_client` 參數（移除永遠不用的參數） |

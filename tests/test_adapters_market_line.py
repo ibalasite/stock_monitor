@@ -38,7 +38,7 @@ def test_twse_provider_build_url_and_quote_parsing(monkeypatch):
 
     rows = {
         "msgArray": [
-            {"c": "2330", "z": "2000.0", "tlong": "1775802600000", "n": "台積電"},
+            {"c": "2330", "a": "2000.0_2005.0_2010.0_2015.0_2020.0_", "z": "2000.0", "tlong": "1775802600000", "n": "台積電"},
             {"c": "2317", "z": "-", "tlong": "1775802600000", "n": "鴻海"},
         ]
     }
@@ -62,9 +62,9 @@ def test_twse_provider_supports_otc_and_prefers_latest_tick(monkeypatch):
     provider = TwseRealtimeMarketDataProvider(base_url="https://example.test/api")
     rows = {
         "msgArray": [
-            {"c": "2330", "z": "1999.0", "tlong": "1775802000000", "n": "台積電"},
-            {"c": "2330", "z": "2000.0", "tlong": "1775802600000", "n": "台積電"},
-            {"c": "3293", "z": "688.0", "tlong": "1775802600000", "n": "鈊象"},
+            {"c": "2330", "a": "1999.0_2004.0_2009.0_2014.0_2019.0_", "z": "1999.0", "tlong": "1775802000000", "n": "台積電"},
+            {"c": "2330", "a": "2000.0_2005.0_2010.0_2015.0_2020.0_", "z": "2000.0", "tlong": "1775802600000", "n": "台積電"},
+            {"c": "3293", "a": "688.0_689.0_690.0_691.0_692.0_", "z": "688.0", "tlong": "1775802600000", "n": "鈊象"},
             {"c": "9999", "z": "1.0", "tlong": "1775802600000", "n": "ignore-me"},
         ]
     }
@@ -88,8 +88,8 @@ def test_twse_provider_deduplicates_channels_and_skips_older_tick(monkeypatch):
     provider = TwseRealtimeMarketDataProvider(base_url="https://example.test/api")
     rows = {
         "msgArray": [
-            {"c": "2330", "z": "2000.0", "tlong": "1775802600000", "n": "台積電"},
-            {"c": "2330", "z": "1990.0", "tlong": "1775802000000", "n": "台積電(older)"},
+            {"c": "2330", "a": "2000.0_2005.0_2010.0_2015.0_2020.0_", "z": "2000.0", "tlong": "1775802600000", "n": "台積電"},
+            {"c": "2330", "a": "1990.0_1995.0_2000.0_2005.0_2010.0_", "z": "1990.0", "tlong": "1775802000000", "n": "台積電(older)"},
         ]
     }
 
@@ -166,7 +166,7 @@ def test_twse_provider_additional_branches(monkeypatch):
         payload = {
             "msgArray": [
                 {"c": "", "z": "100.0", "tlong": "1775802600000"},
-                {"c": "2330", "z": "2000.0", "tlong": "bad-tlong"},
+                {"c": "2330", "a": "2000.0_2005.0_2010.0_2015.0_2020.0_", "z": "2000.0", "tlong": "bad-tlong"},
             ]
         }
         return _FakeHttpResponse(body=json.dumps(payload))
@@ -182,10 +182,10 @@ def test_twse_provider_additional_branches(monkeypatch):
     with pytest.raises(TimeoutError):
         provider.get_realtime_quotes(["2330"])
 
-    # First call: z has a valid price → gets cached
+    # First call: a (best ask) has a valid price → gets cached
     def _with_price(req, timeout):
         payload = {"msgArray": [
-            {"c": "2330", "z": "2045.0", "tlong": "1775802600000", "n": "台積電"},
+            {"c": "2330", "a": "2045.0_2050.0_2055.0_2060.0_2065.0_", "tlong": "1775802600000", "n": "台積電"},
         ]}
         return _FakeHttpResponse(body=json.dumps(payload))
 
@@ -193,16 +193,51 @@ def test_twse_provider_additional_branches(monkeypatch):
     quotes = provider.get_realtime_quotes(["2330"])
     assert quotes["2330"]["price"] == 2045.0
 
-    # Second call: z='-' → should return cached last trade price, not None
-    def _no_z(req, timeout):
+    # Second call: a absent → should return cached best ask price, not None
+    def _no_a(req, timeout):
         payload = {"msgArray": [
-            {"c": "2330", "z": "-", "tlong": "1775802660000", "n": "台積電"},
+            {"c": "2330", "tlong": "1775802660000", "n": "台積電"},
         ]}
         return _FakeHttpResponse(body=json.dumps(payload))
 
-    monkeypatch.setattr("stock_monitor.adapters.market_data_twse.request.urlopen", _no_z)
+    monkeypatch.setattr("stock_monitor.adapters.market_data_twse.request.urlopen", _no_a)
     quotes = provider.get_realtime_quotes(["2330"])
-    assert quotes["2330"]["price"] == 2045.0, "should return last cached trade price when z='-'"
+    assert quotes["2330"]["price"] == 2045.0, "should return last cached ask price when a is absent"
+
+
+def test_twse_cold_start_seeds_price_cache_from_yesterday_close(monkeypatch):
+    """a absent + cache cold → seed _price_cache from y (yesterday's close) so cold-start
+    never needs to fallback to delayed external sources (Yahoo ~20min delay)."""
+    provider = TwseRealtimeMarketDataProvider(base_url="https://example.test/api")
+
+    def _only_y(req, timeout):
+        payload = {"msgArray": [
+            {"c": "2330", "z": "-", "y": "1990.0", "tlong": "1776128700000", "n": "台積電", "ex": "tse"},
+        ]}
+        return _FakeHttpResponse(body=json.dumps(payload))
+
+    monkeypatch.setattr("stock_monitor.adapters.market_data_twse.request.urlopen", _only_y)
+    quotes = provider.get_realtime_quotes(["2330"])
+
+    # Should return yesterday's close as price when cache is cold
+    assert "2330" in quotes, "cold-start with only y field should still produce a quote"
+    assert quotes["2330"]["price"] == 1990.0, "cold-start price should be yesterday's close (y)"
+    assert provider._price_cache.get("2330") == 1990.0, "_price_cache should be seeded from y"
+
+
+def test_twse_cold_start_no_y_returns_no_quote(monkeypatch):
+    """z='-' + cache cold + no y → no quote returned (genuine stale)."""
+    provider = TwseRealtimeMarketDataProvider(base_url="https://example.test/api")
+
+    def _neither(req, timeout):
+        payload = {"msgArray": [
+            {"c": "2330", "z": "-", "y": "-", "tlong": "1776128700000", "n": "台積電", "ex": "tse"},
+        ]}
+        return _FakeHttpResponse(body=json.dumps(payload))
+
+    monkeypatch.setattr("stock_monitor.adapters.market_data_twse.request.urlopen", _neither)
+    quotes = provider.get_realtime_quotes(["2330"])
+    assert "2330" not in quotes, "no quote when both z and y are missing"
 
 
 def test_line_push_client_success_and_failures(monkeypatch):
