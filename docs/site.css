@@ -3,8 +3,8 @@
    ================================================================ */
 
 :root {
-  --clr-primary:    #1a6fb5;
-  --clr-primary-dk: #145091;
+  --clr-primary:    #2d9ef5;
+  --clr-primary-dk: #1a8ae0;
   --clr-accent:     #e8b44b;
   --clr-success:    #2a9d6a;
   --clr-warn:       #e07b39;
@@ -40,8 +40,9 @@ img { max-width: 100%; height: auto; display: block; }
   position: fixed;
   top: 0; left: 0; right: 0;
   height: var(--nav-h);
-  background: var(--clr-primary);
+  background: #111827;
   color: #fff;
+  border-bottom: 1px solid rgba(45,158,245,.15);
   display: flex;
   align-items: center;
   padding: 0 24px;
@@ -83,6 +84,61 @@ img { max-width: 100%; height: auto; display: block; }
   padding: 2px 8px;
   border-radius: 20px;
   font-weight: 600;
+}
+
+/* ---- Doc content h1 in sidebar pages (anchor for sidebar nav, appears below banner) ---- */
+.doc-content-h1 {
+  font-size: 1.1rem;
+  font-weight: 700;
+  color: var(--clr-muted);
+  border-bottom: 2px solid var(--clr-border);
+  padding-bottom: 8px;
+  margin-bottom: 16px;
+  letter-spacing: normal;
+}
+
+/* ---- Doc Page Banner ---- */
+.doc-page-banner {
+  background: linear-gradient(135deg, #0d1117 0%, #0e1f3d 60%, #162d54 100%);
+  padding: calc(var(--nav-h) + 40px) 0 36px;
+  border-bottom: 1px solid rgba(45,158,245,.18);
+  position: relative;
+  overflow: hidden;
+}
+.doc-page-banner::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background: radial-gradient(ellipse at 80% 50%, rgba(45,158,245,.09) 0%, transparent 55%);
+  pointer-events: none;
+}
+.doc-pb-container {
+  max-width: 1140px;
+  margin: 0 auto;
+  padding: 0 48px;
+  position: relative;
+  z-index: 1;
+}
+.doc-pb-eyebrow {
+  font-size: .71rem;
+  font-weight: 700;
+  letter-spacing: .14em;
+  text-transform: uppercase;
+  color: #2d9ef5;
+  margin-bottom: 10px;
+}
+.doc-pb-title {
+  font-size: clamp(1.5rem, 3.5vw, 2.2rem);
+  font-weight: 800;
+  color: #f0f6ff;
+  margin: 0 0 10px;
+  letter-spacing: -.02em;
+  line-height: 1.2;
+}
+.doc-pb-sub {
+  font-size: .92rem;
+  color: rgba(200,225,255,.58);
+  margin: 0;
 }
 
 /* ---- Page layout ---- */
