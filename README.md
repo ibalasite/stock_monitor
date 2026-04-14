@@ -1,6 +1,6 @@
 # Stock Monitoring System - README
 
-更新日期：2026-04-14  
+更新日期：2026-04-14（GitHub Pages 網站上線）  
 專案目標：台股價格監控 + LINE 群組通知 + 每日估值 + SQLite 落盤 + 補償機制
 
 ## 1. 專案現況摘要
@@ -21,6 +21,19 @@
    - `uat-signoff.md`
 
 ## 2. 文件地圖（全部文件與用途）
+
+### GitHub Pages 文件網站（`docs/`）
+
+> 靜態 HTML 網站，可由 GitHub Pages 直接托管（Settings → Pages → branch `main` / folder `/docs`）。
+
+| 頁面 | 說明 |
+|---|---|
+| [docs/index.html](docs/index.html) | 首頁：Hero、統計數字、架構圖、文件導覽、快速啟動 |
+| [docs/pdd.html](docs/pdd.html) | PDD 完整頁：FR-01~FR-16、UAT 15 條、雙來源規則、風險 |
+| [docs/edd.html](docs/edd.html) | EDD 完整頁：業務規則、Clean Architecture（含 7 張架構 PNG）、SQLite schema、CR 禁止清單 |
+| [docs/site.css](docs/site.css) | 共用 CSS：固定 Navbar、sidebar TOC、RWD |
+
+Live URL（啟用 Pages 後）：`https://ibalasite.github.io/stock_monitor/`
 
 ### 架構圖（`docs/architecture/`）
 
@@ -181,12 +194,21 @@
     - 執行 `node scripts/generate_arch_diagrams.mjs` → 9 張 PNG 全部輸出至 `docs/architecture/images/`
     - ⚠️ 更新圖後**只能**用此腳本重新產生，**不可**直接對 `.md` 執行 `npx mmdc`（會產生 `-1`、`-2` 重複後綴檔）
     - `docs/architecture/README.md` 為索引頁，含 PNG 預覽、渲染說明與業界目錄慣例說明
+28. **GitHub Pages 文件網站建立（`docs/*.html`）**：
+    - 新增 3 頁導覽式 HTML 文件站，已推送至 `main` 分支，可由 GitHub Pages 直接服務（`/docs` 資料夾）
+    - `docs/index.html`：首頁 — Hero、統計數字（60s/300s/3方法/241測試/100%覆蓋）、文件導覽卡、架構圖嵌入、快速啟動
+    - `docs/pdd.html`：PDD 完整頁 — 背景/目標/範圍/User Flow/FR-01~FR-16 全清單/UAT 15條/風險/里程碑；左側 sidebar TOC 支援捲動高亮
+    - `docs/edd.html`：EDD 完整頁 — 業務規則（含不可變常數）/Clean Architecture 圖/雙 Adapter 規格及流程/盤中+估值流程圖嵌入/SQLite schema/部署圖/CR 禁止清單/Python Symbol Contract；共嵌入 7 張架構 PNG
+    - `docs/site.css`：共用樣式表 — 固定頂部 Navbar、sidebar TOC、Card、Table、Code Block、RWD（手機自動隱藏 sidebar）
+    - **啟用 GitHub Pages**：Repo → Settings → Pages → Source: branch `main` / folder `/docs` → Save
+    - URL：`https://ibalasite.github.io/stock_monitor/`（index）、`/pdd.html`、`/edd.html`
 
 ## 6. 下一步要做什麼（建議執行順序）
-1. 完成正式人工 UAT 簽核（PO/QA/Eng Lead），填寫 `uat-signoff.md`。
-2. 設定 GitHub Secrets（LINE sandbox）並啟用 nightly LINE push 驗證。
-3. 實際交易日持續觀察 daemon 日誌與通知品質，回填 `test-report.md`/`defect-log.md`。
-4. 持續維持流程：`PDD/EDD -> feature -> tests -> code`。
+1. 在 GitHub 啟用 GitHub Pages：Repo → Settings → Pages → Source: branch `main` / folder `/docs` → Save，讓 `docs/index.html`、`docs/pdd.html`、`docs/edd.html` 正式對外服務。
+2. 完成正式人工 UAT 簽核（PO/QA/Eng Lead），填寫 `uat-signoff.md`。
+3. 設定 GitHub Secrets（LINE sandbox）並啟用 nightly LINE push 驗證。
+4. 實際交易日持續觀察 daemon 日誌與通知品質，回填 `test-report.md`/`defect-log.md`。
+5. 持續維持流程：`PDD/EDD -> feature -> tests -> code`。
 
 ## 7. 啟動流程（實際可操作）
 ### 7.1 現在就可以跑（開發驗證模式）
@@ -459,13 +481,19 @@ powershell -ExecutionPolicy Bypass -File scripts\register_scheduled_tasks.ps1
 # 重新產生所有架構圖 PNG（修改任一 diagrams/*.md 的 mermaid 區塊後執行）
 # ⚠️ 不要直接對 .md 跑 npx mmdc，會產生 -1/-2 重複後綴檔
 node scripts/generate_arch_diagrams.mjs
+
+# 查看 GitHub Pages 文件站（本機開啟）
+Start-Process docs/index.html   # 直接用瀏覽器開啟 index
+# GitHub Pages URL（需先在 Repo Settings 啟用，見 §5.28）：
+# https://ibalasite.github.io/stock_monitor/
 ```
 
 ## 9. 文件維護規則
 1. 規格有變更時，必須同步更新：`PDD/EDD/feature/TEST_PLAN/CODEX/CLAUDE/README`。
 2. 架構有變更時，必須同步更新 `docs/architecture/diagrams/` 對應圖，並執行 `node scripts/generate_arch_diagrams.mjs` 重新產生 PNG。
-3. 任何新功能都要有對應：
+3. 規格或架構有實質變更時，必須同步更新 `docs/pdd.html` / `docs/edd.html`，確保 GitHub Pages 文件站與主規格文件保持一致。
+4. 任何新功能都要有對應：
    - 至少一個 User Story
    - 至少一個 `.feature` Scenario
    - 至少一個 TP 測試案例
-4. 未更新文件不得視為完成。
+5. 未更新文件不得視為完成。
