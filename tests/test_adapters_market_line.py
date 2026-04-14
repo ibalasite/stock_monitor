@@ -182,6 +182,28 @@ def test_twse_provider_additional_branches(monkeypatch):
     with pytest.raises(TimeoutError):
         provider.get_realtime_quotes(["2330"])
 
+    # z='-' with best-bid fallback (b field available)
+    def _no_z_with_bid(req, timeout):
+        payload = {"msgArray": [
+            {"c": "2330", "z": "-", "b": "2045.0000_2040.0000_", "tlong": "1775802600000", "n": "台積電"},
+        ]}
+        return _FakeHttpResponse(body=json.dumps(payload))
+
+    monkeypatch.setattr("stock_monitor.adapters.market_data_twse.request.urlopen", _no_z_with_bid)
+    quotes = provider.get_realtime_quotes(["2330"])
+    assert quotes["2330"]["price"] == 2045.0, "should fall back to best bid when z='-'"
+
+    # z='-' and b='-', high/low midpoint fallback
+    def _no_z_no_bid(req, timeout):
+        payload = {"msgArray": [
+            {"c": "2330", "z": "-", "b": "-", "h": "2050.0000", "l": "2010.0000", "tlong": "1775802600000", "n": "台積電"},
+        ]}
+        return _FakeHttpResponse(body=json.dumps(payload))
+
+    monkeypatch.setattr("stock_monitor.adapters.market_data_twse.request.urlopen", _no_z_no_bid)
+    quotes = provider.get_realtime_quotes(["2330"])
+    assert quotes["2330"]["price"] == 2030.0, "should fall back to (high+low)/2 when z='-' and no bid"
+
 
 def test_line_push_client_success_and_failures(monkeypatch):
     client = LinePushClient(channel_access_token="token", to_group_id="C1234567890")

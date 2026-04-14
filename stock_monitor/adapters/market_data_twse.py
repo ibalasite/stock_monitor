@@ -107,6 +107,15 @@ class TwseRealtimeMarketDataProvider:
             if stock_no not in requested:
                 continue
             price = _to_float(row.get("z"))
+            # When z='-' (no tick at this snapshot moment), fall back to best bid
+            # then midpoint of high/low, so active stocks are not skipped entirely.
+            if price is None:
+                price = _to_float((str(row.get("b") or "").split("_")[0]))
+            if price is None:
+                high = _to_float(row.get("h"))
+                low = _to_float(row.get("l"))
+                if high is not None and low is not None:
+                    price = (high + low) / 2
             if price is None:
                 continue
             try:
