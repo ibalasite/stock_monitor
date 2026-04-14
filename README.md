@@ -21,6 +21,24 @@
    - `uat-signoff.md`
 
 ## 2. 文件地圖（全部文件與用途）
+
+### 架構圖（`docs/architecture/`）
+
+> 所有圖使用 Mermaid 格式，GitHub / VS Code（Mermaid Preview 擴充）可直接渲染。
+
+| 圖 | 層次 | 描述 |
+|---|---|---|
+| [docs/architecture/README.md](docs/architecture/README.md) | 索引 | 架構文件導覽與維護說明 |
+| [01-system-context.md](docs/architecture/diagrams/01-system-context.md) | C4 L1 | 系統邊界、外部參與者（TWSE / Yahoo / LINE / SQLite） |
+| [02-clean-architecture.md](docs/architecture/diagrams/02-clean-architecture.md) | C4 L2 | Clean Architecture 四層模組對應與依賴方向 |
+| [03-intraday-flow.md](docs/architecture/diagrams/03-intraday-flow.md) | 行為 | 盤中每分鐘監控完整流程（冷卻 / 冪等 / 補償） |
+| [04-valuation-flow.md](docs/architecture/diagrams/04-valuation-flow.md) | 行為 | 每日 14:00 估值日結流程（三方法 + 狀態管理） |
+| [05-market-data-adapter.md](docs/architecture/diagrams/05-market-data-adapter.md) | 介面 | 雙行情來源 Freshness-First 聚合策略 |
+| [06-data-model.md](docs/architecture/diagrams/06-data-model.md) | 資料 | SQLite ER 圖 + 補償流程 Sequence Diagram |
+| [07-deployment.md](docs/architecture/diagrams/07-deployment.md) | 部署 | Windows 本機部署拓撲、Process 生命週期、維運指令 |
+
+### 規格與設計文件
+
 | 文件 | 用途 | 何時使用 |
 |---|---|---|
 | `PDD_Stock_Monitoring_System.md` | 產品需求（業務規則、範圍、UAT） | 討論需求、調整產品方向時 |
@@ -141,12 +159,34 @@
     | 2348 海悅   | 78.00    | 78.00    | 12:51–52 |
     | 3293 鈊象   | 762.00   | 762.00   | 12:52–53 |
 
+25. **2026-04-14 14:00 估值日結確認（live）**：
+    - 14:00:12 自動觸發，9 筆快照（3 股票 × 3 方法）寫入 `valuation_snapshots`，`system_logs` 記錄 `VALUATION_EXECUTED: 9`
+    - 三方法（`emily_composite_v1` / `oldbull_dividend_yield_v1` / `raysky_blended_margin_v1`）及 `manual_rule` 皆正常執行
+
+    | 股票 | emily_composite | oldbull_dividend | raysky_blended | manual_rule |
+    |---|---|---|---|---|
+    | 2330 | 合理 1800 / 便宜 1500 | 合理 1750 / 便宜 1400 | 合理 1284 / 便宜 1092 | 合理 2000 / 便宜 1500 |
+    | 2348 | 合理 70.4 / 便宜 63.4 | 合理 70 / 便宜 56 | 合理 51.4 / 便宜 43.7 | 合理 72 / 便宜 68 |
+    | 3293 | 合理 692 / 便宜 622.8 | 合理 690 / 便宜 552 | 合理 506.5 / 便宜 430.5 | 合理 700 / 便宜 680 |
+
+26. **Windows Task Scheduler 自動排程（工作日）**：
+    - `StockMonitor-Start`：週一至週五 08:50 自動執行 `scripts/start_daemon.ps1`，啟動 daemon（後台 Hidden）
+    - `StockMonitor-Stop`：週一至週五 14:30 自動執行 `scripts/stop_daemon.ps1`，停止 daemon
+    - 使用 `schtasks.exe` 建立（不需系統管理員），首次生效日：2026/4/15
+    - 相關腳本：`scripts/start_daemon.ps1`、`scripts/stop_daemon.ps1`、`scripts/register_scheduled_tasks.ps1`
+
+27. **系統架構圖目錄建立（`docs/architecture/`）**：
+    - 新增 7 張 Mermaid 架構圖（C4 L1 System Context、C4 L2 Clean Architecture、盤中流程、估值流程、雙行情 Adapter、ER 圖、部署拓撲）
+    - 新增 `scripts/generate_arch_diagrams.mjs`：從所有 `.md` 擷取 mermaid 區塊，以 `@mermaid-js/mermaid-cli` 產生 PNG
+    - 執行 `node scripts/generate_arch_diagrams.mjs` → 9 張 PNG 全部輸出至 `docs/architecture/images/`
+    - ⚠️ 更新圖後**只能**用此腳本重新產生，**不可**直接對 `.md` 執行 `npx mmdc`（會產生 `-1`、`-2` 重複後綴檔）
+    - `docs/architecture/README.md` 為索引頁，含 PNG 預覽、渲染說明與業界目錄慣例說明
+
 ## 6. 下一步要做什麼（建議執行順序）
-1. 觀察今日 14:00 估值日結結果，確認三方法快照正確入庫。
-2. 完成正式人工 UAT 簽核（PO/QA/Eng Lead），填寫 `uat-signoff.md`。
-3. 設定 GitHub Secrets（LINE sandbox）並啟用 nightly LINE push 驗證。
-4. 實際交易日持續觀察 daemon 日誌與通知品質，回填 `test-report.md`/`defect-log.md`。
-5. 持續維持流程：`PDD/EDD -> feature -> tests -> code`。
+1. 完成正式人工 UAT 簽核（PO/QA/Eng Lead），填寫 `uat-signoff.md`。
+2. 設定 GitHub Secrets（LINE sandbox）並啟用 nightly LINE push 驗證。
+3. 實際交易日持續觀察 daemon 日誌與通知品質，回填 `test-report.md`/`defect-log.md`。
+4. 持續維持流程：`PDD/EDD -> feature -> tests -> code`。
 
 ## 7. 啟動流程（實際可操作）
 ### 7.1 現在就可以跑（開發驗證模式）
@@ -402,12 +442,30 @@ python scripts/send_all_scenarios_to_line.py --send
 
 # 真實外部依賴 smoke（含 LINE sandbox push）
 python scripts/external_dependency_smoke.py --stock-no 2330 --line-send --require-line-config
+
+# 查詢排程工作狀態
+schtasks /Query /TN "StockMonitor-Start" /FO LIST
+schtasks /Query /TN "StockMonitor-Stop" /FO LIST
+
+# 手動觸發啟動排程（等同 08:50 自動觸發）
+schtasks /Run /TN "StockMonitor-Start"
+
+# 手動觸發停止排程
+schtasks /Run /TN "StockMonitor-Stop"
+
+# 重新建立排程工作（覆蓋現有設定）
+powershell -ExecutionPolicy Bypass -File scripts\register_scheduled_tasks.ps1
+
+# 重新產生所有架構圖 PNG（修改任一 diagrams/*.md 的 mermaid 區塊後執行）
+# ⚠️ 不要直接對 .md 跑 npx mmdc，會產生 -1/-2 重複後綴檔
+node scripts/generate_arch_diagrams.mjs
 ```
 
 ## 9. 文件維護規則
 1. 規格有變更時，必須同步更新：`PDD/EDD/feature/TEST_PLAN/CODEX/CLAUDE/README`。
-2. 任何新功能都要有對應：
+2. 架構有變更時，必須同步更新 `docs/architecture/diagrams/` 對應圖，並執行 `node scripts/generate_arch_diagrams.mjs` 重新產生 PNG。
+3. 任何新功能都要有對應：
    - 至少一個 User Story
    - 至少一個 `.feature` Scenario
    - 至少一個 TP 測試案例
-3. 未更新文件不得視為完成。
+4. 未更新文件不得視為完成。
