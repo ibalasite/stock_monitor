@@ -3,6 +3,13 @@
 更新日期：2026-04-14（GitHub Pages 網站上線）  
 專案目標：台股價格監控 + LINE 群組通知 + 每日估值 + SQLite 落盤 + 補償機制
 
+## 📄 線上文件網站（GitHub Pages）
+| 頁面 | 連結 |
+|---|---|
+| 首頁 | [ibalasite.github.io/stock_monitor/](https://ibalasite.github.io/stock_monitor/) |
+| 產品規格文件 (PDD) | [ibalasite.github.io/stock_monitor/pdd.html](https://ibalasite.github.io/stock_monitor/pdd.html) |
+| 工程設計文件 (EDD) | [ibalasite.github.io/stock_monitor/edd.html](https://ibalasite.github.io/stock_monitor/edd.html) |
+
 ## 1. 專案現況摘要
 1. 規格文件已完成並完成主要一致性對齊（PDD/EDD/User Story/Test Plan/Feature）。
 2. BDD 規格檔已完成：`features/stock_monitoring_system.feature`。
