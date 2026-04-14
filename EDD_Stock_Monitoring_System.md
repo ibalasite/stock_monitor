@@ -113,6 +113,66 @@
   - 模板缺失、語法錯誤、render 失敗需寫 `ERROR` log。
   - 發送路徑不得默默退回未知硬編碼格式。
 
+### 2.8 文字檔模板設計（FR-17）
+
+FR-14 確立「必須走模板渲染」；FR-17 在此之上要求渲染引擎可從外部純文字 `.j2` 檔讀取模板，讓非工程人員以記事本直接修改 wording，無須觸碰 Python 程式。
+
+**Clean Architecture 層次對映**：
+
+| 層次 | 元件 | FR-17 職責 |
+|---|---|---|
+| Interface Layer | 環境變數 | 透過 `LINE_TEMPLATE_DIR` 指定模板目錄 |
+| Application Layer | `render_line_template_message(key, ctx)` | 唯一呼叫入口（CR-ARCH-03）；只傳 context dict，不感知 Jinja2 |
+| Infrastructure Layer | `LineTemplateRenderer` / `TemplateRepository` | 持有 Jinja2 Environment，從 `.j2` 檔載入並渲染 |
+| 模板檔案 | `templates/line/*.j2` | 純文字「View」層；企劃可直接編輯 |
+
+**MVC 類比**：
+- **View**：`templates/line/*.j2`（模板文字檔，企劃可編輯，不涉及 Python）
+- **Model**：`context` dict（資料由 Application layer 組裝）
+- **Controller**：`render_line_template_message`（渲染引擎，介面永不改變）
+
+**目錄結構與 Key 對映**：
+
+```
+templates/
+└── line/
+    ├── trigger_row.j2          # 單股觸發列（status 1 / 2）
+    ├── trigger_row_digest.j2   # 彙總中的觸發節
+    ├── minute_digest.j2        # 每分鐘彙總外框
+    └── opening_summary.j2      # 開盤監控設定摘要
+```
+
+`template_key` 直接對應 `{key}.j2`；禁止含 `/`、`\`、`..`（路徑遍歷，OWASP A01）。
+
+**工程實作規格**：
+
+- **Jinja2 環境**：`Environment(loader=FileSystemLoader(template_dir), undefined=StrictUndefined, autoescape=False)`
+  - LINE 為純文字，不需 HTML autoescape。
+  - `StrictUndefined`：未定義變數立即報錯，禁止靜默空字串。
+- **Key → 檔名**：白名單正規表達式 `^[a-z0-9_]+$`；拒絕含路徑字元的 key。
+- **目錄覆蓋**：預設 `templates/line/`（相對 working directory）；可由 `LINE_TEMPLATE_DIR` 環境變數覆蓋。
+- **Fallback**：`TemplateNotFound` → fallback 至 `message_template.py` 內嵌預設 + 寫 `WARN` log (`TEMPLATE_NOT_FOUND`)；不得靜默降格。
+- **渲染失敗**：語法錯誤或 `StrictUndefined` 變數缺失 → 寫 `ERROR` log (`TEMPLATE_RENDER_FAILED`)；不得送出硬編碼未知格式。
+- **介面不變**：`render_line_template_message(template_key: str, context: dict) -> str` 簽名永不改變（CR-ARCH-03）。
+
+**範例 — 開盤摘要模板**（`templates/line/opening_summary.j2`）：
+```
+[開盤監控設定摘要] {{ trade_date }}
+
+{% for item in stocks %}{{ item.display_label }}
+  合理價 {{ item.fair_price }} ／ 便宜價 {{ item.cheap_price }}
+{% endfor %}
+監控方法：{% for m in methods %}{{ m }}{% if not loop.last %}、{% endif %}{% endfor %}
+```
+
+**範例 — 觸發通知列**（`templates/line/trigger_row.j2`）：
+```
+{{ display_label }}目前{{ current_price }}，
+{%- if stock_status == 2 %}低於便宜價{{ cheap_price }}（合理價{{ fair_price }}）
+{%- else %}低於合理價{{ fair_price }}
+{%- endif %}
+```
+
 ## 3. 架構總覽（Clean Architecture）
 ### 3.1 文字架構圖
 ```text

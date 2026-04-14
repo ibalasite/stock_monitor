@@ -48,6 +48,7 @@
       <li><a href="#data-model">資料模型（SQLite）</a></li>
       <li><a href="#deployment">部署架構</a></li>
       <li><a href="#line-config">LINE 設定</a></li>
+      <li><a href="#template-design">模板設計（FR-17）</a></li>
       <li><a href="#phases">Phase 規劃</a></li>
       <li><a href="#code-review">Code Review 禁止清單</a></li>
     </ul>
@@ -376,6 +377,141 @@ powershell -ExecutionPolicy Bypass -File scripts/register_scheduled_tasks.ps1</c
         <li>token / group id 格式明顯錯誤 → fail-fast</li>
         <li>若 canonical 與 alias 同時存在，優先使用 canonical</li>
       </ul>
+
+      <!-- ── 模板設計 ── -->
+      <h2 id="template-design">§7（擴充）文字檔模板設計（FR-17）</h2>
+      <div class="banner info">
+        <strong>FR-14 既有規則</strong>已要求所有 LINE 訊息必須經 <code>render_line_template_message(template_key, context)</code> 渲染。
+        <strong>FR-17</strong> 在此之上要求渲染引擎可從外部純文字 <code>.j2</code> 檔讀取模板，
+        使非工程人員得以用記事本直接修改 wording，無須觸碰 Python 程式。
+      </div>
+
+      <!-- Clean Architecture layer mapping -->
+      <h3>Clean Architecture 層次對映</h3>
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th>Clean Architecture 層</th><th>元件</th><th>FR-17 職責</th></tr></thead>
+          <tbody>
+            <tr>
+              <td>Interface Layer</td>
+              <td>—</td>
+              <td>可透過 <code>LINE_TEMPLATE_DIR</code> 環境變數指定模板目錄</td>
+            </tr>
+            <tr>
+              <td>Application Layer</td>
+              <td><code>render_line_template_message(key, ctx)</code></td>
+              <td>唯一呼叫入口（CR-ARCH-03）；只傳 context dict，不感知 Jinja2</td>
+            </tr>
+            <tr>
+              <td>Infrastructure Layer</td>
+              <td><code>LineTemplateRenderer</code> / <code>TemplateRepository</code></td>
+              <td>持有 Jinja2 Environment，負責從 <code>.j2</code> 檔載入並渲染</td>
+            </tr>
+            <tr>
+              <td>模板檔案</td>
+              <td><code>templates/line/*.j2</code></td>
+              <td>純文字「View」層；企劃可直接編輯，不涉及 Python</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+
+      <!-- MVC analogy -->
+      <h3>MVC 類比</h3>
+      <div class="tp-scope-grid" style="margin-bottom:20px">
+        <div class="tp-scope-card" style="border-top:3px solid var(--clr-primary)">
+          <h3 style="margin-bottom:10px">現行做法（FR-14 前）</h3>
+          <div class="bdd-gherkin"><code><span class="gk-fail"># message_template.py — wording 硬寫在 .py</span>
+return f"{label}目前{price}，\
+        低於合理價{fair}"</code></div>
+          <p style="font-size:.83rem;color:var(--clr-muted);margin-top:8px">
+            企劃要改「合理價」→「Fair Value」需 Pull Request + Code Review。
+          </p>
+        </div>
+        <div class="tp-scope-card" style="border-top:3px solid var(--clr-success)">
+          <h3 style="margin-bottom:10px">FR-17（Jinja2 檔案載入）</h3>
+          <div class="bdd-gherkin"><code><span class="gk-pass"># templates/line/trigger_row.j2 — 純文字</span>
+{{ display_label }}目前{{ current_price }}，
+{%- if stock_status == 2 %}
+低於便宜價{{ cheap_price }}（合理價{{ fair_price }}）
+{%- else %}
+低於合理價{{ fair_price }}
+{%- endif %}</code></div>
+          <p style="font-size:.83rem;color:var(--clr-muted);margin-top:8px">
+            企劃直接編輯 <code>.j2</code> 文字檔，<strong>不需動 Python</strong>。
+          </p>
+        </div>
+      </div>
+
+      <!-- Template directory structure -->
+      <h3>目錄結構與 Key 對映</h3>
+      <pre><code>templates/
+└── line/
+    ├── trigger_row.j2          # 單股觸發列（status 1 / 2）
+    ├── trigger_row_digest.j2   # 多股彙總中的觸發節（digest 格式）
+    ├── minute_digest.j2        # 每分鐘彙總訊息外框
+    └── opening_summary.j2      # 開盤監控設定摘要</code></pre>
+
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th>template_key</th><th>對應檔案</th><th>用途</th></tr></thead>
+          <tbody>
+            <tr><td><code>trigger_row</code></td><td><code>templates/line/trigger_row.j2</code></td><td>單股觸發通知列</td></tr>
+            <tr><td><code>trigger_row_digest</code></td><td><code>templates/line/trigger_row_digest.j2</code></td><td>彙總訊息中的觸發節</td></tr>
+            <tr><td><code>minute_digest</code></td><td><code>templates/line/minute_digest.j2</code></td><td>每分鐘限一封的彙總外框</td></tr>
+            <tr><td><code>opening_summary</code></td><td><code>templates/line/opening_summary.j2</code></td><td>每日開盤監控設定摘要</td></tr>
+          </tbody>
+        </table>
+      </div>
+
+      <!-- Opening summary template example -->
+      <h3>開盤摘要模板範例（迴圈應用）</h3>
+      <div class="bdd-gherkin" style="margin-bottom:20px"><code><span class="gk-kw">{# templates/line/opening_summary.j2 #}</span>
+[開盤監控設定摘要] {{ trade_date }}
+
+{% for item in stocks %}{{ item.display_label }}
+  合理價 {{ item.fair_price }} ／ 便宜價 {{ item.cheap_price }}
+{% endfor %}
+監控方法：{% for m in methods %}{{ m }}{% if not loop.last %}、{% endif %}{% endfor %}</code></div>
+
+      <!-- Engineering spec table -->
+      <h3>工程實作規格</h3>
+      <ul class="rule-list">
+        <li>
+          <span class="rule-id" style="min-width:120px">Jinja2 環境</span>
+          <span class="rule-text"><code>Environment(loader=FileSystemLoader(template_dir), undefined=StrictUndefined, autoescape=False)</code>；LINE 為純文字，不需 HTML autoescape；<code>StrictUndefined</code> 確保未定義變數立即報錯而非靜默空字串。</span>
+        </li>
+        <li>
+          <span class="rule-id" style="min-width:120px">Key → 檔名</span>
+          <span class="rule-text"><code>template_key</code> 直接對應 <code>{key}.j2</code>；禁止含 <code>/</code>、<code>\</code>、<code>..</code>（路徑遍歷攻擊，OWASP A01）。實作建議白名單正規表達式 <code>^[a-z0-9_]+$</code>。</span>
+        </li>
+        <li>
+          <span class="rule-id" style="min-width:120px">目錄覆蓋</span>
+          <span class="rule-text">預設目錄 <code>templates/line/</code>（相對 working directory）；可透過環境變數 <code>LINE_TEMPLATE_DIR</code> 覆蓋，方便測試與容器部署。</span>
+        </li>
+        <li>
+          <span class="rule-id" style="min-width:120px">Fallback</span>
+          <span class="rule-text">若 <code>.j2</code> 檔不存在（<code>TemplateNotFound</code>），fallback 至 <code>message_template.py</code> 內嵌預設邏輯並寫入 <code>WARN</code> log（<code>TEMPLATE_NOT_FOUND</code>）；不得靜默降格或傳 None。</span>
+        </li>
+        <li>
+          <span class="rule-id" style="min-width:120px">渲染失敗</span>
+          <span class="rule-text">語法錯誤或 <code>StrictUndefined</code> 變數缺失導致渲染失敗 → 寫 <code>ERROR</code> log（<code>TEMPLATE_RENDER_FAILED</code>），不得以未知硬編碼格式送出。</span>
+        </li>
+        <li>
+          <span class="rule-id" style="min-width:120px">介面不變</span>
+          <span class="rule-text"><code>render_line_template_message(template_key: str, context: dict) -&gt; str</code> 函式簽名永遠不變（CR-ARCH-03）；Application / Domain layer 零感知 Jinja2 存在。</span>
+        </li>
+        <li>
+          <span class="rule-id" style="min-width:120px">版本庫管理</span>
+          <span class="rule-text"><code>templates/</code> 目錄隨原始碼一同提交 Git；wording 修改需提交 commit，但不觸碰 Python，不需 Code Review。</span>
+        </li>
+      </ul>
+
+      <div class="banner warn">
+        <strong>CR-ARCH-03 重申</strong>：<code>render_line_template_message</code> 只允許在
+        <code>stock_monitor/application/message_template.py</code> 中有唯一定義；
+        任何其他模組不得重複定義同名函式。
+      </div>
 
       <!-- ── Phase 規劃 ── -->
       <h2 id="phases">§9 Phase 規劃</h2>

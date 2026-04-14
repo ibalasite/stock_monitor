@@ -271,132 +271,27 @@
       <h3 id="fr17">文字檔模板載入（FR-17）</h3>
 
       <div class="banner info">
-        <strong>設計動機：</strong>让企劃 / 文案人員在不碰 Python 程式碼的前提下，
-        直接修改 LINE 推播的用字遣詞（wording），同時維持 Clean Architecture 的層次不變動。
-        即是 EDM 郵件平台的 HTML 模板佈署模式在本系統的對應實作。
+        <strong>目標：</strong>企劃 / 文案人員<strong>不需碰 Python 程式碼</strong>，
+        以記事本（Notepad）直接修改 <code>.j2</code> 文字檔即可變更 LINE 推播的用字遣詞（wording）。
+        改動 wording 完全不需工程人員介入，也不需 Code Review。
       </div>
 
-      <!-- Standard approach comparison -->
-      <h4>業界標準模板方案比較</h4>
-      <div class="table-wrap">
-        <table>
-          <thead>
-            <tr><th>方案</th><th>語法</th><th>迴圈支援</th><th>條件支援</th><th>從檔案載入</th><th>非工程人員友善</th><th>評估</th></tr>
-          </thead>
-          <tbody>
-            <tr>
-              <td><code>str.format()</code> / f-string</td>
-              <td><code>{variable}</code></td>
-              <td>❌ 需 Python 程式</td>
-              <td>❌ 需 Python 程式</td>
-              <td>△ 手工讀取</td>
-              <td>⚠️ 中</td>
-              <td>現有做法，wording 仍在 .py 內</td>
-            </tr>
-            <tr>
-              <td><code>string.Template</code>（stdlib）</td>
-              <td><code>$variable</code> / <code>${var}</code></td>
-              <td>❌</td>
-              <td>❌</td>
-              <td>✅</td>
-              <td>✅ 語法最簡</td>
-              <td>適合純替換，開盤摘要迴圈需另處理</td>
-            </tr>
-            <tr style="background:#f0fdf4">
-              <td><strong>Jinja2</strong> ✅ 建議採用</td>
-              <td><code>{{ var }}</code></td>
-              <td>✅ <code>{% for %}</code></td>
-              <td>✅ <code>{% if %}</code></td>
-              <td>✅ FileSystemLoader</td>
-              <td>✅ 純文字，可用記事本編輯</td>
-              <td>業界標準（Flask / Ansible / EDM 平台均採用）</td>
-            </tr>
-            <tr>
-              <td>Mako / Genshi</td>
-              <td>混合語法</td>
-              <td>✅</td>
-              <td>✅</td>
-              <td>✅</td>
-              <td>⚠️ 語法較複雜</td>
-              <td>適用 Web，LINE 純文字場景過重</td>
-            </tr>
-          </tbody>
-        </table>
-      </div>
-
-      <!-- MVC analogy -->
-      <h4>架構對應（MVC 類比）</h4>
-      <div class="tp-scope-grid" style="margin-bottom:20px">
-        <div class="tp-scope-card" style="border-top:3px solid var(--clr-primary)">
-          <h3 style="margin-bottom:10px">現行做法（硬編碼）</h3>
-          <div class="bdd-gherkin"><code><span class="gk-fail"># message_template.py — wording 硬寫在 .py</span>
-return f"{label}目前{price}，\
-        低於合理價{fair}"</code></div>
-          <p style="font-size:.83rem;color:var(--clr-muted);margin-top:8px">
-            企劃要改「合理價」→「Fair Value」需 Pull Request。
-          </p>
-        </div>
-        <div class="tp-scope-card" style="border-top:3px solid var(--clr-success)">
-          <h3 style="margin-bottom:10px">FR-17 做法（Jinja2 檔案載入）</h3>
-          <div class="bdd-gherkin"><code><span class="gk-pass"># templates/line/trigger_row.j2 — 純文字</span>
-{{ display_label }}目前{{current_price}}，
-{%- if stock_status == 2 %}
-低於便宜價{{ cheap_price }}
-{%- else %}
-低於合理價{{ fair_price }}
-{%- endif %}</code></div>
-          <p style="font-size:.83rem;color:var(--clr-muted);margin-top:8px">
-            企劃直接編輯 <code>.j2</code> 文字檔，<strong>不需動 Python</strong>。
-          </p>
-        </div>
-      </div>
-
-      <!-- Opening summary template example -->
-      <h4>開盤摘要模板範例（迴圈應用）</h4>
-      <div class="bdd-gherkin" style="margin-bottom:20px"><code><span class="gk-kw">{# templates/line/opening_summary.j2 #}</span>
-[開盤監控設定摘要] {{ trade_date }}
-
-{% for item in stocks %}
-{{ item.display_label }}
-  合理價 {{ item.fair_price }} ／ 便宜價 {{ item.cheap_price }}
-{% endfor %}
-
-監控方法：{% for m in methods %}{{ m }}{% if not loop.last %}、{% endif %}{% endfor %}</code></div>
-
-      <!-- FR-17 spec -->
-      <h4>FR-17 規格細項</h4>
       <ul class="rule-list">
         <li>
-          <span class="rule-id" style="min-width:110px">存放位置</span>
-          <span class="rule-text">模板以獨立 <code>.j2</code> 文字檔（Jinja2 格式）存放於 <code>templates/line/</code> 目錄，隨程式碼一同提交至版本庫。</span>
+          <span class="rule-id" style="min-width:110px">模板位置</span>
+          <span class="rule-text">每種通知對應一個 <code>.j2</code> 純文字檔，存放於 <code>templates/line/</code> 目錄；隨程式一起保存在版本庫。</span>
         </li>
         <li>
-          <span class="rule-id" style="min-width:110px">Key 對映</span>
-          <span class="rule-text"><code>template_key</code> 直接對應檔名：<code>trigger_row</code> → <code>templates/line/trigger_row.j2</code>，不需任何設定檔。</span>
+          <span class="rule-id" style="min-width:110px">編輯方式</span>
+          <span class="rule-text">純文字格式，用記事本即可開啟與修改；使用 <code>{{ 變數名 }}</code> 插入資料，<code>{% for %}...{% endfor %}</code> 迴圈列出多筆股票。</span>
         </li>
         <li>
-          <span class="rule-id" style="min-width:110px">迴圈語法</span>
-          <span class="rule-text">支援 <code>{%- for item in items -%}...{%- endfor -%}</code>（用於開盤摘要逐股票列舉）與 <code>{% if %}...{% endif %}</code> 條件判斷。</span>
+          <span class="rule-id" style="min-width:110px">自動降備</span>
+          <span class="rule-text">若 <code>.j2</code> 檔遺失，系統自動沿用內建預設格式並記錄警告；不會靜默失敗。</span>
         </li>
         <li>
-          <span class="rule-id" style="min-width:110px">Fallback</span>
-          <span class="rule-text">若指定 <code>.j2</code> 檔不存在，系統 fallback 至 <code>message_template.py</code> 內嵌預設，並寫入 <strong>WARN</strong> 日誌；不得靜默降格。</span>
-        </li>
-        <li>
-          <span class="rule-id" style="min-width:110px">介面不變</span>
-          <span class="rule-text">既有 <code>render_line_template_message(template_key, context)</code> 函式簽名<strong>保持不變</strong>，Application / Domain layer 零感知此實作細節。</span>
-        </li>
-        <li>
-          <span class="rule-id" style="min-width:110px">目錄覆蓋</span>
-          <span class="rule-text">模板根目錄可透過環境變數 <code>LINE_TEMPLATE_DIR</code> 覆蓋；若未設定則預設 <code>templates/line/</code>（相對於 working directory）。</span>
-        </li>
-        <li>
-          <span class="rule-id" style="min-width:110px">路徑安全</span>
-          <span class="rule-text"><code>template_key</code> 必須通過白名單驗證或限定於單一目錄前綴，禁止 <code>../</code> 路徑遍歷（Path Traversal 防護，OWASP A01）。</span>
-        </li>
-        <li>
-          <span class="rule-id" style="min-width:110px">範本隔離</span>
-          <span class="rule-text">使用 Jinja2 <code>Environment(loader=FileSystemLoader(...), autoescape=False)</code>；LINE 訊息為純文字，不需 HTML autoescape，但<strong>禁止</strong>開啟 <code>undefined=Undefined</code> 的靜默忽略模式（應改用 <code>StrictUndefined</code>）。</span>
+          <span class="rule-id" style="min-width:110px">工程透明</span>
+          <span class="rule-text">程式呼叫介面 <code>render_line_template_message</code> 保持不變；工程人員採用 Jinja2 FileSystemLoader 實作，細節見 EDD §7。</span>
         </li>
       </ul>
 
@@ -417,7 +312,7 @@ return f"{label}目前{price}，\
         <li><span class="rule-id">FR-14</span><span class="rule-text">LINE 訊息全模板化：所有對外訊息皆由 template_key + context 渲染，不得硬編碼文案。</span></li>
         <li><span class="rule-id">FR-15</span><span class="rule-text">雙行情來源：TWSE MIS 主（委賣一 a 欄）+ Yahoo Finance HTML 副（委賣一 scraping）。</span></li>
         <li><span class="rule-id">FR-16</span><span class="rule-text">MarketDataPort 介面可注入替換；CompositeMarketDataProvider 實作 Freshness-First 聚合。</span></li>
-        <li><span class="rule-id">FR-17</span><span class="rule-text">文字檔模板載入（Jinja2）：<code>.j2</code> 檔存於 <code>templates/line/</code>；key 對映檔名；支援 <code>{{ var }}</code> 替換、<code>{% for %}</code> 迴圈；檔案不存在時 fallback 內嵌預設並寫 WARN；介面 <code>render_line_template_message</code> 不變；路徑禁止遍歷；使用 <code>StrictUndefined</code>。</span></li>
+        <li><span class="rule-id">FR-17</span><span class="rule-text">文字檔模板載入：LINE 推播文案以 <code>.j2</code> 純文字檔管理，存放於 <code>templates/line/</code>；非工程人員可用記事本直接修改 wording，不需動 Python；工程細節見 EDD §7。</span></li>
       </ul>
 
       <!-- ── NFR ── -->
