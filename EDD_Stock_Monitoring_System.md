@@ -1,6 +1,6 @@
 # EDD - 台股監控與 LINE 通知系統
 
-版本：v0.9  
+版本：v1.0  
 日期：2026-04-14  
 對齊文件：[PDD_Stock_Monitoring_System.md](c:/Projects/stock/PDD_Stock_Monitoring_System.md)
 
