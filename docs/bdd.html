@@ -1,0 +1,674 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>BDD 規格 — 台股監控系統行為驅動規格</title>
+  <link rel="stylesheet" href="site.css">
+</head>
+<body>
+
+<!-- Top Nav -->
+<header class="top-nav">
+  <div class="brand">台股<span>監控</span>系統</div>
+  <nav>
+    <a href="index.html">首頁</a>
+    <a href="pdd.html">PDD</a>
+    <a href="edd.html">EDD</a>
+    <a href="bdd.html" class="active">BDD 規格</a>
+    <a href="testplan.html">測試計畫</a>
+  </nav>
+  <div class="spacer"></div>
+  <span class="badge">BDD v1.0</span>
+</header>
+
+<!-- Page Banner -->
+<div class="doc-page-banner">
+  <div class="doc-pb-container">
+    <div class="doc-pb-eyebrow">行為驅動開發規格 · BDD v1.0 · 2026-04-14</div>
+    <p class="doc-pb-title">BDD 行為驅動規格</p>
+    <p class="doc-pb-sub">5 個 Feature 檔 · 76+ Scenarios · Gherkin 語法 · 業務規則可執行化</p>
+  </div>
+</div>
+
+<!-- Page -->
+<div class="page-wrapper">
+
+  <!-- Sidebar TOC -->
+  <aside class="sidebar">
+    <div class="sidebar-title">目錄</div>
+    <ul>
+      <li><a href="#overview">BDD 概覽</a></li>
+      <li><a href="#features">Feature 檔列表</a></li>
+      <li><a href="#schema">Schema 規則 (TP-DB)</a></li>
+      <li><a href="#env">環境驗證 (TP-ENV)</a></li>
+      <li><a href="#policy">訊號策略 (TP-POL)</a></li>
+      <li><a href="#integration">整合流程 (TP-INT)</a></li>
+      <li><a href="#template">LINE 模板 (TP-TPL)</a></li>
+      <li><a href="#trading">交易時段 (TP-TRD)</a></li>
+      <li><a href="#valuation">估值排程 (TP-VAL)</a></li>
+      <li><a href="#uat">UAT 驗收 (TP-UAT)</a></li>
+      <li><a href="#security">安全與架構 (TP-SEC/ARCH)</a></li>
+      <li><a href="#adapters">行情 Adapter (TP-ADP)</a></li>
+    </ul>
+  </aside>
+
+  <!-- Main -->
+  <main class="main-content">
+    <div class="content-inner">
+
+      <h1 id="overview" class="doc-content-h1">BDD 行為驅動規格</h1>
+
+      <!-- ── Overview ── -->
+      <div class="banner info">
+        本系統以 <strong>Gherkin Feature 檔</strong>作為可執行規格，所有業務規則均在 Feature 檔中定義，
+        再由 <code>pytest-bdd</code> 橋接至 Python 測試實作，確保規格與程式碼同步。
+      </div>
+
+      <!-- BDD stat cards -->
+      <div class="bdd-stats">
+        <div class="bdd-stat-card">
+          <div class="bdd-stat-num">5</div>
+          <div class="bdd-stat-label">Feature 檔</div>
+        </div>
+        <div class="bdd-stat-card">
+          <div class="bdd-stat-num">76<span style="font-size:1rem">+</span></div>
+          <div class="bdd-stat-label">Scenarios</div>
+        </div>
+        <div class="bdd-stat-card">
+          <div class="bdd-stat-num">14</div>
+          <div class="bdd-stat-label">BDD Rules</div>
+        </div>
+        <div class="bdd-stat-card">
+          <div class="bdd-stat-num">100<span style="font-size:1rem">%</span></div>
+          <div class="bdd-stat-label">TP-ID 覆蓋</div>
+        </div>
+      </div>
+
+      <div class="banner success" style="margin-top:8px">
+        <strong>規格優先順序：</strong> Feature 檔 + tests（可執行規格）
+        → EDD → PDD → USER_STORY_ACCEPTANCE_CRITERIA。已知衝突：
+        <code>idempotency_key</code> 以 <code>stock_no + minute_bucket</code>（不含 stock_status）為準。
+      </div>
+
+      <!-- ── Feature 檔 ── -->
+      <h2 id="features">§1 Feature 檔列表</h2>
+      <div class="bdd-feature-grid">
+        <div class="bdd-feature-card bdd-fc--main">
+          <div class="bdd-fc-header">
+            <span class="bdd-fc-badge">主要規格</span>
+            <code class="bdd-fc-filename">stock_monitoring_system.feature</code>
+          </div>
+          <h4>台股監控與 LINE 通知系統（完整 BDD 規格）</h4>
+          <p>涵蓋所有核心業務規則：Schema、環境驗證、訊號策略、整合流程、LINE 模板、交易時段、估值排程及 UAT 驗收。</p>
+          <div class="bdd-fc-meta">
+            <span class="tag blue">76+ Scenarios</span>
+            <span class="tag green">14 Rules</span>
+            <span class="tag orange">@stock_monitor @bdd @pdd @edd @test_plan</span>
+          </div>
+        </div>
+        <div class="bdd-feature-card">
+          <div class="bdd-fc-header">
+            <span class="bdd-fc-badge bdd-fc-badge--blue">LINE 模板</span>
+            <code class="bdd-fc-filename">line_template_rendering.feature</code>
+          </div>
+          <h4>LINE 訊息模板渲染規格</h4>
+          <p>定義所有出站 LINE 訊息的 template_key + context 渲染行為，涵蓋彙總通知、開盤摘要、觸發列、測試推播，以及模板缺失/渲染失敗的錯誤處理。</p>
+          <div class="bdd-fc-meta">
+            <span class="tag blue">TP-TPL-001~004</span>
+          </div>
+        </div>
+        <div class="bdd-feature-card">
+          <div class="bdd-fc-header">
+            <span class="bdd-fc-badge bdd-fc-badge--teal">開盤摘要</span>
+            <code class="bdd-fc-filename">opening_summary_runtime.feature</code>
+          </div>
+          <h4>開盤監控設定摘要通知</h4>
+          <p>開盤第一個可交易分鐘自動推送監控設定摘要（含股票/方法/fair/cheap），同日不重複發送，重啟後仍受 DB 冪等保護。</p>
+          <div class="bdd-fc-meta">
+            <span class="tag blue">TP-INT-012</span>
+            <span class="tag green">TP-UAT-013</span>
+          </div>
+        </div>
+        <div class="bdd-feature-card">
+          <div class="bdd-fc-header">
+            <span class="bdd-fc-badge bdd-fc-badge--purple">冒煙測試</span>
+            <code class="bdd-fc-filename">stock_monitoring_smoke.feature</code>
+          </div>
+          <h4>系統冒煙測試</h4>
+          <p>快速驗證系統核心路徑可通：行情抓取、訊號判斷、LINE 推送、DB 落盤，確保主幹流程在每次部署後仍可運行。</p>
+          <div class="bdd-fc-meta">
+            <span class="tag orange">@smoke</span>
+          </div>
+        </div>
+        <div class="bdd-feature-card">
+          <div class="bdd-fc-header">
+            <span class="bdd-fc-badge bdd-fc-badge--green">行情 Adapter</span>
+            <code class="bdd-fc-filename">market_data_composite.feature</code>
+          </div>
+          <h4>複合行情來源 Freshness-First</h4>
+          <p>定義 TWSE MIS（主）+ Yahoo Finance（副）雙來源組合邏輯，以 tick_at 較新者優先，Yahoo 失敗不中斷主流程。</p>
+          <div class="bdd-fc-meta">
+            <span class="tag blue">TP-ADP-001~004</span>
+            <span class="tag green">Freshness-First</span>
+          </div>
+        </div>
+      </div>
+
+      <!-- ── Gherkin 範例 ── -->
+      <h2 id="schema">§2 Schema 規則（TP-DB-001 ~ 005）</h2>
+      <p class="section-intro">
+        5 個 Schema 場景驗證 SQLite 所有 CHECK constraint、partial unique index 與格式規則，
+        確保資料層的業務約束在 migration 後立即生效。
+      </p>
+
+      <div class="bdd-scenario-group">
+        <div class="bdd-sg-header">
+          <span class="bdd-sg-rule">Rule: Schema 與 migration 約束</span>
+          <span class="tag blue">5 Scenarios</span>
+        </div>
+        <div class="bdd-scenario-list">
+          <div class="bdd-scenario">
+            <div class="bdd-sc-id">TP-DB-001</div>
+            <div class="bdd-sc-body">
+              <div class="bdd-sc-title">watchlist cheap_price 不得大於 fair_price</div>
+              <pre class="bdd-gherkin"><code><span class="gk-kw">Given</span> 已完成資料庫 migration
+<span class="gk-kw">When</span>  新增 watchlist "2330" with fair 1500 and cheap 1000
+<span class="gk-pass">Then</span>  寫入應成功
+<span class="gk-kw">When</span>  新增 watchlist "2331" with fair 900 and cheap 1000
+<span class="gk-fail">Then</span>  寫入應失敗且錯誤為 CHECK constraint</code></pre>
+            </div>
+          </div>
+          <div class="bdd-scenario">
+            <div class="bdd-sc-id">TP-DB-002</div>
+            <div class="bdd-sc-body">
+              <div class="bdd-sc-title">valuation_methods 同 method_name 僅允許一個 enabled=1</div>
+              <pre class="bdd-gherkin"><code><span class="gk-kw">When</span>  插入 emily_composite:v1 with enabled 1 → <span class="gk-pass">成功</span>
+<span class="gk-kw">When</span>  插入 emily_composite:v2 with enabled 1 → <span class="gk-fail">partial unique index 失敗</span></code></pre>
+            </div>
+          </div>
+          <div class="bdd-scenario">
+            <div class="bdd-sc-id">TP-DB-003</div>
+            <div class="bdd-sc-body">
+              <div class="bdd-sc-title">message UNIQUE(stock_no, minute_bucket) + JSON 陣列格式</div>
+              <pre class="bdd-gherkin"><code><span class="gk-kw">When</span>  同分鐘 "2026-04-10 10:21" 插入第二筆 → <span class="gk-fail">unique constraint</span>
+<span class="gk-kw">When</span>  minute_bucket 格式 "2026/04/10 10:22" → <span class="gk-fail">CHECK constraint</span></code></pre>
+            </div>
+          </div>
+          <div class="bdd-scenario">
+            <div class="bdd-sc-id">TP-DB-004</div>
+            <div class="bdd-sc-body">
+              <div class="bdd-sc-title">pending_delivery_ledger 可寫入並依狀態索引查詢</div>
+              <pre class="bdd-gherkin"><code><span class="gk-kw">When</span>  寫入 status "PENDING"
+<span class="gk-pass">Then</span>  應可成功查回且索引命中</code></pre>
+            </div>
+          </div>
+          <div class="bdd-scenario">
+            <div class="bdd-sc-id">TP-DB-005</div>
+            <div class="bdd-sc-body">
+              <div class="bdd-sc-title">valuation_snapshots 唯一鍵含 method_version（v1 ≠ v2）</div>
+              <pre class="bdd-gherkin"><code><span class="gk-pass">v1 + v2 可共存</span>；<span class="gk-fail">再插入 v1 → unique constraint</span></code></pre>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- ── ENV ── -->
+      <h2 id="env">§3 環境驗證（TP-ENV-001 ~ 003）</h2>
+      <div class="bdd-scenario-group">
+        <div class="bdd-sg-header">
+          <span class="bdd-sg-rule">Rule: 啟動環境與設定驗證</span>
+          <span class="tag blue">3 Scenarios · 6 Examples</span>
+        </div>
+        <div class="bdd-scenario-list">
+          <div class="bdd-scenario">
+            <div class="bdd-sc-id">TP-ENV-001</div>
+            <div class="bdd-sc-body">
+              <div class="bdd-sc-title">JSON1 不可用時服務必須 fail-fast</div>
+              <pre class="bdd-gherkin"><code><span class="gk-kw">Given</span> SQLite 不支援 JSON1
+<span class="gk-fail">Then</span>  啟動應失敗，錯誤訊息含 "JSON1 unavailable"</code></pre>
+            </div>
+          </div>
+          <div class="bdd-scenario">
+            <div class="bdd-sc-id">TP-ENV-002</div>
+            <div class="bdd-sc-body">
+              <div class="bdd-sc-title">PRAGMA foreign_keys=ON 且 health check 通過</div>
+              <pre class="bdd-gherkin"><code><span class="gk-pass">PRAGMA foreign_keys = 1，health status = "ok"</span></code></pre>
+            </div>
+          </div>
+          <div class="bdd-scenario">
+            <div class="bdd-sc-id">TP-ENV-003</div>
+            <div class="bdd-sc-body">
+              <div class="bdd-sc-title">LINE 必要參數缺失或無效時 fail-fast（Scenario Outline）</div>
+              <pre class="bdd-gherkin"><code><span class="gk-kw">Examples:</span> 規範命名缺失（LINE_*）
+  missing LINE_CHANNEL_ACCESS_TOKEN → fail-fast
+  missing LINE_TO_GROUP_ID          → fail-fast
+<span class="gk-kw">Examples:</span> 別名命名缺失（CHANNEL_*/TARGET_*）
+  missing CHANNEL_ACCESS_TOKEN      → fail-fast
+  missing TARGET_GROUP_ID           → fail-fast
+<span class="gk-kw">Examples:</span> 設定值無效
+  invalid channel token             → fail-fast
+  invalid group id                  → fail-fast</code></pre>
+              <p style="font-size:.82rem;color:var(--clr-muted);margin-top:8px">所有 case 均需確認 log <strong>不得輸出完整 token 明文</strong>。</p>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- ── POL ── -->
+      <h2 id="policy">§4 訊號策略與冷卻（TP-POL-001 ~ 006）</h2>
+      <p class="section-intro">
+        訊號優先級（status 2 > status 1）、5 分鐘冷卻邊界、同分鐘冪等鍵組成規則，
+        以及多方法聚合後只產生一個股票事件的規則。
+      </p>
+      <div class="bdd-scenario-group">
+        <div class="bdd-sg-header">
+          <span class="bdd-sg-rule">Rule: 訊號優先級、方法合併與冷卻</span>
+          <span class="tag blue">6 Scenarios · 2 Outlines</span>
+        </div>
+        <div class="bdd-scenario-list">
+          <div class="bdd-scenario">
+            <div class="bdd-sc-id">TP-POL-001</div>
+            <div class="bdd-sc-body">
+              <div class="bdd-sc-title">同分鐘同股票命中 status 1/2 僅保留 status 2</div>
+              <pre class="bdd-gherkin"><code><span class="gk-kw">Given</span> 2330 同分鐘 status 1 from emily + status 2 from raysky
+<span class="gk-kw">When</span>  套用 PriorityPolicy
+<span class="gk-pass">Then</span>  最終狀態 = 2，methods_hit 含兩個方法</code></pre>
+            </div>
+          </div>
+          <div class="bdd-scenario">
+            <div class="bdd-sc-id">TP-POL-002</div>
+            <div class="bdd-sc-body">
+              <div class="bdd-sc-title">冷卻判斷邊界（Outline）</div>
+              <pre class="bdd-gherkin"><code>| elapsed | result   |
+| 299     | blocked  |  ← 5 分鐘內擋住
+| 301     | sendable |  ← 超過 5 分鐘放行</code></pre>
+            </div>
+          </div>
+          <div class="bdd-scenario">
+            <div class="bdd-sc-id">TP-POL-004</div>
+            <div class="bdd-sc-body">
+              <div class="bdd-sc-title">冪等鍵 = stock_no + minute_bucket（不含 stock_status）</div>
+              <pre class="bdd-gherkin"><code>2330 同分鐘先 status 1 再 status 2
+→ 兩次冪等鍵均為 "2330|2026-04-10 10:21"</code></pre>
+            </div>
+          </div>
+          <div class="bdd-scenario">
+            <div class="bdd-sc-id">TP-POL-005</div>
+            <div class="bdd-sc-body">
+              <div class="bdd-sc-title">三方法全 status 1 聚合為一個股票事件</div>
+              <pre class="bdd-gherkin"><code><span class="gk-kw">Given</span> emily + oldbull + raysky 皆 status 1
+<span class="gk-pass">Then</span>  只產生 1 個股票事件，methods_hit 列出全部</code></pre>
+            </div>
+          </div>
+          <div class="bdd-scenario">
+            <div class="bdd-sc-id">TP-POL-006a/b</div>
+            <div class="bdd-sc-body">
+              <div class="bdd-sc-title">冷卻鍵 = stock_no + stock_status（不同 status 可各自觸發）</div>
+              <pre class="bdd-gherkin"><code>006a: status 1 已發 60s → status 2 冷卻鍵不同 → <span class="gk-pass">可發</span>
+006b: status 1 已發 60s → 同 status 1 不同方法 → <span class="gk-fail">被擋、不更新 update_time</span></code></pre>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- ── INT ── -->
+      <h2 id="integration">§5 整合流程（TP-INT-001 ~ 012）</h2>
+      <div class="bdd-scenario-group">
+        <div class="bdd-sg-header">
+          <span class="bdd-sg-rule">Rule: 盤中一分鐘主流程與 LINE/DB 一致性</span>
+          <span class="tag blue">12 Scenarios</span>
+        </div>
+        <div class="bdd-int-table-wrap">
+          <table class="bdd-int-table">
+            <thead>
+              <tr><th>TP-ID</th><th>核心驗收點</th><th>關鍵結果</th></tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td><span class="tp-badge tp-int">TP-INT-001</span></td>
+                <td>同分鐘多股票</td>
+                <td>LINE API 呼叫 1 次，內容含所有股票</td>
+              </tr>
+              <tr>
+                <td><span class="tp-badge tp-int">TP-INT-002</span></td>
+                <td>status 1 → status 2 升級</td>
+                <td>upsert 後 status=2，methods_hit 更新</td>
+              </tr>
+              <tr>
+                <td><span class="tp-badge tp-int">TP-INT-003</span></td>
+                <td>同分鐘同狀態內容更新</td>
+                <td>methods_hit 更新為最終聚合版</td>
+              </tr>
+              <tr>
+                <td><span class="tp-badge tp-int">TP-INT-004</span></td>
+                <td>LINE 回傳 HTTP 500</td>
+                <td>message=0 筆，system_logs 有 ERROR</td>
+              </tr>
+              <tr>
+                <td><span class="tp-badge tp-int">TP-INT-005</span></td>
+                <td>LINE 成功 + DB transaction fail</td>
+                <td>pending_delivery_ledger 有 PENDING</td>
+              </tr>
+              <tr>
+                <td><span class="tp-badge tp-int">TP-INT-006</span></td>
+                <td>補償回補成功</td>
+                <td>ledger → RECONCILED，不重送</td>
+              </tr>
+              <tr>
+                <td><span class="tp-badge tp-int">TP-INT-007</span></td>
+                <td>大盤資料 timeout</td>
+                <td>不發 LINE、寫 WARN、該分鐘不補發</td>
+              </tr>
+              <tr>
+                <td><span class="tp-badge tp-int">TP-INT-008</span></td>
+                <td>DB 寫入不可用</td>
+                <td>fallback pending_delivery.jsonl</td>
+              </tr>
+              <tr>
+                <td><span class="tp-badge tp-int">TP-INT-009</span></td>
+                <td>批次寫入失敗</td>
+                <td>整批 rollback，message=0 筆</td>
+              </tr>
+              <tr>
+                <td><span class="tp-badge tp-int">TP-INT-010</span></td>
+                <td>行情重試內成功（≤3次）</td>
+                <td>流程繼續，logs 有 retry 記錄</td>
+              </tr>
+              <tr>
+                <td><span class="tp-badge tp-int">TP-INT-011</span></td>
+                <td>行情重試耗盡（>3次）</td>
+                <td>跳過、不通知、不補發</td>
+              </tr>
+              <tr>
+                <td><span class="tp-badge tp-int">TP-INT-012</span></td>
+                <td>開盤第一個可交易分鐘摘要</td>
+                <td>發送 1 封，同日第二次不重複</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+      <!-- ── TPL ── -->
+      <h2 id="template">§6 LINE 模板渲染（TP-TPL-001 ~ 004）</h2>
+      <div class="bdd-scenario-group">
+        <div class="bdd-sg-header">
+          <span class="bdd-sg-rule">Rule: 所有出站 LINE 訊息必須由 template_key + context 渲染</span>
+          <span class="tag blue">4 Scenarios</span>
+        </div>
+        <div class="bdd-scenario-list">
+          <div class="bdd-scenario">
+            <div class="bdd-sc-id">TP-TPL-001</div>
+            <div class="bdd-sc-body">
+              <div class="bdd-sc-title">模板替換後不改主流程即可改變 LINE 文案</div>
+              <pre class="bdd-gherkin"><code>替換 opening summary template → LINE 內容跟隨變更 ✓</code></pre>
+            </div>
+          </div>
+          <div class="bdd-scenario">
+            <div class="bdd-sc-id">TP-TPL-002</div>
+            <div class="bdd-sc-body">
+              <div class="bdd-sc-title">模板缺失或語法錯誤時記錄錯誤、不送出未知格式</div>
+              <pre class="bdd-gherkin"><code><span class="gk-fail">TEMPLATE_NOT_FOUND</span> 或 <span class="gk-fail">TEMPLATE_RENDER_FAILED</span>，不得默默 fallback</code></pre>
+            </div>
+          </div>
+          <div class="bdd-scenario">
+            <div class="bdd-sc-id">TP-TPL-003</div>
+            <div class="bdd-sc-body">
+              <div class="bdd-sc-title">彙總/觸發列 均透過 render_line_template_message</div>
+              <pre class="bdd-gherkin"><code>業務流程不直接拼最終文案，所有出站內容均由 template key 產生</code></pre>
+            </div>
+          </div>
+          <div class="bdd-scenario">
+            <div class="bdd-sc-id">TP-TPL-004</div>
+            <div class="bdd-sc-body">
+              <div class="bdd-sc-title">測試推播也走模板渲染</div>
+              <pre class="bdd-gherkin"><code>test push 訊息可送達且使用模板文案 ✓</code></pre>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- ── TRD ── -->
+      <h2 id="trading">§7 交易時段判斷（TP-TRD-001 ~ 003）</h2>
+      <div class="bdd-scenario-group">
+        <div class="bdd-sg-header">
+          <span class="bdd-sg-rule">Rule: 交易日判斷與開盤資料邊界</span>
+          <span class="tag blue">3 Scenarios</span>
+        </div>
+        <div class="bdd-scenario-list">
+          <div class="bdd-scenario">
+            <div class="bdd-sc-id">TP-TRD-001</div>
+            <div class="bdd-sc-body">
+              <div class="bdd-sc-title">08:45 後有大盤新資料 → 判定可交易</div>
+              <div class="bdd-sc-timeline">
+                <span class="tl-item tl-ok">08:45</span>
+                <span class="tl-arrow">→</span>
+                <span class="tl-item tl-ok">09:00 開盤 ✓</span>
+              </div>
+            </div>
+          </div>
+          <div class="bdd-scenario">
+            <div class="bdd-sc-id">TP-TRD-002</div>
+            <div class="bdd-sc-body">
+              <div class="bdd-sc-title">09:00 後無大盤新資料 → 判定不開市，skipNotification</div>
+              <div class="bdd-sc-timeline">
+                <span class="tl-item tl-ok">09:00</span>
+                <span class="tl-arrow">→</span>
+                <span class="tl-item tl-warn">無新資料</span>
+                <span class="tl-arrow">→</span>
+                <span class="tl-item tl-fail">MARKET_TIMEOUT</span>
+              </div>
+            </div>
+          </div>
+          <div class="bdd-scenario">
+            <div class="bdd-sc-id">TP-TRD-003</div>
+            <div class="bdd-sc-body">
+              <div class="bdd-sc-title">13:31 後輪詢應跳過（非交易時段）</div>
+              <div class="bdd-sc-timeline">
+                <span class="tl-item tl-ok">09:00–13:30</span>
+                <span class="tl-arrow">→</span>
+                <span class="tl-item tl-ok">監控中</span>
+                <span class="tl-arrow">→</span>
+                <span class="tl-item tl-fail">13:31 停止輪詢</span>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- ── VAL ── -->
+      <h2 id="valuation">§8 每日估值排程（TP-VAL-001 ~ 006）</h2>
+      <div class="bdd-scenario-group">
+        <div class="bdd-sg-header">
+          <span class="bdd-sg-rule">Rule: 每日 14:00 估值計算與快照保護</span>
+          <span class="tag blue">6 Scenarios</span>
+        </div>
+        <div class="bdd-int-table-wrap">
+          <table class="bdd-int-table">
+            <thead>
+              <tr><th>TP-ID</th><th>情境</th><th>預期結果</th></tr>
+            </thead>
+            <tbody>
+              <tr><td><span class="tp-badge tp-val">TP-VAL-001</span></td><td>交易日 14:00</td><td>三方法各產生估值快照</td></tr>
+              <tr><td><span class="tp-badge tp-val">TP-VAL-002</span></td><td>非交易日 14:00</td><td>不執行，僅記錄 skip/info</td></tr>
+              <tr><td><span class="tp-badge tp-val">TP-VAL-003</span></td><td>今日計算失敗</td><td>不覆蓋昨日快照，記錄錯誤</td></tr>
+              <tr><td><span class="tp-badge tp-val">TP-VAL-004</span></td><td>三方法資料皆可用</td><td>emily + oldbull + raysky 各新增一筆</td></tr>
+              <tr><td><span class="tp-badge tp-val">TP-VAL-005</span></td><td>raysky 缺 current_assets</td><td>raysky skip；其餘方法成功</td></tr>
+              <tr><td><span class="tp-badge tp-val">TP-VAL-006</span></td><td>主來源逾時，備援可用</td><td>成功估值，logs 有來源切換記錄</td></tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+      <!-- ── UAT ── -->
+      <h2 id="uat">§9 UAT 驗收（TP-UAT-001 ~ 014）</h2>
+      <p class="section-intro">14 條端對端 UAT 場景，每條需提供實際執行證據（截圖、log、DB 查詢結果）。</p>
+      <div class="bdd-uat-grid">
+        <div class="bdd-uat-card">
+          <div class="bdd-uat-id">UAT-1</div>
+          <div class="bdd-uat-text">手動門檻觸發 60 秒內通知</div>
+        </div>
+        <div class="bdd-uat-card">
+          <div class="bdd-uat-id">UAT-2</div>
+          <div class="bdd-uat-text">5 分鐘冷卻不重複推播</div>
+        </div>
+        <div class="bdd-uat-card">
+          <div class="bdd-uat-id">UAT-3</div>
+          <div class="bdd-uat-text">message 核心欄位可查</div>
+        </div>
+        <div class="bdd-uat-card">
+          <div class="bdd-uat-id">UAT-4</div>
+          <div class="bdd-uat-text">非交易時段跳過輪詢</div>
+        </div>
+        <div class="bdd-uat-card">
+          <div class="bdd-uat-id">UAT-5</div>
+          <div class="bdd-uat-text">14:00 估值執行且失敗不覆蓋</div>
+        </div>
+        <div class="bdd-uat-card">
+          <div class="bdd-uat-id">UAT-6</div>
+          <div class="bdd-uat-text">同分鐘多股票只發一封</div>
+        </div>
+        <div class="bdd-uat-card">
+          <div class="bdd-uat-id">UAT-7</div>
+          <div class="bdd-uat-text">1/2 同時命中僅通知 status 2</div>
+        </div>
+        <div class="bdd-uat-card">
+          <div class="bdd-uat-id">UAT-8</div>
+          <div class="bdd-uat-text">LINE 成功 DB 失敗可補償且不重複</div>
+        </div>
+        <div class="bdd-uat-card">
+          <div class="bdd-uat-id">UAT-9</div>
+          <div class="bdd-uat-text">LINE 必填錯誤 fail-fast</div>
+        </div>
+        <div class="bdd-uat-card">
+          <div class="bdd-uat-id">UAT-10</div>
+          <div class="bdd-uat-text">重啟後不重複通知同分鐘</div>
+        </div>
+        <div class="bdd-uat-card">
+          <div class="bdd-uat-id">UAT-11</div>
+          <div class="bdd-uat-text">stale/conflict 分鐘不通知且有 WARN</div>
+        </div>
+        <div class="bdd-uat-card">
+          <div class="bdd-uat-id">UAT-12</div>
+          <div class="bdd-uat-text">三方法估值，資料不足 skip 不覆蓋</div>
+        </div>
+        <div class="bdd-uat-card">
+          <div class="bdd-uat-id">UAT-13</div>
+          <div class="bdd-uat-text">開盤摘要同日不重複</div>
+        </div>
+        <div class="bdd-uat-card">
+          <div class="bdd-uat-id">UAT-14</div>
+          <div class="bdd-uat-text">所有 LINE 訊息均由模板渲染</div>
+        </div>
+      </div>
+
+      <!-- ── SEC / ARCH ── -->
+      <h2 id="security">§10 安全、架構與程式碼品質（TP-SEC / TP-ARCH / TP-CODE）</h2>
+      <div class="bdd-cr-grid">
+        <div class="bdd-cr-card bdd-cr--sec">
+          <div class="bdd-cr-label">安全</div>
+          <h4>TP-SEC-001</h4>
+          <p><code>LinePushClient repr()</code> 不得含 token 明文</p>
+        </div>
+        <div class="bdd-cr-card bdd-cr--sec">
+          <div class="bdd-cr-label">安全</div>
+          <h4>TP-SEC-002</h4>
+          <p>無效時區名稱 → <code>ValueError</code>，不靜默 fallback UTC</p>
+        </div>
+        <div class="bdd-cr-card bdd-cr--sec">
+          <div class="bdd-cr-label">安全</div>
+          <h4>TP-SEC-003</h4>
+          <p>HTTP 回應受 <code>MAX_RESPONSE_BYTES</code> 大小上限保護</p>
+        </div>
+        <div class="bdd-cr-card bdd-cr--arch">
+          <div class="bdd-cr-label">架構</div>
+          <h4>TP-ARCH-001</h4>
+          <p><code>app.py</code> 不含估值邏輯；無 <code>scenario_case</code> 分支於生產路徑</p>
+        </div>
+        <div class="bdd-cr-card bdd-cr--arch">
+          <div class="bdd-cr-label">架構</div>
+          <h4>TP-ARCH-002</h4>
+          <p><code>render_line_template_message</code> 全專案只有一份定義</p>
+        </div>
+        <div class="bdd-cr-card bdd-cr--arch">
+          <div class="bdd-cr-label">架構</div>
+          <h4>TP-ARCH-003</h4>
+          <p><code>MinuteCycleConfig</code> dataclass 存在於 <code>runtime_service.py</code></p>
+        </div>
+        <div class="bdd-cr-card bdd-cr--code">
+          <div class="bdd-cr-label">程式碼</div>
+          <h4>TP-CODE-001</h4>
+          <p><code>render_line_template_message</code> 呼叫次數 ≤ 1（消除三段重複）</p>
+        </div>
+        <div class="bdd-cr-card bdd-cr--code">
+          <div class="bdd-cr-label">程式碼</div>
+          <h4>TP-CODE-003</h4>
+          <p><code>aggregate_minute_notifications</code> 不用 f-string 組裝觸發列</p>
+        </div>
+      </div>
+
+      <!-- ── ADP ── -->
+      <h2 id="adapters">§11 行情 Adapter（TP-ADP-001 ~ 004）</h2>
+      <div class="bdd-scenario-group">
+        <div class="bdd-sg-header">
+          <span class="bdd-sg-rule">Rule: CompositeMarketDataProvider Freshness-First</span>
+          <span class="tag blue">4 Scenarios</span>
+        </div>
+        <div class="bdd-adapter-diagram">
+          <div class="bdd-adp-node bdd-adp--main">TWSE MIS<br><small>主來源</small></div>
+          <div class="bdd-adp-node bdd-adp--secondary">Yahoo Finance<br><small>副來源（容錯）</small></div>
+          <div class="bdd-adp-arrow">tick_at 比較 →</div>
+          <div class="bdd-adp-node bdd-adp--composite">Composite Provider<br><small>Freshness-First</small></div>
+        </div>
+        <div class="bdd-int-table-wrap" style="margin-top:20px">
+          <table class="bdd-int-table">
+            <thead>
+              <tr><th>TP-ID</th><th>驗收規則</th></tr>
+            </thead>
+            <tbody>
+              <tr><td><span class="tp-badge tp-adp">TP-ADP-001</span></td><td>Yahoo HTTP 4xx/5xx/timeout → WARN + 空 dict，不 raise exception</td></tr>
+              <tr><td><span class="tp-badge tp-adp">TP-ADP-002</span></td><td>tick_at 較新者勝；相等時 TWSE 優先；兩者皆無 → STALE_QUOTE</td></tr>
+              <tr><td><span class="tp-badge tp-adp">TP-ADP-003</span></td><td>TWSE <code>_price_cache</code>：a 欄空/"-" → 回傳最後已知委賣一</td></tr>
+              <tr><td><span class="tp-badge tp-adp">TP-ADP-004</span></td><td>Yahoo 回應受 MAX_RESPONSE_BYTES 限制；截斷 JSON 無效 → WARN + 空 dict</td></tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+      <!-- 流程圖 -->
+      <h2>§12 系統流程圖參考</h2>
+      <div class="lp-arch-grid">
+        <div class="lp-arch-img-wrap">
+          <img src="architecture/images/03-intraday-flow.png" alt="盤中每分鐘流程">
+          <p class="lp-arch-caption">盤中每分鐘流程（TP-INT-001~012 對應）</p>
+        </div>
+        <div class="lp-arch-img-wrap">
+          <img src="architecture/images/05-market-data-adapter.png" alt="雙行情 Adapter">
+          <p class="lp-arch-caption">Freshness-First 雙行情來源（TP-ADP-001~004 對應）</p>
+        </div>
+      </div>
+
+    </div>
+  </main>
+</div>
+
+<script>
+document.addEventListener('DOMContentLoaded', () => {
+  const sidebar = document.querySelector('.sidebar');
+  if (!sidebar) return;
+  const links = Array.from(sidebar.querySelectorAll('a[href^="#"]'));
+  const observer = new IntersectionObserver(entries => {
+    entries.forEach(e => {
+      if (e.isIntersecting) {
+        links.forEach(l => l.classList.remove('active'));
+        const match = links.find(l => l.getAttribute('href') === '#' + e.target.id);
+        if (match) match.classList.add('active');
+      }
+    });
+  }, { rootMargin: '-20% 0px -70% 0px' });
+  document.querySelectorAll('[id]').forEach(el => observer.observe(el));
+});
+</script>
+</body>
+</html>

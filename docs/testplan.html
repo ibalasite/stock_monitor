@@ -1,0 +1,551 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>測試計畫 — 台股監控系統 TEST PLAN v0.9</title>
+  <link rel="stylesheet" href="site.css">
+</head>
+<body>
+
+<!-- Top Nav -->
+<header class="top-nav">
+  <div class="brand">台股<span>監控</span>系統</div>
+  <nav>
+    <a href="index.html">首頁</a>
+    <a href="pdd.html">PDD</a>
+    <a href="edd.html">EDD</a>
+    <a href="bdd.html">BDD 規格</a>
+    <a href="testplan.html" class="active">測試計畫</a>
+  </nav>
+  <div class="spacer"></div>
+  <span class="badge">TEST PLAN v0.9</span>
+</header>
+
+<!-- Page Banner -->
+<div class="doc-page-banner">
+  <div class="doc-pb-container">
+    <div class="doc-pb-eyebrow">測試計畫文件 · TEST PLAN v0.9 · 2026-04-14</div>
+    <p class="doc-pb-title">測試計畫</p>
+    <p class="doc-pb-sub">72 個測試案例 · 14 類群組 · 100% 行/分支/函數/陳述覆蓋率門檻</p>
+  </div>
+</div>
+
+<!-- Page -->
+<div class="page-wrapper">
+
+  <!-- Sidebar TOC -->
+  <aside class="sidebar">
+    <div class="sidebar-title">目錄</div>
+    <ul>
+      <li><a href="#overview">測試概覽</a></li>
+      <li><a href="#objectives">§1 測試目標</a></li>
+      <li><a href="#scope">§2 測試範圍</a></li>
+      <li><a href="#environment">§3 測試環境</a></li>
+      <li><a href="#criteria">§4 進入/退出標準</a></li>
+      <li><a href="#testdata">§5 測試資料</a></li>
+      <li><a href="#matrix">§6 測試矩陣</a></li>
+      <li><a href="#tp-db">TP-DB Schema</a></li>
+      <li><a href="#tp-env">TP-ENV 環境</a></li>
+      <li><a href="#tp-pol">TP-POL 策略</a></li>
+      <li><a href="#tp-int">TP-INT 整合</a></li>
+      <li><a href="#tp-tpl">TP-TPL 模板</a></li>
+      <li><a href="#tp-trd">TP-TRD 時段</a></li>
+      <li><a href="#tp-val">TP-VAL 估值</a></li>
+      <li><a href="#tp-uat">TP-UAT 驗收</a></li>
+      <li><a href="#tp-nonfunc">SEC / ARCH / ADP / CODE</a></li>
+      <li><a href="#coverage">覆蓋率設定</a></li>
+    </ul>
+  </aside>
+
+  <!-- Main -->
+  <main class="main-content">
+    <div class="content-inner">
+
+      <h1 id="overview" class="doc-content-h1">測試計畫 TEST PLAN v0.9</h1>
+
+      <!-- Stats bar -->
+      <div class="bdd-stats">
+        <div class="bdd-stat-card">
+          <div class="bdd-stat-num">72</div>
+          <div class="bdd-stat-label">測試案例</div>
+        </div>
+        <div class="bdd-stat-card">
+          <div class="bdd-stat-num">14</div>
+          <div class="bdd-stat-label">測試群組</div>
+        </div>
+        <div class="bdd-stat-card">
+          <div class="bdd-stat-num">14</div>
+          <div class="bdd-stat-label">UAT 場景</div>
+        </div>
+        <div class="bdd-stat-card">
+          <div class="bdd-stat-num">100<span style="font-size:1rem">%</span></div>
+          <div class="bdd-stat-label">Coverage Gate</div>
+        </div>
+      </div>
+
+      <!-- ── Objectives ── -->
+      <h2 id="objectives">§1 測試目標</h2>
+      <div class="tp-objective-grid">
+        <div class="tp-obj-card">
+          <div class="tp-obj-num">01</div>
+          <p>驗證 <strong>EDD 所有業務規則</strong>：Schema constraint、訊號優先級、冷卻邏輯、冪等鍵</p>
+        </div>
+        <div class="tp-obj-card">
+          <div class="tp-obj-num">02</div>
+          <p>驗證 <strong>通知/冷卻/補償</strong>鏈完整性：LINE 成功/失敗路徑、pending ledger 補償</p>
+        </div>
+        <div class="tp-obj-card">
+          <div class="tp-obj-num">03</div>
+          <p>驗證 <strong>14:00 估值排程</strong>在交易日執行、非交易日 skip、失敗不覆蓋快照</p>
+        </div>
+        <div class="tp-obj-card">
+          <div class="tp-obj-num">04</div>
+          <p>驗證 <strong>交易時段邊界</strong>：08:45 開盤檢查、09:00–13:30 監控、13:31 後停止</p>
+        </div>
+        <div class="tp-obj-card">
+          <div class="tp-obj-num">05</div>
+          <p>驗證 <strong>開盤摘要</strong>：同日第一個可交易分鐘推送、同日不重複、重啟仍受 DB 保護</p>
+        </div>
+        <div class="tp-obj-card">
+          <div class="tp-obj-num">06</div>
+          <p>TDD 達成 <strong>lines/branches/functions/statements 全部 100%</strong></p>
+        </div>
+        <div class="tp-obj-card">
+          <div class="tp-obj-num">07</div>
+          <p>驗證 <strong>LINE 模板渲染</strong>：所有出站訊息由 template_key + context 產生</p>
+        </div>
+        <div class="tp-obj-card">
+          <div class="tp-obj-num">08</div>
+          <p>驗證 Code Review 改善項目（<strong>CR-SEC-01~03、CR-ARCH-01~03、CR-ADP-01~02</strong>）</p>
+        </div>
+        <div class="tp-obj-card">
+          <div class="tp-obj-num">09</div>
+          <p>驗證 <strong>Freshness-First 雙行情來源</strong>：Yahoo 容錯、tick_at 比較、HTTP 安全上限</p>
+        </div>
+      </div>
+
+      <!-- ── Scope ── -->
+      <h2 id="scope">§2 測試範圍</h2>
+      <div class="tp-scope-grid">
+        <div class="tp-scope-card tp-scope--in">
+          <h3>✅ 在範圍（In Scope）</h3>
+          <ul>
+            <li>Schema/migration（TP-DB）</li>
+            <li>Domain policy：訊號優先級、冷卻、冪等（TP-POL）</li>
+            <li>盤中主流程：抓取 → 評估 → 彙總 → 推送 → 落盤（TP-INT）</li>
+            <li>LINE 成功/失敗路徑（TP-INT-004/-005）</li>
+            <li>補償機制 Pending Ledger（TP-INT-006/-008）</li>
+            <li>交易日判定與時段邊界（TP-TRD）</li>
+            <li>每日估值排程（TP-VAL）</li>
+            <li>TimeBucket 服務（TP-BKT）</li>
+            <li>通知準確度 KPI（TP-KPI）</li>
+            <li>開盤摘要（TP-INT-012 / TP-UAT-013）</li>
+            <li>LINE 模板渲染（TP-TPL）</li>
+            <li>安全/架構/程式碼品質（TP-SEC / TP-ARCH / TP-CODE）</li>
+            <li>雙行情來源 Adapter（TP-ADP）</li>
+          </ul>
+        </div>
+        <div class="tp-scope-card tp-scope--out">
+          <h3>❌ 不在範圍（Out of Scope）</h3>
+          <ul>
+            <li>自動下單功能</li>
+            <li>分散式高可用部署</li>
+            <li>非台灣市場（美股、加密）</li>
+            <li>生產 LINE token 實際推送（CI 環境使用 mock）</li>
+            <li>UI/UX 介面測試</li>
+            <li>多租戶或多資料庫部署</li>
+          </ul>
+        </div>
+      </div>
+
+      <!-- ── Environment ── -->
+      <h2 id="environment">§3 測試環境</h2>
+      <div class="tp-env-table-wrap">
+        <table class="bdd-int-table">
+          <thead>
+            <tr><th>項目</th><th>規格</th></tr>
+          </thead>
+          <tbody>
+            <tr><td>作業系統</td><td>Windows 11 / Linux CI (ubuntu-latest)</td></tr>
+            <tr><td>Python</td><td>3.11+</td></tr>
+            <tr><td>資料庫</td><td>SQLite ≥ 3.38（含 JSON1）</td></tr>
+            <tr><td>時區</td><td>Asia/Taipei（zoneinfo）</td></tr>
+            <tr><td>LINE 測試</td><td>mock SendMessageRequest + MonkeyPatch</td></tr>
+            <tr><td>行情來源</td><td>MockTwseProvider + MockYahooProvider</td></tr>
+            <tr><td>測試框架</td><td>pytest 9.0.3 + pytest-bdd + pytest-cov</td></tr>
+            <tr><td>覆蓋率工具</td><td>coverage.py （`--cov=stock_monitor`）</td></tr>
+            <tr><td>STALE_THRESHOLD_SEC</td><td>90 秒</td></tr>
+            <tr><td>MAX_RETRY_COUNT</td><td>3</td></tr>
+            <tr><td>冷卻秒數</td><td>300 秒</td></tr>
+          </tbody>
+        </table>
+      </div>
+
+      <!-- ── Entry/Exit ── -->
+      <h2 id="criteria">§4 進入 / 退出標準</h2>
+      <div class="tp-crit-grid">
+        <div class="tp-crit-card tp-crit--entry">
+          <h3>進入標準（Entry）</h3>
+          <ul>
+            <li>所有 Schema migration 可執行</li>
+            <li>SQLite JSON1 可用</li>
+            <li>LINE mock 已設定</li>
+            <li>Feature 檔 &amp; 測試檔已就緒</li>
+          </ul>
+        </div>
+        <div class="tp-crit-card tp-crit--exit">
+          <h3>退出標準（Exit）</h3>
+          <ul>
+            <li>Critical/High Defects = 0</li>
+            <li>UAT 全部 14 條通過</li>
+            <li>補償 + 冷卻路徑全部通過</li>
+            <li><strong>Coverage ≥ 100%</strong>（lines/branches/functions/statements）</li>
+            <li>所有 TP-SEC / CR-* 通過</li>
+          </ul>
+        </div>
+      </div>
+
+      <!-- ── Test Data ── -->
+      <h2 id="testdata">§5 測試資料</h2>
+      <div class="tp-data-grid">
+        <div class="tp-data-card">
+          <h4>監控股票</h4>
+          <code>2330（台積電）, 2317（鴻海）</code>
+        </div>
+        <div class="tp-data-card">
+          <h4>門檻設定</h4>
+          <code>fair_price=1500, cheap_price=1000</code>
+        </div>
+        <div class="tp-data-card">
+          <h4>估值方法</h4>
+          <code>emily_composite, oldbull_pe, raysky_roe</code>
+        </div>
+        <div class="tp-data-card">
+          <h4>行情新鮮度門檻</h4>
+          <code>STALE_THRESHOLD_SEC = 90</code>
+        </div>
+        <div class="tp-data-card">
+          <h4>行情重試上限</h4>
+          <code>MAX_RETRY_COUNT = 3</code>
+        </div>
+        <div class="tp-data-card">
+          <h4>時間邊界</h4>
+          <code>08:45, 09:00, 13:30, 13:31, 14:00</code>
+        </div>
+      </div>
+
+      <!-- ── Matrix Overview ── -->
+      <h2 id="matrix">§6 測試矩陣總覽</h2>
+      <div class="tp-matrix-chart">
+        <div class="tp-mc-bar-wrap">
+          <div class="tp-mc-bar">
+            <div class="tp-mc-row"><span class="tp-mc-label">TP-UAT</span><div class="tp-mc-fill tp-mc--uat" style="width:19.4%"><span>14</span></div></div>
+            <div class="tp-mc-row"><span class="tp-mc-label">TP-INT</span><div class="tp-mc-fill tp-mc--int" style="width:16.7%"><span>12</span></div></div>
+            <div class="tp-mc-row"><span class="tp-mc-label">TP-ARCH</span><div class="tp-mc-fill tp-mc--arch" style="width:8.3%"><span>6</span></div></div>
+            <div class="tp-mc-row"><span class="tp-mc-label">TP-VAL</span><div class="tp-mc-fill tp-mc--val" style="width:8.3%"><span>6</span></div></div>
+            <div class="tp-mc-row"><span class="tp-mc-label">TP-POL</span><div class="tp-mc-fill tp-mc--pol" style="width:8.3%"><span>6</span></div></div>
+            <div class="tp-mc-row"><span class="tp-mc-label">TP-DB</span><div class="tp-mc-fill tp-mc--db" style="width:6.9%"><span>5</span></div></div>
+            <div class="tp-mc-row"><span class="tp-mc-label">TP-TPL</span><div class="tp-mc-fill tp-mc--tpl" style="width:5.6%"><span>4</span></div></div>
+            <div class="tp-mc-row"><span class="tp-mc-label">TP-ADP</span><div class="tp-mc-fill tp-mc--adp" style="width:5.6%"><span>4</span></div></div>
+            <div class="tp-mc-row"><span class="tp-mc-label">TP-CODE</span><div class="tp-mc-fill tp-mc--code" style="width:5.6%"><span>4</span></div></div>
+            <div class="tp-mc-row"><span class="tp-mc-label">TP-TRD</span><div class="tp-mc-fill tp-mc--trd" style="width:4.2%"><span>3</span></div></div>
+            <div class="tp-mc-row"><span class="tp-mc-label">TP-ENV</span><div class="tp-mc-fill tp-mc--env" style="width:4.2%"><span>3</span></div></div>
+            <div class="tp-mc-row"><span class="tp-mc-label">TP-SEC</span><div class="tp-mc-fill tp-mc--sec" style="width:4.2%"><span>3</span></div></div>
+            <div class="tp-mc-row"><span class="tp-mc-label">TP-BKT</span><div class="tp-mc-fill tp-mc--bkt" style="width:1.4%"><span>1</span></div></div>
+            <div class="tp-mc-row"><span class="tp-mc-label">TP-KPI</span><div class="tp-mc-fill tp-mc--kpi" style="width:1.4%"><span>1</span></div></div>
+          </div>
+        </div>
+        <div class="tp-mc-legend">
+          <span class="tp-mc-dot tp-mc--uat"></span>UAT&emsp;
+          <span class="tp-mc-dot tp-mc--int"></span>Integration&emsp;
+          <span class="tp-mc-dot tp-mc--pol"></span>Policy&emsp;
+          <span class="tp-mc-dot tp-mc--val"></span>Valuation&emsp;
+          <span class="tp-mc-dot tp-mc--sec"></span>Security&emsp;
+          <span class="tp-mc-dot tp-mc--arch"></span>Architecture&emsp;
+          <span class="tp-mc-dot tp-mc--adp"></span>Adapter
+        </div>
+      </div>
+
+      <div class="tp-matrix-full-wrap">
+        <table class="bdd-int-table tp-matrix-table">
+          <thead>
+            <tr>
+              <th>群組</th><th>Range</th><th>數量</th><th>類型</th><th>關聯 Feature Rule</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr><td><span class="tp-badge tp-db">TP-DB</span></td><td>001–005</td><td>5</td><td>Migration</td><td>Schema / migration</td></tr>
+            <tr><td><span class="tp-badge tp-env">TP-ENV</span></td><td>001–003</td><td>3</td><td>Integration</td><td>啟動環境驗證</td></tr>
+            <tr><td><span class="tp-badge tp-pol">TP-POL</span></td><td>001–006b</td><td>6</td><td>Unit</td><td>訊號優先級、冷卻、冪等</td></tr>
+            <tr><td><span class="tp-badge tp-int">TP-INT</span></td><td>001–012</td><td>12</td><td>Integration</td><td>盤中主流程、LINE 一致性</td></tr>
+            <tr><td><span class="tp-badge tp-tpl">TP-TPL</span></td><td>001–004</td><td>4</td><td>Integration</td><td>LINE 模板渲染</td></tr>
+            <tr><td><span class="tp-badge tp-trd">TP-TRD</span></td><td>001–003</td><td>3</td><td>Integration</td><td>交易時段判斷</td></tr>
+            <tr><td><span class="tp-badge tp-bkt">TP-BKT</span></td><td>001</td><td>1</td><td>Unit</td><td>TimeBucket 服務</td></tr>
+            <tr><td><span class="tp-badge tp-kpi">TP-KPI</span></td><td>001</td><td>1</td><td>Unit</td><td>通知準確度 KPI</td></tr>
+            <tr><td><span class="tp-badge tp-val">TP-VAL</span></td><td>001–006</td><td>6</td><td>Integration</td><td>每日估值排程</td></tr>
+            <tr><td><span class="tp-badge tp-uat">TP-UAT</span></td><td>001–014</td><td>14</td><td>UAT</td><td>端對端驗收</td></tr>
+            <tr><td><span class="tp-badge tp-sec">TP-SEC</span></td><td>001–003</td><td>3</td><td>Unit</td><td>安全/token 保護</td></tr>
+            <tr><td><span class="tp-badge tp-arch">TP-ARCH</span></td><td>001–006</td><td>6</td><td>Unit / Integration</td><td>架構約束</td></tr>
+            <tr><td><span class="tp-badge tp-adp">TP-ADP</span></td><td>001–004</td><td>4</td><td>Unit</td><td>雙行情 Adapter</td></tr>
+            <tr><td><span class="tp-badge tp-code">TP-CODE</span></td><td>001–004</td><td>4</td><td>Unit</td><td>程式碼品質</td></tr>
+            <tr class="tp-total-row"><td colspan="2"><strong>合計</strong></td><td><strong>72</strong></td><td colspan="2">—</td></tr>
+          </tbody>
+        </table>
+      </div>
+
+      <!-- ── TP-DB ── -->
+      <h2 id="tp-db">TP-DB — Schema 與 Migration</h2>
+      <table class="bdd-int-table">
+        <thead><tr><th>TP-ID</th><th>前提條件</th><th>測試步驟</th><th>預期結果</th></tr></thead>
+        <tbody>
+          <tr><td><span class="tp-badge tp-db">TP-DB-001</span></td><td>migration 完成</td><td>cheap > fair</td><td>CHECK constraint ABORT</td></tr>
+          <tr><td><span class="tp-badge tp-db">TP-DB-002</span></td><td>同上</td><td>同 method_name 第 2 個 enabled=1</td><td>partial unique index 失敗</td></tr>
+          <tr><td><span class="tp-badge tp-db">TP-DB-003</span></td><td>同上</td><td>minute_bucket 格式錯誤 / 同分鐘重複</td><td>CHECK / UNIQUE 失敗</td></tr>
+          <tr><td><span class="tp-badge tp-db">TP-DB-004</span></td><td>同上</td><td>寫 pending_delivery_ledger PENDING</td><td>寫入成功，可按 status 索引查詢</td></tr>
+          <tr><td><span class="tp-badge tp-db">TP-DB-005</span></td><td>同上</td><td>同股票同日 v1/v2 valuation_snapshot</td><td>v1+v2 可共存；再插入 v1 unique 失敗</td></tr>
+        </tbody>
+      </table>
+
+      <!-- ── TP-ENV ── -->
+      <h2 id="tp-env">TP-ENV — 啟動環境驗證</h2>
+      <table class="bdd-int-table">
+        <thead><tr><th>TP-ID</th><th>前提條件</th><th>測試步驟</th><th>預期結果</th></tr></thead>
+        <tbody>
+          <tr><td><span class="tp-badge tp-env">TP-ENV-001</span></td><td>SQLite 無 JSON1</td><td>呼叫 assert_sqlite_prerequisites</td><td>RuntimeError 含 "JSON1 unavailable"</td></tr>
+          <tr><td><span class="tp-badge tp-env">TP-ENV-002</span></td><td>JSON1 可用</td><td>health_check()</td><td>status="ok"，foreign_keys=1</td></tr>
+          <tr><td><span class="tp-badge tp-env">TP-ENV-003</span></td><td>缺 LINE 設定</td><td>validate_line_runtime_config (6 cases Outline)</td><td>全部 fail-fast，log 不含 token 明文</td></tr>
+        </tbody>
+      </table>
+
+      <!-- ── TP-POL ── -->
+      <h2 id="tp-pol">TP-POL — 訊號策略</h2>
+      <table class="bdd-int-table">
+        <thead><tr><th>TP-ID</th><th>測試點</th><th>預期結果</th></tr></thead>
+        <tbody>
+          <tr><td><span class="tp-badge tp-pol">TP-POL-001</span></td><td>status 1/2 同分鐘 → PriorityPolicy</td><td>輸出 status=2，methods_hit 含兩個方法</td></tr>
+          <tr><td><span class="tp-badge tp-pol">TP-POL-002</span></td><td>冷卻秒數邊界 (299s/301s)</td><td>299s=blocked，301s=sendable</td></tr>
+          <tr><td><span class="tp-badge tp-pol">TP-POL-003</span></td><td>last_sent_at IS NULL</td><td>直接可發送</td></tr>
+          <tr><td><span class="tp-badge tp-pol">TP-POL-004</span></td><td>冪等鍵 = stock_no + minute_bucket</td><td>不含 stock_status，1/2 兩次用同一 key</td></tr>
+          <tr><td><span class="tp-badge tp-pol">TP-POL-005</span></td><td>三方法全 status 1</td><td>一個股票事件，methods_hit 列全部</td></tr>
+          <tr><td><span class="tp-badge tp-pol">TP-POL-006</span></td><td>冷卻鍵 = stock_no + stock_status</td><td>006a：不同 status 可各自觸發<br>006b：同 status 5分鐘內擋、不更新 update_time</td></tr>
+        </tbody>
+      </table>
+
+      <!-- ── TP-INT ── -->
+      <h2 id="tp-int">TP-INT — 盤中整合流程</h2>
+      <div class="lp-arch-grid" style="margin-bottom:16px">
+        <div class="lp-arch-img-wrap">
+          <img src="architecture/images/03-intraday-flow.png" alt="盤中每分鐘流程圖">
+          <p class="lp-arch-caption">盤中每分鐘 TP-INT 主流程</p>
+        </div>
+      </div>
+      <table class="bdd-int-table">
+        <thead><tr><th>TP-ID</th><th>測試點</th><th>預期結果</th></tr></thead>
+        <tbody>
+          <tr><td><span class="tp-badge tp-int">TP-INT-001</span></td><td>同分鐘多股票彙總</td><td>LINE 呼叫 1 次，含所有觸發股票</td></tr>
+          <tr><td><span class="tp-badge tp-int">TP-INT-002</span></td><td>status 1 → 2 升級</td><td>message upsert 成功，status=2</td></tr>
+          <tr><td><span class="tp-badge tp-int">TP-INT-003</span></td><td>同分鐘同狀態更新</td><td>methods_hit 更新為最終版</td></tr>
+          <tr><td><span class="tp-badge tp-int">TP-INT-004</span></td><td>LINE HTTP 500</td><td>message 0 筆，system_logs ERROR</td></tr>
+          <tr><td><span class="tp-badge tp-int">TP-INT-005</span></td><td>LINE 成功 + DB fail</td><td>pending_delivery_ledger PENDING 1 筆</td></tr>
+          <tr><td><span class="tp-badge tp-int">TP-INT-006</span></td><td>補償成功</td><td>ledger → RECONCILED，不重送 LINE</td></tr>
+          <tr><td><span class="tp-badge tp-int">TP-INT-007</span></td><td>大盤資料 timeout</td><td>不發 LINE，寫 WARN，分鐘不補發</td></tr>
+          <tr><td><span class="tp-badge tp-int">TP-INT-008</span></td><td>DB 不可使用</td><td>fallback pending_delivery.jsonl</td></tr>
+          <tr><td><span class="tp-badge tp-int">TP-INT-009</span></td><td>批次寫入 fail</td><td>整批 rollback，message=0 筆</td></tr>
+          <tr><td><span class="tp-badge tp-int">TP-INT-010</span></td><td>行情重試 ≤3 次成功</td><td>流程繼續，retry 記錄在 logs</td></tr>
+          <tr><td><span class="tp-badge tp-int">TP-INT-011</span></td><td>行情重試耗盡 &gt;3 次</td><td>skip 分鐘，不通知，不補發</td></tr>
+          <tr><td><span class="tp-badge tp-int">TP-INT-012</span></td><td>開盤摘要通知</td><td>第一分鐘發送，同日重啟不重複</td></tr>
+        </tbody>
+      </table>
+
+      <!-- ── TP-TPL ── -->
+      <h2 id="tp-tpl">TP-TPL — LINE 模板渲染</h2>
+      <table class="bdd-int-table">
+        <thead><tr><th>TP-ID</th><th>測試點</th><th>預期結果</th></tr></thead>
+        <tbody>
+          <tr><td><span class="tp-badge tp-tpl">TP-TPL-001</span></td><td>替換模板不改主流程</td><td>LINE 文案跟隨模板自動更新</td></tr>
+          <tr><td><span class="tp-badge tp-tpl">TP-TPL-002</span></td><td>模板缺失 / 語法錯誤</td><td>記錄錯誤，不送出未知格式訊息</td></tr>
+          <tr><td><span class="tp-badge tp-tpl">TP-TPL-003</span></td><td>彙總/觸發列 均過 render</td><td>全部訊息出口皆透過 template_key</td></tr>
+          <tr><td><span class="tp-badge tp-tpl">TP-TPL-004</span></td><td>測試推播也走模板</td><td>test push 送達，文案符合模板</td></tr>
+        </tbody>
+      </table>
+
+      <!-- ── TP-TRD ── -->
+      <h2 id="tp-trd">TP-TRD — 交易時段</h2>
+      <table class="bdd-int-table">
+        <thead><tr><th>TP-ID</th><th>測試點</th><th>預期結果</th></tr></thead>
+        <tbody>
+          <tr><td><span class="tp-badge tp-trd">TP-TRD-001</span></td><td>08:45 後有大盤新資料</td><td>is_trading_day = True</td></tr>
+          <tr><td><span class="tp-badge tp-trd">TP-TRD-002</span></td><td>09:00 後無大盤資料</td><td>MARKET_TIMEOUT，skip 分鐘</td></tr>
+          <tr><td><span class="tp-badge tp-trd">TP-TRD-003</span></td><td>13:31 時刻</td><td>is_in_trading_session = False，停止輪詢</td></tr>
+        </tbody>
+      </table>
+
+      <!-- ── TP-VAL ── -->
+      <h2 id="tp-val">TP-VAL — 每日估值排程</h2>
+      <div class="lp-arch-grid" style="margin-bottom:16px">
+        <div class="lp-arch-img-wrap">
+          <img src="architecture/images/04-valuation-flow.png" alt="估值流程圖">
+          <p class="lp-arch-caption">每日 14:00 估值流程</p>
+        </div>
+      </div>
+      <table class="bdd-int-table">
+        <thead><tr><th>TP-ID</th><th>測試點</th><th>預期結果</th></tr></thead>
+        <tbody>
+          <tr><td><span class="tp-badge tp-val">TP-VAL-001</span></td><td>交易日 14:00</td><td>三方法各新增一筆 valuation_snapshot</td></tr>
+          <tr><td><span class="tp-badge tp-val">TP-VAL-002</span></td><td>非交易日 14:00</td><td>skip，僅記錄 info</td></tr>
+          <tr><td><span class="tp-badge tp-val">TP-VAL-003</span></td><td>今日計算失敗</td><td>不覆蓋昨日快照</td></tr>
+          <tr><td><span class="tp-badge tp-val">TP-VAL-004</span></td><td>三方法資料皆可用</td><td>3 筆快照寫入</td></tr>
+          <tr><td><span class="tp-badge tp-val">TP-VAL-005</span></td><td>raysky 缺 current_assets</td><td>raysky skip；emily/oldbull 成功</td></tr>
+          <tr><td><span class="tp-badge tp-val">TP-VAL-006</span></td><td>主來源逾時；備援可用</td><td>成功估值，logs 有來源切換</td></tr>
+        </tbody>
+      </table>
+
+      <!-- ── TP-UAT ── -->
+      <h2 id="tp-uat">TP-UAT — 端對端驗收測試</h2>
+      <div class="banner info">
+        所有 UAT 場景需提供實際執行證據（截圖、log 片段、DB 查詢截圖）。
+        詳見 <a href="https://github.com/ibalasite/stock_monitor" target="_blank" rel="noopener noreferrer">uat-signoff.md</a>。
+      </div>
+      <div class="bdd-uat-grid" style="margin-top:16px">
+        <div class="bdd-uat-card bdd-uat--pass">
+          <div class="bdd-uat-id">UAT-001</div>
+          <div class="bdd-uat-text">手動門檻觸發 60 秒內通知</div>
+        </div>
+        <div class="bdd-uat-card bdd-uat--pass">
+          <div class="bdd-uat-id">UAT-002</div>
+          <div class="bdd-uat-text">5 分鐘冷卻不重複推播</div>
+        </div>
+        <div class="bdd-uat-card bdd-uat--pass">
+          <div class="bdd-uat-id">UAT-003</div>
+          <div class="bdd-uat-text">message 核心欄位可查</div>
+        </div>
+        <div class="bdd-uat-card bdd-uat--pass">
+          <div class="bdd-uat-id">UAT-004</div>
+          <div class="bdd-uat-text">非交易時段跳過輪詢</div>
+        </div>
+        <div class="bdd-uat-card bdd-uat--pass">
+          <div class="bdd-uat-id">UAT-005</div>
+          <div class="bdd-uat-text">14:00 估值執行且失敗不覆蓋</div>
+        </div>
+        <div class="bdd-uat-card bdd-uat--pass">
+          <div class="bdd-uat-id">UAT-006</div>
+          <div class="bdd-uat-text">同分鐘多股票只發一封</div>
+        </div>
+        <div class="bdd-uat-card bdd-uat--pass">
+          <div class="bdd-uat-id">UAT-007</div>
+          <div class="bdd-uat-text">1/2 同時命中僅通知 status 2</div>
+        </div>
+        <div class="bdd-uat-card bdd-uat--pass">
+          <div class="bdd-uat-id">UAT-008</div>
+          <div class="bdd-uat-text">LINE 成功 DB 失敗可補償且不重複</div>
+        </div>
+        <div class="bdd-uat-card bdd-uat--pass">
+          <div class="bdd-uat-id">UAT-009</div>
+          <div class="bdd-uat-text">LINE 必填錯誤 fail-fast</div>
+        </div>
+        <div class="bdd-uat-card bdd-uat--pass">
+          <div class="bdd-uat-id">UAT-010</div>
+          <div class="bdd-uat-text">重啟後不重複通知同分鐘</div>
+        </div>
+        <div class="bdd-uat-card bdd-uat--pass">
+          <div class="bdd-uat-id">UAT-011</div>
+          <div class="bdd-uat-text">stale/conflict 不通知且有 WARN log</div>
+        </div>
+        <div class="bdd-uat-card bdd-uat--pass">
+          <div class="bdd-uat-id">UAT-012</div>
+          <div class="bdd-uat-text">三方法估值，資料不足 skip 不覆蓋</div>
+        </div>
+        <div class="bdd-uat-card bdd-uat--pass">
+          <div class="bdd-uat-id">UAT-013</div>
+          <div class="bdd-uat-text">開盤摘要同日不重複</div>
+        </div>
+        <div class="bdd-uat-card bdd-uat--pass">
+          <div class="bdd-uat-id">UAT-014</div>
+          <div class="bdd-uat-text">所有 LINE 訊息均由模板渲染</div>
+        </div>
+      </div>
+
+      <!-- ── Non-Functional ── -->
+      <h2 id="tp-nonfunc">SEC / ARCH / ADP / CODE</h2>
+      <div class="bdd-cr-grid">
+        <div class="bdd-cr-card bdd-cr--sec">
+          <div class="bdd-cr-label">TP-SEC-001</div>
+          <p><code>LinePushClient</code> repr() 不得含 token</p>
+        </div>
+        <div class="bdd-cr-card bdd-cr--sec">
+          <div class="bdd-cr-label">TP-SEC-002</div>
+          <p>無效時區名稱 → ValueError，不靜默 fallback UTC</p>
+        </div>
+        <div class="bdd-cr-card bdd-cr--sec">
+          <div class="bdd-cr-label">TP-SEC-003</div>
+          <p>HTTP 回應受 MAX_RESPONSE_BYTES 上限保護</p>
+        </div>
+        <div class="bdd-cr-card bdd-cr--arch">
+          <div class="bdd-cr-label">TP-ARCH-001</div>
+          <p>app.py 不含估值邏輯；無 scenario_case 生產路徑</p>
+        </div>
+        <div class="bdd-cr-card bdd-cr--arch">
+          <div class="bdd-cr-label">TP-ARCH-002</div>
+          <p>render_line_template_message 全專案唯一定義</p>
+        </div>
+        <div class="bdd-cr-card bdd-cr--arch">
+          <div class="bdd-cr-label">TP-ARCH-003</div>
+          <p>MinuteCycleConfig dataclass 在 runtime_service.py</p>
+        </div>
+        <div class="bdd-cr-card bdd-cr--adp">
+          <div class="bdd-cr-label">TP-ADP-001</div>
+          <p>Yahoo HTTP 失敗 → WARN + 空 dict，不 raise</p>
+        </div>
+        <div class="bdd-cr-card bdd-cr--adp">
+          <div class="bdd-cr-label">TP-ADP-002</div>
+          <p>tick_at 比較；TWSE 優先；兩者皆無 → STALE_QUOTE</p>
+        </div>
+        <div class="bdd-cr-card bdd-cr--code">
+          <div class="bdd-cr-label">TP-CODE-001</div>
+          <p>render_line_template_message 呼叫次數 ≤ 1</p>
+        </div>
+        <div class="bdd-cr-card bdd-cr--code">
+          <div class="bdd-cr-label">TP-CODE-003</div>
+          <p>aggregate_minute_notifications 不用 f-string 組觸發列</p>
+        </div>
+      </div>
+
+      <!-- ── Coverage ── -->
+      <h2 id="coverage">覆蓋率設定（Coverage Gate）</h2>
+      <div class="banner success">
+        <strong>門檻：100%</strong> — lines · branches · functions · statements 全部必須達成，否則 CI pipeline 失敗。
+      </div>
+      <pre class="bdd-gherkin" style="margin-top:16px"><code># pytest.ini 設定
+[pytest]
+addopts = --cov=stock_monitor --cov-branch
+          --cov-report=term-missing --cov-fail-under=100
+
+# 常用執行指令
+python -m pytest -q tests
+python -m pytest -q tests/test_policy_rules.py
+python -m pytest -q tests/test_integration_workflow.py -k TP-INT-010</code></pre>
+
+    </div>
+  </main>
+</div>
+
+<script>
+document.addEventListener('DOMContentLoaded', () => {
+  const sidebar = document.querySelector('.sidebar');
+  if (!sidebar) return;
+  const links = Array.from(sidebar.querySelectorAll('a[href^="#"]'));
+  const observer = new IntersectionObserver(entries => {
+    entries.forEach(e => {
+      if (e.isIntersecting) {
+        links.forEach(l => l.classList.remove('active'));
+        const match = links.find(l => l.getAttribute('href') === '#' + e.target.id);
+        if (match) match.classList.add('active');
+      }
+    });
+  }, { rootMargin: '-20% 0px -70% 0px' });
+  document.querySelectorAll('[id]').forEach(el => observer.observe(el));
+});
+</script>
+</body>
+</html>
