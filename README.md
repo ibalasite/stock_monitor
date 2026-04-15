@@ -17,7 +17,7 @@
 4. `pytest-bdd` 已安裝，`stock_monitoring_smoke.feature` 與完整 `stock_monitoring_system.feature` 皆可執行。
 5. `stock_monitor` 主程式套件已建立並實作核心測試契約。
 6. 最新狀態：
-   - `pytest -q tests`：最近一次基線（2026-04-15）為 `289 passed`（含完整 BDD + unit/integration/UAT contract + CR-* 改善驗證 + TP-ADP-001~004 + TP-FR17-001~009 + 委賣一 ask price + FR-18 股票中文名稱 DB 持久化 + TP-NAME-001~003 adapter/runtime 名稱隔離，100% coverage）
+   - `pytest -q tests`：最近一次基線（2026-04-15）為 `291 passed`（含完整 BDD + unit/integration/UAT contract + CR-* 改善驗證 + TP-ADP-001~004 + TP-FR17-001~009 + 委賣一 ask price + FR-18 股票中文名稱 DB 持久化 + TP-NAME-001~003 adapter/runtime 名稱隔離 + CR-ADP-04 Yahoo 1MB 限制 + TP-DB-006 migration 子案例 + TP-SEC-003 Yahoo 覆蓋，100% coverage）
    - Coverage gate：`100%`（line + branch）
    - CI：`.github/workflows/ci.yml` 已啟用（push / pull_request），且已採用 action SHA pin + 鎖版依賴 + `pip-audit`
    - 可執行入口：`python -m stock_monitor init-db|run-once|reconcile-once|valuation-once|run-daemon`
@@ -238,6 +238,12 @@ Live URL（啟用 Pages 後）：`https://ibalasite.github.io/stock_monitor/`
     - `evaluate_valuation_snapshot_hits` / `build_minute_rows` / `run_minute_cycle`：透過 `stock_name_map`（DB）傳遞名稱，不從報價取
     - 新增 BDD Scenario：TP-NAME-001、TP-NAME-002、TP-NAME-003（`stock_monitoring_system.feature` Rule: 股票名稱唯一來源為 DB）
     - 全套測試：281 → **289 passed**，維持 100% coverage
+
+33. **CR-ADP-04 修正：Yahoo `MAX_RESPONSE_BYTES` 1MB + 測試補強**：
+    - `market_data_yahoo.py`：`MAX_RESPONSE_BYTES` 從 `2_097_152`（2 MB）修正為 `1_048_576`（1 MB），與 TWSE adapter 一致（EDD §13.5 CR-ADP-04）
+    - 新增 `test_tp_sec_003_yahoo_http_read_enforces_1mb_limit`：驗證 Yahoo adapter HTTP 讀取也受 1 MB 上限保護（補強 TP-SEC-003，原只覆蓋 TWSE）
+    - 新增 `test_tp_db_006_migration_adds_stock_name_to_legacy_db`：驗證 `apply_schema()` 對舊 DB（缺欄）自動補欄，既有資料不受影響（補強 TP-DB-006 migration 子案例）
+    - 全套測試：289 → **291 passed**，維持 100% coverage
 
 30. **鐵律設定：禁止自作主張（Never Add Unrequested Content）**：
     - 新增 `.github/copilot-instructions.md`（Copilot workspace-level 自動載入）

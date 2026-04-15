@@ -71,7 +71,7 @@
 | TP-DB-003 | EDD §6.4 | Migration | `message` unique/format/json 約束生效 |
 | TP-DB-004 | EDD §6.5 | Migration | `pending_delivery_ledger` 可正常寫讀 |
 | TP-DB-005 | EDD §6.3 | Migration | `valuation_snapshots` 唯一鍵需含 `method_version` |
-| TP-DB-006 | EDD §6.1 / FR-18 | Migration | `watchlist` 需有 `stock_name TEXT NOT NULL DEFAULT ''` 欄位，可 UPDATE，migration 補欄正確 |
+| TP-DB-006 | EDD §6.1 / FR-18 | Migration | `watchlist` 需有 `stock_name TEXT NOT NULL DEFAULT ''` 欄位，可 UPDATE，migration 補欄正確（2 子案例：① fresh schema 含欄；② 舊 DB 缺欄 → `apply_schema()` 自動補欄，既有資料保留） |
 | TP-ENV-001 | EDD §8.1 | Integration | JSON1 不可用時服務 fail-fast |
 | TP-ENV-002 | EDD §8.1 | Integration | `PRAGMA foreign_keys=ON` 與 health check 驗證 |
 | TP-ENV-003 | PDD §7 FR-09 / EDD §7.1 | Integration | LINE 設定鍵値驗證與錯誤訊息（規範名 `LINE_*`、別名 `CHANNEL_*/TARGET_*`、無效値三組 Examples） |
@@ -126,7 +126,7 @@
 | TP-UAT-014 | PDD §12 UAT-14 | UAT | 所有 LINE 出站訊息皆透過模板渲染，且程式碼無硬編碼最終文案 |
 | TP-SEC-001 | EDD §13.1 CR-SEC-01 | Unit | `LinePushClient` 的 `repr()` 輸出不得包含 token 明文 |
 | TP-SEC-002 | EDD §13.1 CR-SEC-03 / §13.3 CR-CODE-05 | Unit | 無效時區名稱引發啟動時 `ValueError`，不得靜默 fallback UTC |
-| TP-SEC-003 | EDD §13.1 CR-SEC-04 | Unit | HTTP 回應讀取有大小上限，超大回應不得無限占用記憶體 |
+| TP-SEC-003 | EDD §13.1 CR-SEC-04 / EDD §13.5 CR-ADP-04 | Unit | HTTP 回應讀取有大小上限，超大回應不得無限占用記憶體（TWSE adapter + Yahoo adapter 均涵蓋；Yahoo `MAX_RESPONSE_BYTES` 需 ≤ 1 MB，與 TWSE 相同） |
 | TP-ARCH-001 | EDD §13.2 CR-ARCH-01/02 | Unit | `ValuationCalculator` 可從 `stock_monitor.application.valuation_calculator` import；`app.py` 不含計算邏輯；`scenario_case` 分支不存在於生產估值流程 |
 | TP-ARCH-002 | EDD §13.2 CR-ARCH-03 | Unit | `render_line_template_message` 在整個專案內只有一份定義，來源為 `message_template.py` |
 | TP-ARCH-003 | EDD §13.3 CR-CODE-03 | Unit | `MinuteCycleConfig` dataclass 存在於 `runtime_service.py`，`run_minute_cycle` 接受它作為設定入口 |
@@ -206,7 +206,7 @@
 | TP-UAT-014 | 系統可運行 | 依 PDD UAT-14 執行並記錄證據 | 通過且具彙總/摘要/觸發列/測試推播模板渲染證據 |
 | TP-SEC-001 | `LinePushClient` 已載入 | 呼叫 `repr(LinePushClient(token="abc", to="xyz"))` | 輸出字串不包含 `abc`；欄位顯示為 `***` 或省略 |
 | TP-SEC-002 | 無 | 以無效時區名稱（如 `"Invalid/Tz"`）初始化 `TimeBucketService` 或呼叫 `_resolve_timezone` | 立即 `raise ValueError`，不繼續執行，不返回 UTC |
-| TP-SEC-003 | Mock HTTP server 回傳超過 1 MB 的 body | 呼叫市場資料 adapter 的 URL 讀取路徑 | 只讀取至 `MAX_RESPONSE_BYTES`，不引發 `MemoryError` |
+| TP-SEC-003 | Mock HTTP server 回傳超過 1 MB 的 body | 分別呼叫 TWSE adapter 與 Yahoo adapter 的 URL 讀取路徑 | 兩個 adapter 均只讀取至各自的 `MAX_RESPONSE_BYTES`（≤ 1 MB），不引發 `MemoryError`；Yahoo `MAX_RESPONSE_BYTES = 1_048_576` |
 | TP-ARCH-001 | 空 DB + 一組主僅依數據 | `from stock_monitor.application.valuation_calculator import ManualValuationCalculator`；檢查 `app.py` 不含計算類；執行一次估值確認無 `scenario_case` log 事件 | import 成功；`app.py` grep 不出計算專屬名稱；system_logs 無偽造 skip 事件 |
 | TP-ARCH-002 | 專案已 import | 用 `grep -r "def render_line_template_message"` 掃瞄所有 `.py` | 僅在 `message_template.py` 出現一次；`runtime_service.py` 改用 import |
 | TP-ARCH-003 | DB 設定 + Mock LINE | `from stock_monitor.application.runtime_service import MinuteCycleConfig`；以 `MinuteCycleConfig` 呼叫 `run_minute_cycle` | import 成功；函式接受 config 物件呼叫正常 |

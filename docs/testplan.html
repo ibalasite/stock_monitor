@@ -19,15 +19,15 @@
     <a href="testplan.html" class="active">測試計畫</a>
   </nav>
   <div class="spacer"></div>
-  <span class="badge">TEST PLAN v0.9</span>
+  <span class="badge">TEST PLAN v1.0</span>
 </header>
 
 <!-- Page Banner -->
 <div class="doc-page-banner">
   <div class="doc-pb-container">
-    <div class="doc-pb-eyebrow">測試計畫文件 · TEST PLAN v0.9 · 2026-04-14</div>
+    <div class="doc-pb-eyebrow">測試計畫文件 · TEST PLAN v1.0 · 2026-04-15</div>
     <p class="doc-pb-title">測試計畫</p>
-    <p class="doc-pb-sub">77 個測試案例 · 15 類群組 · 100% 行/分支/函數/陳述覆蓋率門檻</p>
+    <p class="doc-pb-sub">78 個測試案例 · 15 類群組 · 100% 行/分支/函數/陳述覆蓋率門檻</p>
   </div>
 </div>
 
@@ -307,7 +307,7 @@
           <tr><td><span class="tp-badge tp-db">TP-DB-003</span></td><td>同上</td><td>minute_bucket 格式錯誤 / 同分鐘重複</td><td>CHECK / UNIQUE 失敗</td></tr>
           <tr><td><span class="tp-badge tp-db">TP-DB-004</span></td><td>同上</td><td>寫 pending_delivery_ledger PENDING</td><td>寫入成功，可按 status 索引查詢</td></tr>
           <tr><td><span class="tp-badge tp-db">TP-DB-005</span></td><td>同上</td><td>同股票同日 v1/v2 valuation_snapshot</td><td>v1+v2 可共存；再插入 v1 unique 失敗</td></tr>
-          <tr><td><span class="tp-badge tp-db">TP-DB-006</span></td><td>既有 DB 未含 stock_name</td><td>呼叫 apply_schema()；對 watchlist 做 UPDATE stock_name</td><td>migration 自動補欄；UPDATE 成功；list_enabled() 回傳 stock_name 欄位</td></tr>
+          <tr><td><span class="tp-badge tp-db">TP-DB-006</span></td><td>① fresh schema；② 既有 DB 缺 stock_name 欄</td><td>① 建 schema 直接寫入 watchlist；② 舊 DB 呼叫 apply_schema()，再 UPDATE stock_name</td><td>① stock_name 欄預設 ''；② migration 自動補欄，既有資料保留；UPDATE 成功；list_enabled() 回傳 stock_name</td></tr>
         </tbody>
       </table>
 
@@ -484,7 +484,7 @@
         </div>
         <div class="bdd-cr-card bdd-cr--sec">
           <div class="bdd-cr-label">TP-SEC-003</div>
-          <p>HTTP 回應受 MAX_RESPONSE_BYTES 上限保護</p>
+          <p>HTTP 回應受 MAX_RESPONSE_BYTES 上限保護（TWSE + Yahoo 均 ≤ 1 MB；CR-SEC-04 + CR-ADP-04）</p>
         </div>
         <div class="bdd-cr-card bdd-cr--arch">
           <div class="bdd-cr-label">TP-ARCH-001</div>
@@ -498,6 +498,18 @@
           <div class="bdd-cr-label">TP-ARCH-003</div>
           <p>MinuteCycleConfig dataclass 在 runtime_service.py</p>
         </div>
+        <div class="bdd-cr-card bdd-cr--arch">
+          <div class="bdd-cr-label">TP-ARCH-004</div>
+          <p>開盤摘要冪等從 DB 讀取（非 log LIKE）；09:01+ restart 仍可補發當日摘要</p>
+        </div>
+        <div class="bdd-cr-card bdd-cr--arch">
+          <div class="bdd-cr-label">TP-ARCH-005</div>
+          <p>app.py 不定義 _run_daemon_loop / _build_runtime；只保留 CLI 入口與指令路由</p>
+        </div>
+        <div class="bdd-cr-card bdd-cr--arch">
+          <div class="bdd-cr-label">TP-ARCH-006</div>
+          <p>merge_minute_message 改私有（_merge_minute_message）；無公開孤兒 symbol</p>
+        </div>
         <div class="bdd-cr-card bdd-cr--adp">
           <div class="bdd-cr-label">TP-ADP-001</div>
           <p>Yahoo HTTP 失敗 → WARN + 空 dict，不 raise</p>
@@ -506,13 +518,29 @@
           <div class="bdd-cr-label">TP-ADP-002</div>
           <p>tick_at 比較；TWSE 優先；兩者皆無 → STALE_QUOTE</p>
         </div>
+        <div class="bdd-cr-card bdd-cr--adp">
+          <div class="bdd-cr-label">TP-ADP-003</div>
+          <p>TWSE quotes 含 exchange 欄位（tse/otc）；_price_cache 在 a='-' 時回傳最後已知委賣一</p>
+        </div>
+        <div class="bdd-cr-card bdd-cr--adp">
+          <div class="bdd-cr-label">TP-ADP-004</div>
+          <p>Yahoo HTTP 回應受 MAX_RESPONSE_BYTES ≤ 1 MB 限制（CR-ADP-04）</p>
+        </div>
         <div class="bdd-cr-card bdd-cr--code">
           <div class="bdd-cr-label">TP-CODE-001</div>
           <p>render_line_template_message 呼叫次數 ≤ 1</p>
         </div>
         <div class="bdd-cr-card bdd-cr--code">
+          <div class="bdd-cr-label">TP-CODE-002</div>
+          <p>reconcile_pending_once 簽名不含 line_client 參數（永不使用的死參數）</p>
+        </div>
+        <div class="bdd-cr-card bdd-cr--code">
           <div class="bdd-cr-label">TP-CODE-003</div>
           <p>aggregate_minute_notifications 不用 f-string 組觸發列</p>
+        </div>
+        <div class="bdd-cr-card bdd-cr--code">
+          <div class="bdd-cr-label">TP-CODE-004</div>
+          <p>_send_opening_summary_if_needed 不受限 09:00；任何交易分鐘且當日尚未發送時均可觸發</p>
         </div>
       </div>
 
