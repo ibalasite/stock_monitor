@@ -617,7 +617,7 @@ LINE_TEMPLATE_OPENING_SUMMARY=line_opening_summary_mobile_compact_v1
 |---|---|---|
 | `YAHOO_BASE_URL` | `https://tw.stock.yahoo.com/quote/` | Yahoo Finance TW HTML scraping 端點（加 `{stock_no}` 即完整 URL）|
 | `YAHOO_TIMEOUT_SEC` | `10` | HTTP 逾時秒數 |
-| `MAX_RESPONSE_BYTES` | `2_097_152` | HTTP 回應讀取上限（共用同 TWSE adapter 常數）|
+| `MAX_RESPONSE_BYTES` | `1_048_576` | HTTP 回應讀取上限（共用同 TWSE adapter 常數）|
 
 ## 9. Phase 規劃
 ### Phase 1（手動門檻）

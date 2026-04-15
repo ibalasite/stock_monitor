@@ -9,7 +9,7 @@ Feature: 雙行情來源 Composite Adapter（TWSE 主 + Yahoo Finance 副）
   Background:
     Given TWSE MIS endpoint 為 "https://mis.twse.com.tw/stock/api/getStockInfo.jsp"
     And Yahoo Finance TW 端點為 "https://tw.stock.yahoo.com/quote/{stock_no}"（HTML scraping，無 .TW/.TWO suffix）
-    And 兩者 HTTP 回應讀取上限均為 2 MB（MAX_RESPONSE_BYTES）
+    And 兩者 HTTP 回應讀取上限均為 1 MB（MAX_RESPONSE_BYTES）
 
   Rule: TWSE _price_cache 行為（TP-ADP-003）
 
