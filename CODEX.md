@@ -155,14 +155,16 @@ python -m pytest -q tests/test_integration_workflow.py -k TP-INT-010
 4. **改 template 就改 template，禁止同時改業務邏輯或輸出格式。** 改成 Jinja2 前後，格式與文字必須完全一致。
 5. **腳本若需區分用 label，只能輸出到 terminal stdout，禁止出現在 LINE 訊息或任何對外輸出中。**
 
-## 12. Code Review 改善禁止清單（v0.9 定版，業務程式禁寫）
+## 12. Code Review 改善禁止清單（v1.0 定版，業務程式禁寫）
 - **禁止** `scenario_case` 分支存在於任何生產估值計算路徑（CR-SEC-02、CR-ARCH-02）
 - **禁止** `_resolve_timezone` 對無效時區名稱靜默 fallback UTC（CR-SEC-03）
 - **禁止** 在 `message_template.py` 以外的模組重複定義 `render_line_template_message`（CR-ARCH-03）
 - **禁止** 在 `app.py`（CLI Interface Layer）內定義估值計算邏輯（CR-ARCH-01）
 - **禁止** `TimeBucketService` 對無效時區名稱靜默設 `self._tz = None`（CR-CODE-05）
+- **禁止** `YahooFinanceMarketDataProvider` 在 HTTP 失敗時 raise exception 向上傳播（CR-ADP-01）
+- **禁止** `CompositeMarketDataProvider` 直接回傳任一來源的字典而不做 Freshness-First 比較（CR-ADP-02）
 
-## 12. Out of Scope（此階段不做）
+## 13. Out of Scope（此階段不做）
 - 自動下單
 - 多市場（美股/加密）
 - 分散式高可用部署

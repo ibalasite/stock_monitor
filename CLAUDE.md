@@ -164,7 +164,7 @@ python -m pytest -q tests/test_integration_workflow.py -k TP-INT-010
 - **禁止** `YahooFinanceMarketDataProvider` 在 HTTP 失敗時 raise exception 向上傳播（CR-ADP-01）
 - **禁止** `CompositeMarketDataProvider` 直接回傳任一來源的字典而不做 Freshness-First 比較（CR-ADP-02）
 
-## 12. Out of Scope（此階段不做）
+## 13. Out of Scope（此階段不做）
 - 自動下單
 - 多市場（美股/加密）
 - 分散式高可用部署

@@ -63,6 +63,7 @@
 6. 報價新鮮度門檻：`STALE_THRESHOLD_SEC=90`。  
 
 ## 6. 測試矩陣（需求追蹤）
+> **BDD 覆蓋規則**：類型含 `BDD` 的測試案例須有對應 `.feature` 場景與 `@tag`。類型為 `Unit` 或 `Migration` 者以 pytest 單元測試覆蓋，不要求 BDD 場景（例：TP-DB-006, TP-VAL-007, TP-SEC-003, TP-ARCH-005/006, TP-CODE-001~004 均屬此類）。
 | 測試ID | 需求對應 | 類型 | 驗收重點 |
 |---|---|---|---|
 | TP-DB-001 | EDD §6.1 | Migration | `watchlist` 約束與欄位型別正確 |
