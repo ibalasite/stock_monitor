@@ -198,3 +198,42 @@ def test_tp_db_006_watchlist_stock_name_column():
     finally:
         conn.close()
 
+
+def test_tp_db_006_migration_adds_stock_name_to_legacy_db():
+    """TP-DB-006 Migration: apply_schema must add stock_name column to old DB lacking it."""
+    from stock_monitor.adapters.sqlite_repo import apply_schema
+
+    conn = sqlite3.connect(":memory:")
+    conn.execute("PRAGMA foreign_keys = ON;")
+    # Simulate a legacy watchlist that has no stock_name column
+    conn.executescript("""
+        CREATE TABLE IF NOT EXISTS watchlist (
+            stock_no TEXT PRIMARY KEY,
+            manual_fair_price NUMERIC NOT NULL CHECK (manual_fair_price > 0),
+            manual_cheap_price NUMERIC NOT NULL CHECK (manual_cheap_price > 0),
+            enabled INTEGER NOT NULL DEFAULT 1 CHECK (enabled IN (0,1)),
+            created_at INTEGER NOT NULL,
+            updated_at INTEGER NOT NULL,
+            CHECK (manual_cheap_price <= manual_fair_price)
+        );
+    """)
+    conn.execute(
+        "INSERT INTO watchlist(stock_no, manual_fair_price, manual_cheap_price, enabled, created_at, updated_at)"
+        " VALUES ('2330', 1500, 1000, 1, 1712710000, 1712710000)"
+    )
+    conn.commit()
+
+    # Pre-condition: stock_name must be absent
+    cols_before = {row[1] for row in conn.execute("PRAGMA table_info(watchlist)").fetchall()}
+    assert "stock_name" not in cols_before, "[TP-DB-006] setup error: legacy DB already has stock_name"
+
+    apply_schema(conn)
+
+    # Post-condition: stock_name should now exist with default ''
+    cols_after = {row[1] for row in conn.execute("PRAGMA table_info(watchlist)").fetchall()}
+    assert "stock_name" in cols_after, "[TP-DB-006] apply_schema must add stock_name to legacy DB"
+
+    row = conn.execute("SELECT stock_name FROM watchlist WHERE stock_no = '2330'").fetchone()
+    assert row[0] == "", "[TP-DB-006] migrated stock_name must default to empty string"
+    conn.close()
+

@@ -24,7 +24,7 @@ from urllib import error, request
 
 _LOG = logging.getLogger(__name__)
 
-MAX_RESPONSE_BYTES = 2_097_152  # 2 MB cap for HTML pages
+MAX_RESPONSE_BYTES = 1_048_576  # 1 MB cap for HTML pages (CR-ADP-04: same limit as TWSE)
 _BASE_URL = "https://tw.stock.yahoo.com/quote"
 _TIMEOUT_SEC = 15
 

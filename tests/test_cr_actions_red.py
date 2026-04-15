@@ -136,6 +136,60 @@ def test_tp_sec_003_market_data_http_read_enforces_size_limit(monkeypatch):
     )
 
 
+def test_tp_sec_003_yahoo_http_read_enforces_1mb_limit(monkeypatch):
+    """
+    [TP-SEC-003 / CR-ADP-04] YahooFinanceMarketDataProvider must also cap HTTP reads at 1 MB.
+
+    Verifies:
+    1. MAX_RESPONSE_BYTES is defined in market_data_yahoo and equals 1_048_576.
+    2. resp.read() is called with a positional byte-size argument ≤ 1 MB.
+    """
+    import stock_monitor.adapters.market_data_yahoo as m
+
+    assert hasattr(m, "MAX_RESPONSE_BYTES"), (
+        "[TP-SEC-003/CR-ADP-04] MAX_RESPONSE_BYTES not defined in market_data_yahoo."
+    )
+    assert m.MAX_RESPONSE_BYTES <= 1_048_576, (
+        f"[TP-SEC-003/CR-ADP-04] market_data_yahoo.MAX_RESPONSE_BYTES={m.MAX_RESPONSE_BYTES} "
+        "exceeds the 1 MB cap required by CR-ADP-04."
+    )
+
+    read_call_args: list[tuple] = []
+
+    class _TrackingResponse:
+        def read(self, *args, **kwargs):
+            read_call_args.append(args)
+            return b"<html></html>"
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *a):
+            return False
+
+    monkeypatch.setattr(
+        "stock_monitor.adapters.market_data_yahoo.request.urlopen",
+        lambda *a, **kw: _TrackingResponse(),
+    )
+    from stock_monitor.adapters.market_data_yahoo import YahooFinanceMarketDataProvider
+
+    provider = YahooFinanceMarketDataProvider()
+    try:
+        provider.get_realtime_quotes(["2330"])
+    except Exception:
+        pass
+
+    assert read_call_args, "[TP-SEC-003/CR-ADP-04] Yahoo resp.read() was never called"
+    first_args = read_call_args[0]
+    assert first_args, (
+        f"[TP-SEC-003/CR-ADP-04] Yahoo resp.read() called without a size limit "
+        f"(args={first_args}). CR-ADP-04 requires resp.read(MAX_RESPONSE_BYTES)."
+    )
+    assert first_args[0] <= 1_048_576, (
+        f"[TP-SEC-003/CR-ADP-04] Yahoo resp.read() size arg={first_args[0]} exceeds 1 MB."
+    )
+
+
 # ---------------------------------------------------------------------------
 # TP-ARCH-001  CR-ARCH-01/02 / CR-SEC-02
 # ---------------------------------------------------------------------------
