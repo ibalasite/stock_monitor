@@ -716,6 +716,7 @@ LINE_TEMPLATE_OPENING_SUMMARY=line_opening_summary_mobile_compact_v1
 | CR-SEC-02 | 🟠 | `_ManualValuationCalculator` 的 `scenario_case = "default"` 分支在生產路徑每次估值都寫入偽造的 `VALUATION_SKIP_INSUFFICIENT_DATA:optional_indicator_v1` log 事件 | ✅ 已修正：`scenario_case` 分支與 `_ManualValuationCalculator` 已從生產路徑完全移除 | 移除 `scenario_case` 生產分支；log 事件僅由真實計算結果產生 | TP-ARCH-001 |
 | CR-SEC-03 | 🟠 | `_resolve_timezone(name)` 在無效時區名稱時靜默 fallback 至 `timezone.utc`，造成 +08:00 偏移 8 小時誤差，系統無任何錯誤輸出 | ✅ 已修正：`raise ValueError(f"Invalid timezone name: {name!r}")` | 無效名稱必須 `raise ValueError(f"Invalid timezone: {name!r}")`，不得靜默降級 | TP-SEC-002 |
 | CR-SEC-04 | 🟡 | `urllib.request.urlopen` 讀取 HTTP 回應使用無邊界 `resp.read()`，存在過大回應耗盡記憶體風險 | ✅ 已修正：新增 `MAX_RESPONSE_BYTES = 1_048_576`；改為 `resp.read(MAX_RESPONSE_BYTES)` | 讀取回應應設上限（如 `resp.read(MAX_RESPONSE_BYTES)`），`MAX_RESPONSE_BYTES` 預設 `1_048_576`（1 MB） | TP-SEC-003 |
+| CR-SEC-05 | 🟡 | `LinePushClient.send()` 讀取 LINE API HTTP 回應使用無邊界 `resp.read()`；雖 LINE API 回應通常極小，但防禦性設計要求與 TWSE/Yahoo adapter 一致設上限 | ❌ 待修正 | `line_messaging.py` 新增 `MAX_RESPONSE_BYTES = 1_048_576`；回應讀取改為 `resp.read(MAX_RESPONSE_BYTES)` | TP-SEC-004 |
 
 ### 13.2 架構改善（Architecture）
 
@@ -738,6 +739,8 @@ LINE_TEMPLATE_OPENING_SUMMARY=line_opening_summary_mobile_compact_v1
 | CR-CODE-04 | 🟡 | `aggregate_minute_notifications` 仍用 f-string 直接組裝 trigger row 字串，未完整施行 FR-14 template render | ✅ 已修正：改用 `render_line_template_message(TRIGGER_ROW_DIGEST_TEMPLATE_KEY, context)` 統一渲染；新增 `TRIGGER_ROW_DIGEST_TEMPLATE_KEY` 常數 | 改用 `render_line_template_message(TRIGGER_ROW_TEMPLATE_KEY, context)` 統一渲染 | TP-CODE-003 |
 | CR-CODE-05 | 🟡 | `TimeBucketService.__init__` 在時區名稱無效時靜默設置 `self._tz = None`，後續呼叫才顯露錯誤（與 CR-SEC-03 對應） | ✅ 已修正：`__init__` 對無效時區名稱立即 `raise ValueError` | `__init__` 發現時區名無效時應立即 `raise ValueError`，不延遲到後續呼叫 | TP-SEC-002 |
 | CR-CODE-06 | 🟡 | 開盤摘要觸發條件為精確 `09:00` 分鐘桶，daemon 在 09:01 後重啟時當日開盤摘要永不發出 | ✅ 已修正：移除 `09:00` 精確比對；改以 `opening_summary_sent_for_date` 冪等記錄判斷「當日是否已發送」，允許 restart 後補送 | 觸發條件改為「交易日當日第一個尚未發送開盤摘要的分鐘」，允許 09:00 後 restart 觸發補送 | TP-CODE-004 |
+| CR-VAL-01 | 🟡 | `run_daily_valuation_job` 內部使用精確 `now_dt.strftime("%H:%M") != "14:00"` 時間檔；daemon 在 14:00 精確分鐘錯過就永遠沒有一個交易日將執行估值 | ✅ 已修正：改為 `< "14:00"`；`daemon_runner.py` 改為 `>= valuation_time` | `valuation_scheduler.py` 內部檔支改為 `< "14:00"`（即 14:00 以後均可執行）；`daemon_runner.py` 將 `== valuation_time` 改為 `>= valuation_time` | TP-VAL-008 |
+| CR-DAEMON-01 | 🟠 | `_run_daemon_loop` 只捕捉 `KeyboardInterrupt`；loop body 拋出任何其他 `Exception` 都會讓 daemon 沉默崩潰，無 log 記錄 | ❌ 待修正 | 每次 loop iteration 以 `try/except Exception` 包覆；捕捉到 exception 時寫入 `DAEMON_LOOP_EXCEPTION` ERROR log，繼續執行下一輪；`KeyboardInterrupt` 及 `SystemExit` 仍從外層傳播 | TP-DAEMON-001 |
 
 ### 13.4 已確認優點（保留）
 

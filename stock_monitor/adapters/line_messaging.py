@@ -7,6 +7,8 @@ import socket
 from dataclasses import dataclass, field
 from urllib import error, request
 
+MAX_RESPONSE_BYTES = 1_048_576  # 1 MB cap consistent with TWSE/Yahoo adapters (CR-SEC-05)
+
 
 @dataclass
 class LinePushClient:
@@ -42,7 +44,7 @@ class LinePushClient:
         try:
             with request.urlopen(req, timeout=self.timeout_sec) as resp:
                 status = int(getattr(resp, "status", 200))
-                response_text = resp.read().decode("utf-8")
+                response_text = resp.read(MAX_RESPONSE_BYTES).decode("utf-8")
         except socket.timeout as exc:
             raise TimeoutError("line api timeout") from exc
         except error.HTTPError as exc:

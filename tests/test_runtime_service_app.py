@@ -1030,6 +1030,69 @@ def test_run_daemon_loop_keyboard_interrupt(monkeypatch):
     assert result["reconcile_runs"] == 1
 
 
+def test_tp_daemon_001_loop_exception_logged_and_loop_continues(monkeypatch):
+    """[TP-DAEMON-001] EDD §13.3 CR-DAEMON-01: when the daemon loop body raises an
+    exception, the daemon must NOT crash. It must log DAEMON_LOOP_EXCEPTION at ERROR
+    level and continue executing the next iteration."""
+    from stock_monitor.application.daemon_runner import _run_daemon_loop
+
+    logged_errors: list[str] = []
+
+    class _FakeLogger:
+        def log(self, level: str, message: str):
+            if level == "ERROR":
+                logged_errors.append(message)
+
+    calls = {"minute": 0}
+
+    def _raise_on_first(**kwargs):
+        calls["minute"] += 1
+        if calls["minute"] == 1:
+            raise RuntimeError("transient market error")
+        return {"status": "no_signal", "count": 0}
+
+    monkeypatch.setattr("stock_monitor.application.daemon_runner.run_minute_cycle", _raise_on_first)
+    monkeypatch.setattr("stock_monitor.application.daemon_runner.run_daily_valuation_job", lambda **kwargs: {"status": "skipped"})
+    monkeypatch.setattr("stock_monitor.application.daemon_runner.run_reconcile_cycle", lambda **kwargs: {"reconciled": 0})
+
+    runtime = {
+        "market_provider": object(),
+        "line_client": object(),
+        "watchlist_repo": object(),
+        "message_repo": object(),
+        "pending_repo": object(),
+        "valuation_snapshot_repo": object(),
+        "logger": _FakeLogger(),
+        "pending_fallback": object(),
+    }
+
+    schedule = iter([
+        datetime(2026, 4, 10, 9, 0, 0),   # loop 1: minute cycle raises
+        datetime(2026, 4, 10, 9, 1, 0),   # loop 2: minute cycle succeeds
+    ])
+
+    result = _run_daemon_loop(
+        runtime=runtime,
+        timezone_name="Asia/Taipei",
+        poll_interval_sec=60,
+        valuation_time="14:00",
+        cooldown_seconds=300,
+        retry_count=3,
+        stale_threshold_sec=90,
+        max_loops=2,
+        now_provider=lambda: next(schedule),
+        sleep_fn=lambda sec: None,
+    )
+
+    assert result["status"] == "stopped", (
+        "[TP-DAEMON-001] Daemon must continue after exception and return 'stopped' after max_loops."
+    )
+    assert result["loops"] == 2, "[TP-DAEMON-001] Daemon must complete both loops."
+    assert any("DAEMON_LOOP_EXCEPTION" in msg for msg in logged_errors), (
+        "[TP-DAEMON-001] Daemon must log DAEMON_LOOP_EXCEPTION at ERROR level when loop body raises."
+    )
+
+
 def test_stock_monitor_dunder_main_invokes_app_main(monkeypatch):
     monkeypatch.setattr("stock_monitor.app.main", lambda argv=None: 0)
     monkeypatch.setattr(sys, "argv", ["python", "run-once"])

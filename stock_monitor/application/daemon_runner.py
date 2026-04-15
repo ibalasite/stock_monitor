@@ -102,53 +102,56 @@ def _run_daemon_loop(
                 break
 
             loops += 1
-            now_dt = now_provider()
-            current_bucket = bucket_service.to_minute_bucket(now_dt)
+            try:
+                now_dt = now_provider()
+                current_bucket = bucket_service.to_minute_bucket(now_dt)
 
-            if is_in_trading_session(now_dt) and current_bucket != last_polled_bucket:
-                run_minute_cycle(
-                    now_dt=now_dt,
-                    market_data_provider=runtime["market_provider"],
-                    line_client=runtime["line_client"],
-                    watchlist_repo=runtime["watchlist_repo"],
+                if is_in_trading_session(now_dt) and current_bucket != last_polled_bucket:
+                    run_minute_cycle(
+                        now_dt=now_dt,
+                        market_data_provider=runtime["market_provider"],
+                        line_client=runtime["line_client"],
+                        watchlist_repo=runtime["watchlist_repo"],
+                        message_repo=runtime["message_repo"],
+                        pending_repo=runtime["pending_repo"],
+                        valuation_snapshot_repo=runtime["valuation_snapshot_repo"],
+                        pending_fallback=runtime["pending_fallback"],
+                        logger=runtime["logger"],
+                        cooldown_seconds=cooldown_seconds,
+                        retry_count=retry_count,
+                        stale_threshold_sec=stale_threshold_sec,
+                        timezone_name=timezone_name,
+                    )
+                    minute_cycles += 1
+                    last_polled_bucket = current_bucket
+
+                now_hhmm = now_dt.strftime("%H:%M")
+                today = now_dt.strftime("%Y-%m-%d")
+                if now_hhmm >= valuation_time and now_dt.weekday() < 5 and last_valuation_date != today:
+                    calculator = ManualValuationCalculator(
+                        watchlist_repo=runtime["watchlist_repo"],
+                        trade_date=today,
+                    )
+                    run_daily_valuation_job(
+                        now_dt=now_dt,
+                        is_trading_day=True,
+                        calculator=calculator,
+                        snapshot_repo=runtime["valuation_snapshot_repo"],
+                        logger=runtime["logger"],
+                        watchlist_repo=runtime["watchlist_repo"],
+                        market_data_provider=runtime["market_provider"],
+                    )
+                    valuation_runs += 1
+                    last_valuation_date = today
+
+                run_reconcile_cycle(
                     message_repo=runtime["message_repo"],
                     pending_repo=runtime["pending_repo"],
-                    valuation_snapshot_repo=runtime["valuation_snapshot_repo"],
-                    pending_fallback=runtime["pending_fallback"],
                     logger=runtime["logger"],
-                    cooldown_seconds=cooldown_seconds,
-                    retry_count=retry_count,
-                    stale_threshold_sec=stale_threshold_sec,
-                    timezone_name=timezone_name,
                 )
-                minute_cycles += 1
-                last_polled_bucket = current_bucket
-
-            now_hhmm = now_dt.strftime("%H:%M")
-            today = now_dt.strftime("%Y-%m-%d")
-            if now_hhmm == valuation_time and now_dt.weekday() < 5 and last_valuation_date != today:
-                calculator = ManualValuationCalculator(
-                    watchlist_repo=runtime["watchlist_repo"],
-                    trade_date=today,
-                )
-                run_daily_valuation_job(
-                    now_dt=now_dt,
-                    is_trading_day=True,
-                    calculator=calculator,
-                    snapshot_repo=runtime["valuation_snapshot_repo"],
-                    logger=runtime["logger"],
-                    watchlist_repo=runtime["watchlist_repo"],
-                    market_data_provider=runtime["market_provider"],
-                )
-                valuation_runs += 1
-                last_valuation_date = today
-
-            run_reconcile_cycle(
-                message_repo=runtime["message_repo"],
-                pending_repo=runtime["pending_repo"],
-                logger=runtime["logger"],
-            )
-            reconcile_runs += 1
+                reconcile_runs += 1
+            except Exception as exc:
+                runtime["logger"].log("ERROR", f"DAEMON_LOOP_EXCEPTION: {exc}")
 
             sleep_fn(poll_interval_sec)
     except KeyboardInterrupt:

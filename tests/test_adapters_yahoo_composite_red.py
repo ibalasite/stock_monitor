@@ -620,3 +620,117 @@ def test_composite_empty_stock_nos_returns_empty():
     secondary.get_realtime_quotes = lambda nos, exchange_map=None, **kw: {}
     comp = CompositeCls(primary=primary, secondary=secondary)
     assert comp.get_realtime_quotes([]) == {}
+
+
+def test_composite_get_stock_names_merges_primary_wins():
+    """[TP-NAME-001] FR-18: CompositeMarketDataProvider.get_stock_names() merges secondary then
+    primary; primary wins on conflict."""
+    CompositeCls = require_symbol(
+        "stock_monitor.adapters.market_data_composite",
+        "CompositeMarketDataProvider",
+        "cov-composite-names",
+    )
+    TwseCls = require_symbol(
+        "stock_monitor.adapters.market_data_twse",
+        "TwseRealtimeMarketDataProvider",
+        "cov-composite-names",
+    )
+    YahooCls = require_symbol(
+        "stock_monitor.adapters.market_data_yahoo",
+        "YahooFinanceMarketDataProvider",
+        "cov-composite-names",
+    )
+
+    primary = TwseCls.__new__(TwseCls)
+    primary._price_cache = {}
+    primary._exchange_cache = {}
+    primary._tick_cache = {}
+    primary._name_cache = {"2330": "台積電_TWSE", "2317": "鴻海_TWSE"}
+    primary.get_stock_names = lambda nos: {sno: primary._name_cache[sno] for sno in nos if sno in primary._name_cache}
+
+    secondary = YahooCls.__new__(YahooCls)
+    secondary._name_cache = {"2330": "TSMC_Yahoo", "0050": "元大台灣50_Yahoo"}
+    secondary.get_stock_names = lambda nos: {sno: secondary._name_cache[sno] for sno in nos if sno in secondary._name_cache}
+
+    comp = CompositeCls(primary=primary, secondary=secondary)
+    result = comp.get_stock_names(["2330", "2317", "0050"])
+
+    assert result["2330"] == "台積電_TWSE", (
+        "[TP-NAME-001] Primary (TWSE) must win over secondary (Yahoo) for 2330."
+    )
+    assert result["2317"] == "鴻海_TWSE", (
+        "[TP-NAME-001] Primary-only stock must be present."
+    )
+    assert result["0050"] == "元大台灣50_Yahoo", (
+        "[TP-NAME-001] Secondary-only stock must still appear."
+    )
+
+
+def test_composite_get_stock_names_secondary_without_method():
+    """[TP-NAME-001] FR-18 coverage: when secondary lacks get_stock_names(),
+    composite.get_stock_names() still returns names from primary only."""
+    CompositeCls = require_symbol(
+        "stock_monitor.adapters.market_data_composite",
+        "CompositeMarketDataProvider",
+        "cov-composite-names-no-secondary",
+    )
+    TwseCls = require_symbol(
+        "stock_monitor.adapters.market_data_twse",
+        "TwseRealtimeMarketDataProvider",
+        "cov-composite-names-no-secondary",
+    )
+
+    primary = TwseCls.__new__(TwseCls)
+    primary._price_cache = {}
+    primary._exchange_cache = {}
+    primary._tick_cache = {}
+    primary._name_cache = {"2330": "台積電_TWSE"}
+    primary.get_stock_names = lambda nos: {sno: primary._name_cache[sno] for sno in nos if sno in primary._name_cache}
+
+    # secondary has NO get_stock_names method
+    class _SecondaryNoNames:
+        def get_realtime_quotes(self, stock_nos, exchange_map=None):
+            return {}
+
+    comp = CompositeCls(primary=primary, secondary=_SecondaryNoNames())
+    result = comp.get_stock_names(["2330"])
+    assert result == {"2330": "台積電_TWSE"}, (
+        "[TP-NAME-001] When secondary lacks get_stock_names, primary names must still be returned."
+    )
+
+
+def test_composite_get_stock_names_primary_without_method():
+    """[TP-NAME-001] FR-18 coverage: when primary lacks get_stock_names(),
+    composite.get_stock_names() still returns names from secondary only."""
+    CompositeCls = require_symbol(
+        "stock_monitor.adapters.market_data_composite",
+        "CompositeMarketDataProvider",
+        "cov-composite-names-no-primary",
+    )
+    YahooCls = require_symbol(
+        "stock_monitor.adapters.market_data_yahoo",
+        "YahooFinanceMarketDataProvider",
+        "cov-composite-names-no-primary",
+    )
+
+    # primary has NO get_stock_names method
+    class _PrimaryNoNames:
+        _price_cache: dict = {}
+        _exchange_cache: dict = {}
+        _tick_cache: dict = {}
+
+        def get_realtime_quotes(self, stock_nos):
+            return {}
+
+        def get_market_snapshot(self, now_epoch):
+            return {}
+
+    secondary = YahooCls.__new__(YahooCls)
+    secondary._name_cache = {"2330": "TSMC_Yahoo"}
+    secondary.get_stock_names = lambda nos: {sno: secondary._name_cache[sno] for sno in nos if sno in secondary._name_cache}
+
+    comp = CompositeCls(primary=_PrimaryNoNames(), secondary=secondary)
+    result = comp.get_stock_names(["2330"])
+    assert result == {"2330": "TSMC_Yahoo"}, (
+        "[TP-NAME-001] When primary lacks get_stock_names, secondary names must still be returned."
+    )

@@ -334,3 +334,19 @@ def test_line_push_client_success_and_failures(monkeypatch):
     monkeypatch.setattr("stock_monitor.adapters.line_messaging.request.urlopen", _non_2xx)
     with pytest.raises(RuntimeError):
         client.send("hello")
+
+
+def test_twse_get_stock_names_returns_cached_names():
+    """[TP-NAME-001] FR-18: TwseRealtimeMarketDataProvider.get_stock_names() returns names
+    populated in _name_cache; stocks not in cache are excluded."""
+    provider = TwseRealtimeMarketDataProvider(base_url="https://example.test/api")
+    provider._name_cache["2330"] = "台積電"
+    provider._name_cache["2317"] = "鴻海"
+
+    result = provider.get_stock_names(["2330", "2317", "9999"])
+    assert result == {"2330": "台積電", "2317": "鴻海"}, (
+        "[TP-NAME-001] get_stock_names() must return cached names; missing stocks excluded."
+    )
+    assert "9999" not in result, (
+        "[TP-NAME-001] Stock not in _name_cache must not appear in get_stock_names() result."
+    )

@@ -191,6 +191,69 @@ def test_tp_sec_003_yahoo_http_read_enforces_1mb_limit(monkeypatch):
 
 
 # ---------------------------------------------------------------------------
+# TP-SEC-004  CR-SEC-05: LinePushClient.send() HTTP read must enforce 1 MB cap
+# ---------------------------------------------------------------------------
+
+
+def test_tp_sec_004_line_push_client_http_read_enforces_size_limit(monkeypatch):
+    """
+    [TP-SEC-004] EDD §13.1 CR-SEC-05
+    LinePushClient.send() reads LINE API HTTP response with unbounded resp.read().
+    The fix is to add MAX_RESPONSE_BYTES = 1_048_576 to line_messaging.py and
+    call resp.read(MAX_RESPONSE_BYTES) — consistent with TWSE and Yahoo adapters.
+
+    Verifies:
+    1. MAX_RESPONSE_BYTES is defined in line_messaging module (>= 1 and <= 1 MB).
+    2. resp.read() is called with a positional byte-size argument.
+    """
+    import stock_monitor.adapters.line_messaging as m
+
+    assert hasattr(m, "MAX_RESPONSE_BYTES"), (
+        "[TP-SEC-004] MAX_RESPONSE_BYTES not defined in line_messaging. "
+        "CR-SEC-05 requires resp.read(MAX_RESPONSE_BYTES) to prevent memory exhaustion."
+    )
+    assert 0 < m.MAX_RESPONSE_BYTES <= 1_048_576, (
+        f"[TP-SEC-004] line_messaging.MAX_RESPONSE_BYTES={m.MAX_RESPONSE_BYTES} "
+        "must be > 0 and <= 1 MB."
+    )
+
+    read_call_args: list[tuple] = []
+
+    class _TrackingResponse:
+        def read(self, *args, **kwargs):
+            read_call_args.append(args)
+            return b'{"message": "ok"}'
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *a):
+            return False
+
+    monkeypatch.setattr(
+        "stock_monitor.adapters.line_messaging.request.urlopen",
+        lambda *a, **kw: _TrackingResponse(),
+    )
+    from stock_monitor.adapters.line_messaging import LinePushClient
+
+    client = LinePushClient(channel_access_token="fake_token", to_group_id="C1234567890")
+    try:
+        client.send("test message")
+    except Exception:
+        pass  # other runtime errors are irrelevant here
+
+    assert read_call_args, "[TP-SEC-004] resp.read() was never called in LinePushClient.send()"
+    first_args = read_call_args[0]
+    assert first_args, (
+        f"[TP-SEC-004] LinePushClient resp.read() called without a size limit (args={first_args}). "
+        "CR-SEC-05 requires resp.read(MAX_RESPONSE_BYTES)."
+    )
+    assert first_args[0] <= 1_048_576, (
+        f"[TP-SEC-004] LinePushClient resp.read() size arg={first_args[0]} exceeds 1 MB."
+    )
+
+
+# ---------------------------------------------------------------------------
 # TP-ARCH-001  CR-ARCH-01/02 / CR-SEC-02
 # ---------------------------------------------------------------------------
 

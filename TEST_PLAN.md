@@ -107,7 +107,7 @@
 | TP-VAL-002 | EDD §4.2 | Integration | 非交易日不執行估值 |
 | TP-VAL-003 | EDD §6.3 | Integration | 估值失敗不覆蓋舊快照 |
 | TP-VAL-007 | PDD §7 FR-18 / EDD §6.1 | Integration | 14:00 估値時將股票中文名稱存入 `watchlist.stock_name` |
-| TP-VAL-004 | PDD §7 FR-11 / EDD §9.1 | Integration | 三方法同日可同時產生快照 |
+| TP-VAL-008 | EDD §13.3 CR-VAL-01 | Unit | 14:01 時估値仸然執行（不被精確時間門欄排除）；13:59 時則跨過 || TP-DAEMON-001 | EDD §13.3 CR-DAEMON-01 | Unit | daemon loop body 拋出 exception 時 daemon 不崩潰，寫入 `DAEMON_LOOP_EXCEPTION` ERROR log 後繼續執行 || TP-VAL-004 | PDD §7 FR-11 / EDD §9.1 | Integration | 三方法同日可同時產生快照 |
 | TP-VAL-005 | PDD §7 FR-12 / EDD §9.2 | Integration | 單方法資料不足僅該方法 skip，不影響其它方法 |
 | TP-VAL-006 | PDD §7 FR-12 / EDD §6.7 | Integration | 主來源失敗時可切換備援並成功估值 |
 | TP-UAT-001 | PDD §12 UAT-1 | UAT | 手動門檻觸發 60 秒內通知 |
@@ -127,6 +127,7 @@
 | TP-SEC-001 | EDD §13.1 CR-SEC-01 | Unit | `LinePushClient` 的 `repr()` 輸出不得包含 token 明文 |
 | TP-SEC-002 | EDD §13.1 CR-SEC-03 / §13.3 CR-CODE-05 | Unit | 無效時區名稱引發啟動時 `ValueError`，不得靜默 fallback UTC |
 | TP-SEC-003 | EDD §13.1 CR-SEC-04 / EDD §13.5 CR-ADP-04 | Unit | HTTP 回應讀取有大小上限，超大回應不得無限占用記憶體（TWSE adapter + Yahoo adapter 均涵蓋；Yahoo `MAX_RESPONSE_BYTES` 需 ≤ 1 MB，與 TWSE 相同） |
+| TP-SEC-004 | EDD §13.1 CR-SEC-05 | Unit | `LinePushClient.send()` HTTP 回應讀取也必須受 `MAX_RESPONSE_BYTES`（1 MB）上限限制，與 TWSE/Yahoo adapter 一致 |
 | TP-ARCH-001 | EDD §13.2 CR-ARCH-01/02 | Unit | `ValuationCalculator` 可從 `stock_monitor.application.valuation_calculator` import；`app.py` 不含計算邏輯；`scenario_case` 分支不存在於生產估值流程 |
 | TP-ARCH-002 | EDD §13.2 CR-ARCH-03 | Unit | `render_line_template_message` 在整個專案內只有一份定義，來源為 `message_template.py` |
 | TP-ARCH-003 | EDD §13.3 CR-CODE-03 | Unit | `MinuteCycleConfig` dataclass 存在於 `runtime_service.py`，`run_minute_cycle` 接受它作為設定入口 |

@@ -33,7 +33,7 @@ def run_daily_valuation_job(
         logger.log("INFO", "VALUATION_SKIPPED_NON_TRADING_DAY")
         return {"status": "skipped"}
 
-    if now_dt.strftime("%H:%M") != "14:00":
+    if now_dt.strftime("%H:%M") < "14:00":
         logger.log("INFO", "VALUATION_SKIPPED_NOT_SCHEDULED_TIME")
         return {"status": "skipped"}
 
