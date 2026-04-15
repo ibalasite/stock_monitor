@@ -378,3 +378,54 @@ class TestBuiltinFallbackCoverage:
 
         assert any("TEMPLATE_RENDER_FAILED" in m for m in error_records)
         assert result is not None  # fallback returned something
+
+
+# ---------------------------------------------------------------------------
+# TP-TPL-005  CR-TPL-01: Environment must NOT be recreated on repeated calls
+# ---------------------------------------------------------------------------
+
+
+class TestEnvironmentCaching:
+    """EDD §13.3 CR-TPL-01: Jinja2 Environment must be cached per template dir.
+    Calling render() twice for the same template dir must reuse the same Environment
+    object, not create two new ones."""
+
+    def test_tp_tpl_005_environment_cached_on_repeated_calls(self, tmp_path, monkeypatch):
+        """[TP-TPL-005] EDD §13.3 CR-TPL-01: calling render_line_template_message
+        twice with the same template dir must not construct Environment twice."""
+        from jinja2 import Environment as _RealEnvironment
+        import stock_monitor.application.message_template as _mod
+
+        (tmp_path / "line_test_push_v1.j2").write_text("[test] {{ message }}", encoding="utf-8")
+        monkeypatch.setenv("LINE_TEMPLATE_DIR", str(tmp_path))
+
+        # Clear any existing cache for this dir so the test is isolated
+        if hasattr(_mod, "_env_cache"):
+            _mod._env_cache.pop(str(tmp_path), None)
+
+        construction_count = [0]
+        _original_init = _RealEnvironment.__init__
+
+        def _counting_init(self_inner, *args, **kwargs):
+            construction_count[0] += 1
+            _original_init(self_inner, *args, **kwargs)
+
+        monkeypatch.setattr(_RealEnvironment, "__init__", _counting_init)
+
+        render_line_template_message("line_test_push_v1", {"message": "first"})
+        render_line_template_message("line_test_push_v1", {"message": "second"})
+
+        assert construction_count[0] == 1, (
+            f"[TP-TPL-005] Jinja2 Environment was constructed {construction_count[0]} times "
+            "for two renders with the same template dir. CR-TPL-01 requires Environment "
+            "to be cached per template directory (expected 1 construction)."
+        )
+
+    def test_tp_tpl_005_env_cache_module_attr_exists(self):
+        """[TP-TPL-005] EDD §13.3 CR-TPL-01: module-level _env_cache must exist
+        in message_template after the fix."""
+        import stock_monitor.application.message_template as _mod
+        assert hasattr(_mod, "_env_cache"), (
+            "[TP-TPL-005] _env_cache not found in message_template. "
+            "CR-TPL-01 requires a module-level dict to cache Environment per template dir."
+        )

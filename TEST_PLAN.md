@@ -107,7 +107,8 @@
 | TP-VAL-002 | EDD §4.2 | Integration | 非交易日不執行估值 |
 | TP-VAL-003 | EDD §6.3 | Integration | 估值失敗不覆蓋舊快照 |
 | TP-VAL-007 | PDD §7 FR-18 / EDD §6.1 | Integration | 14:00 估値時將股票中文名稱存入 `watchlist.stock_name` |
-| TP-VAL-008 | EDD §13.3 CR-VAL-01 | Unit | 14:01 時估値仸然執行（不被精確時間門欄排除）；13:59 時則跨過 || TP-DAEMON-001 | EDD §13.3 CR-DAEMON-01 | Unit | daemon loop body 拋出 exception 時 daemon 不崩潰，寫入 `DAEMON_LOOP_EXCEPTION` ERROR log 後繼續執行 || TP-VAL-004 | PDD §7 FR-11 / EDD §9.1 | Integration | 三方法同日可同時產生快照 |
+| TP-VAL-008 | EDD §13.3 CR-VAL-01 | Unit | 14:01 時估値仸然執行（不被精確時間門欄排除）；13:59 時則跨過 || TP-DAEMON-001 | EDD §13.3 CR-DAEMON-01 | Unit | daemon loop body 拋出 exception 時 daemon 不崩潰，寫入 `DAEMON_LOOP_EXCEPTION` ERROR log 後繼續執行 |
+| TP-TPL-005 | EDD §13.3 CR-TPL-01 | Unit | `render_line_template_message` 和 `LineTemplateRenderer.render()` 對相同模板目錄第二次呼叫不再重建 `Environment`（證明 `_env_cache` 正常工作） || TP-VAL-004 | PDD §7 FR-11 / EDD §9.1 | Integration | 三方法同日可同時產生快照 |
 | TP-VAL-005 | PDD §7 FR-12 / EDD §9.2 | Integration | 單方法資料不足僅該方法 skip，不影響其它方法 |
 | TP-VAL-006 | PDD §7 FR-12 / EDD §6.7 | Integration | 主來源失敗時可切換備援並成功估值 |
 | TP-UAT-001 | PDD §12 UAT-1 | UAT | 手動門檻觸發 60 秒內通知 |

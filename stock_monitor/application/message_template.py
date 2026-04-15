@@ -31,6 +31,9 @@ _KEY_RE = re.compile(r'^[a-z0-9_]+$')
 # Default template directory (relative to this file's package root)
 _DEFAULT_TEMPLATE_DIR = Path(__file__).parent.parent.parent / "templates" / "line"
 
+# Cache Jinja2 Environment per template dir path (CR-TPL-01 / TP-TPL-005)
+_env_cache: dict[str, Environment] = {}
+
 
 def _get_template_dir() -> Path:
     """Return the template directory, honouring LINE_TEMPLATE_DIR env var."""
@@ -60,12 +63,14 @@ class LineTemplateRenderer:
     def render(self, template_key: str, context: dict) -> str:
         _validate_key(template_key)
 
-        template_dir = _get_template_dir()
-        env = Environment(
-            loader=FileSystemLoader(str(template_dir)),
-            undefined=StrictUndefined,
-            autoescape=False,
-        )
+        template_dir = str(_get_template_dir())
+        if template_dir not in _env_cache:
+            _env_cache[template_dir] = Environment(
+                loader=FileSystemLoader(template_dir),
+                undefined=StrictUndefined,
+                autoescape=False,
+            )
+        env = _env_cache[template_dir]
 
         try:
             tmpl = env.get_template(f"{template_key}.j2")
