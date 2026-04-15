@@ -582,6 +582,49 @@ return f"{label}目前{price}，\
         </li>
       </ul>
 
+      <!-- ── Code Review 改善 v0.9 ── -->
+      <h3>§13 Code Review 改善行動清單（v0.9，2026-04-16）</h3>
+      <div class="banner info">
+        以下為 2026-04-16 Code Review 週期完成項目，全部已修正且測試綠燈（304 passed, 100% coverage）：
+      </div>
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th>ID</th><th>優先</th><th>問題</th><th>修正</th><th>測試 ID</th></tr></thead>
+          <tbody>
+            <tr>
+              <td><code>CR-COV-01</code></td><td>🔴</td>
+              <td><code>get_stock_names()</code> 多條路徑未被覆蓋（TWSE / Yahoo / Composite / FR-18 fallback）</td>
+              <td>補齊 7 條測試，coverage 100% 恢復</td>
+              <td>—</td>
+            </tr>
+            <tr>
+              <td><code>CR-SEC-05</code></td><td>🟡</td>
+              <td><code>LinePushClient.send()</code> 使用無邊界 <code>resp.read()</code></td>
+              <td><code>MAX_RESPONSE_BYTES = 1_048_576</code>；改為 <code>resp.read(MAX_RESPONSE_BYTES)</code></td>
+              <td>TP-SEC-004</td>
+            </tr>
+            <tr>
+              <td><code>CR-VAL-01</code></td><td>🟡</td>
+              <td><code>valuation_scheduler</code> 精確 <code>== "14:00"</code> 時間檔；錯過就整日不執行</td>
+              <td><code>valuation_scheduler</code> 改 <code>&lt; "14:00"</code>；<code>daemon_runner</code> 改 <code>&gt;= valuation_time</code></td>
+              <td>TP-VAL-008</td>
+            </tr>
+            <tr>
+              <td><code>CR-DAEMON-01</code></td><td>🟠</td>
+              <td>daemon loop 只捕捉 <code>KeyboardInterrupt</code>；其他例外沉默崩潰無 log</td>
+              <td>loop body 加 <code>try/except Exception</code>；寫 <code>DAEMON_LOOP_EXCEPTION</code> ERROR log 後繼續</td>
+              <td>TP-DAEMON-001</td>
+            </tr>
+            <tr>
+              <td><code>CR-TPL-01</code></td><td>🟡</td>
+              <td><code>render()</code> 每次呼叫重建 <code>Environment(FileSystemLoader(...))</code></td>
+              <td>新增模組層級 <code>_env_cache: dict[str, Environment]</code>；相同目錄第二次 render 不再重建</td>
+              <td>TP-TPL-005</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+
       <!-- ── Python symbol contract ── -->
       <h2>Python Symbol Contract</h2>
       <div class="banner info">
@@ -612,7 +655,7 @@ return f"{label}目前{price}，\
       </div>
 
       <footer>
-        <p>EDD v1.0 &nbsp;·&nbsp; 2026-04-14 &nbsp;·&nbsp;
+        <p>EDD v1.0 &nbsp;·&nbsp; 2026-04-16 &nbsp;·&nbsp;
            <a href="pdd.html">← 產品規格 (PDD)</a> &nbsp;·&nbsp;
            <a href="architecture/README.md">架構圖目錄</a> &nbsp;·&nbsp;
            <a href="https://github.com/ibalasite/stock_monitor" target="_blank" rel="noopener">GitHub</a>

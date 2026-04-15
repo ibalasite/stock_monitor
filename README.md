@@ -1,6 +1,6 @@
 # Stock Monitoring System - README
 
-更新日期：2026-04-15（FR-17 Jinja2 模板系統落地 + 鐵律設定）  
+更新日期：2026-04-16（Code Review 週期完成：CR-COV-01/SEC-05/VAL-01/DAEMON-01/TPL-01 全部修正）  
 專案目標：台股價格監控 + LINE 群組通知 + 每日估值 + SQLite 落盤 + 補償機制
 
 ## 📄 線上文件網站（GitHub Pages）
@@ -17,7 +17,7 @@
 4. `pytest-bdd` 已安裝，`stock_monitoring_smoke.feature` 與完整 `stock_monitoring_system.feature` 皆可執行。
 5. `stock_monitor` 主程式套件已建立並實作核心測試契約。
 6. 最新狀態：
-   - `pytest -q tests`：最近一次基線（2026-04-15）為 `291 passed`（含完整 BDD + unit/integration/UAT contract + CR-* 改善驗證 + TP-ADP-001~004 + TP-FR17-001~009 + 委賣一 ask price + FR-18 股票中文名稱 DB 持久化 + TP-NAME-001~003 adapter/runtime 名稱隔離 + CR-ADP-04 Yahoo 1MB 限制 + TP-DB-006 migration 子案例 + TP-SEC-003 Yahoo 覆蓋，100% coverage）
+   - `pytest -q tests`：最近一次基線（2026-04-16）為 `304 passed`（含完整 BDD + unit/integration/UAT contract + CR-* 改善驗證 + TP-ADP-001~004 + TP-FR17-001~009 + 委賣一 ask price + FR-18 股票中文名稱 DB 持久化 + TP-NAME-001~003 adapter/runtime 名稱隔離 + CR-ADP-04 Yahoo 1MB 限制 + TP-DB-006 migration 子案例 + TP-SEC-003 Yahoo 覆蓋 + Code Review 週期 CR-COV-01/SEC-05/VAL-01/DAEMON-01/TPL-01，100% coverage）
    - Coverage gate：`100%`（line + branch）
    - CI：`.github/workflows/ci.yml` 已啟用（push / pull_request），且已採用 action SHA pin + 鎖版依賴 + `pip-audit`
    - 可執行入口：`python -m stock_monitor init-db|run-once|reconcile-once|valuation-once|run-daemon`
@@ -250,6 +250,14 @@ Live URL（啟用 Pages 後）：`https://ibalasite.github.io/stock_monitor/`
     - 同步更新 `CLAUDE.md §11` 與 `CODEX.md §11`
     - 5 條鐵律：①只改被要求的內容 ②驗證腳本輸出 = 生產輸出（禁止加 wrapper/label） ③參數必須走生產路徑 ④改 template 不改業務邏輯 ⑤label 只輸出至 terminal stdout
 
+34. **2026-04-16 Code Review 週期（CR-COV-01/SEC-05/VAL-01/DAEMON-01/TPL-01，commit `1c1744d` + `6a4fadb`）**：
+    - **CR-COV-01**：補齊 `get_stock_names()` 多條未覆蓋路徑（TWSE / Yahoo / Composite / FR-18 fallback），新增 7 條測試，coverage 100% 恢復
+    - **CR-SEC-05**：`LinePushClient.send()` HTTP 讀取加上 `MAX_RESPONSE_BYTES = 1_048_576` 上限（與 TWSE/Yahoo adapter 一致），防禦性防止超大回應耗盡記憶體；新增 `TP-SEC-004`
+    - **CR-VAL-01**：`valuation_scheduler.py` 將精確 `!= "14:00"` 改為 `< "14:00"`；`daemon_runner.py` 將 `== valuation_time` 改為 `>= valuation_time`；估值現在在 14:00 或之後第一次輪詢即觸發，不再因錯過精確分鐘而跳過整個交易日；新增 `TP-VAL-008`
+    - **CR-DAEMON-01**：`_run_daemon_loop` loop body 加上 `try/except Exception`；捕捉非 KeyboardInterrupt 例外時寫 `DAEMON_LOOP_EXCEPTION` ERROR log 並繼續下一輪，daemon 不再沉默崩潰；新增 `TP-DAEMON-001`
+    - **CR-TPL-01**：`message_template.py` 新增模組層級 `_env_cache: dict[str, Environment]`；`render()` 以模板目錄路徑為 cache key，同目錄第二次 render 直接復用已建 `Environment`，避免每次重建 `FileSystemLoader`；新增 `TP-TPL-005`
+    - 全套測試：291 → **304 passed**，維持 100% coverage
+
 ## 6. 下一步要做什麼（建議執行順序）
 1. 在 GitHub 啟用 GitHub Pages：Repo → Settings → Pages → Source: branch `main` / folder `/docs` → Save，讓 `docs/index.html`、`docs/pdd.html`、`docs/edd.html` 正式對外服務。
 2. 完成正式人工 UAT 簽核（PO/QA/Eng Lead），填寫 `uat-signoff.md`。
@@ -277,8 +285,8 @@ python -m pip install --require-hashes -r requirements-dev.txt
 ```powershell
 python -m pytest -q tests
 ```
-5. 最近一次基線結果（2026-04-15）：
-   - `276 passed`
+5. 最近一次基線結果（2026-04-16）：
+   - `304 passed`
    - coverage `100%`
    - 實際請以你當次執行輸出為準
 
