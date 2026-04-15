@@ -172,3 +172,29 @@ def test_tp_db_005_valuation_snapshot_unique_includes_method_version():
             pass
     finally:
         conn.close()
+
+
+def test_tp_db_006_watchlist_stock_name_column():
+    """FR-18: watchlist must have stock_name TEXT NOT NULL DEFAULT '' column."""
+    conn = _setup_in_memory_db("TP-DB-006")
+    try:
+        col_names = [row[1] for row in conn.execute("PRAGMA table_info(watchlist)").fetchall()]
+        assert "stock_name" in col_names, "[TP-DB-006] watchlist must have stock_name column."
+
+        # INSERT without stock_name → default '' applies
+        conn.execute(
+            """
+            INSERT INTO watchlist(stock_no, manual_fair_price, manual_cheap_price, enabled, created_at, updated_at)
+            VALUES ('2330', 1500, 1000, 1, 1712710000, 1712710000)
+            """
+        )
+        row = conn.execute("SELECT stock_name FROM watchlist WHERE stock_no = '2330'").fetchone()
+        assert row[0] == "", "[TP-DB-006] stock_name default must be empty string."
+
+        # UPDATE stock_name to Chinese name
+        conn.execute("UPDATE watchlist SET stock_name = '台積電' WHERE stock_no = '2330'")
+        row = conn.execute("SELECT stock_name FROM watchlist WHERE stock_no = '2330'").fetchone()
+        assert row[0] == "台積電", "[TP-DB-006] stock_name must be updatable."
+    finally:
+        conn.close()
+

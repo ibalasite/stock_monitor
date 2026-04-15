@@ -43,6 +43,9 @@ class TwseRealtimeMarketDataProvider:
         self._exchange_cache: dict[str, str] = {}
         # Cache the last tick_at timestamp per stock.
         self._tick_cache: dict[str, int] = {}
+        # FR-18: cache stock Chinese names from API response; names are NOT included
+        # in get_realtime_quotes() return dict — use get_stock_names() to retrieve.
+        self._name_cache: dict[str, str] = {}
 
     def _build_stock_channels(self, stock_nos: list[str]) -> tuple[list[str], list[str]]:
         normalized: list[str] = []
@@ -146,6 +149,11 @@ class TwseRealtimeMarketDataProvider:
 
             self._tick_cache[stock_no] = tick_epoch
 
+            # FR-18: cache name from API; do NOT include in quote dict (names from DB only)
+            raw_name = str(row.get("n") or "").strip()
+            if raw_name:
+                self._name_cache[stock_no] = raw_name
+
             existing = quotes.get(stock_no)
             existing_tick = int(existing["tick_at"]) if existing else -1
             if existing is not None and tick_epoch < existing_tick:
@@ -155,7 +163,12 @@ class TwseRealtimeMarketDataProvider:
                 "stock_no": stock_no,
                 "price": price,
                 "tick_at": tick_epoch,
-                "name": str(row.get("n") or ""),
                 "exchange": exchange,
             }
         return quotes
+
+    def get_stock_names(self, stock_nos: list[str]) -> dict[str, str]:
+        """FR-18: Return cached stock Chinese names (populated during get_realtime_quotes).
+        Names are NOT included in get_realtime_quotes() return dict.
+        """
+        return {sno: self._name_cache[sno] for sno in stock_nos if sno in self._name_cache}

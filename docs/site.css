@@ -1111,6 +1111,7 @@ footer {
 .tp-arch { background: #fef3c7; color: #92400e; }
 .tp-adp  { background: #e8f4fd; color: #1a5276; }
 .tp-code { background: #f0f3f6; color: var(--clr-muted); border: 1px solid var(--clr-border); }
+.tp-name { background: #f0fdf4; color: #166534; }
 
 /* ---- UAT Cards ---- */
 .bdd-uat-grid {
@@ -1157,6 +1158,7 @@ footer {
 .bdd-cr--arch { border-left-color: var(--clr-accent); }
 .bdd-cr--adp  { border-left-color: var(--clr-primary); }
 .bdd-cr--code { border-left-color: var(--clr-success); }
+.bdd-cr--name { border-left-color: #16a34a; }
 .bdd-cr-label {
   font-size: .69rem;
   font-weight: 700;
@@ -1330,6 +1332,7 @@ footer {
 .tp-mc--tpl  { background: #8b5cf6; }
 .tp-mc--adp  { background: #0891b2; }
 .tp-mc--code { background: #6b7280; }
+.tp-mc--name { background: #16a34a; }
 .tp-mc--trd  { background: #b45309; }
 .tp-mc--env  { background: #059669; }
 .tp-mc--sec  { background: #dc2626; }

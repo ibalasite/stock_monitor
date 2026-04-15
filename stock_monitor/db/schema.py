@@ -6,6 +6,7 @@ from __future__ import annotations
 SCHEMA_SQL = """
 CREATE TABLE IF NOT EXISTS watchlist (
   stock_no TEXT PRIMARY KEY,
+  stock_name TEXT NOT NULL DEFAULT '',
   manual_fair_price NUMERIC NOT NULL CHECK (manual_fair_price > 0),
   manual_cheap_price NUMERIC NOT NULL CHECK (manual_cheap_price > 0),
   enabled INTEGER NOT NULL DEFAULT 1 CHECK (enabled IN (0,1)),

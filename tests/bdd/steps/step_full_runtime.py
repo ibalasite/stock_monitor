@@ -950,6 +950,51 @@ def _handle_given(step: str, ctx: dict):
         from stock_monitor.adapters.sqlite_repo import SqliteLogger as _SL
         ctx["sec_SqliteLogger"] = _SL
         return
+    # TP-NAME-001 — FR-18: adapter API name setup for TWSE test
+    if step.startswith("TWSE adapter 回應包含 API 名稱 "):
+        ctx["twse_api_name"] = re.search(r'"([^"]+)"', step).group(1)
+        return
+    # TP-NAME-001 — FR-18: adapter API name setup for Yahoo test
+    if step.startswith("Yahoo adapter 回應包含 API 名稱 "):
+        ctx["yahoo_api_name"] = re.search(r'"([^"]+)"', step).group(1)
+        return
+    # TP-NAME-002/003 — FR-18: DB watchlist stock_name setup
+    _m_db_name = re.search(r'DB watchlist "([^"]+)" 的 stock_name 為 "(.*)"', step)
+    if _m_db_name:
+        _stock_no, _stock_name = _m_db_name.group(1), _m_db_name.group(2)
+        ctx["watchlist_repo"].upsert_manual_threshold(_stock_no, fair=2000.0, cheap=1500.0, enabled=1)
+        if _stock_name:
+            ctx["watchlist_repo"].update_stock_names({_stock_no: _stock_name})
+        return
+    _m_db_name_empty = re.search(r'DB watchlist "([^"]+)" 的 stock_name 為空字串', step)
+    if _m_db_name_empty:
+        _stock_no = _m_db_name_empty.group(1)
+        ctx["watchlist_repo"].upsert_manual_threshold(_stock_no, fair=2000.0, cheap=1500.0, enabled=1)
+        # stock_name defaults to '' after upsert; no update_stock_names call needed
+        return
+    # TP-NAME-002 — FR-18: market quote without name field
+    if re.search(r'市場報價 "([^"]+)" 的 name 欄位為空字串', step):
+        _stock_no = re.search(r'"([^"]+)"', step).group(1)
+        _now_ep = int(ctx["now_dt"].timestamp())
+        ctx["market_provider"].quotes[_stock_no] = {"price": 1900.0, "tick_at": _now_ep}
+        ctx["market_provider"].snapshot["index_tick_at"] = _now_ep
+        return
+    # TP-NAME-002 — FR-18: market price below fair price
+    _m_price_fair = re.search(r'市場價 (\d+) 跌破合理價 (\d+)', step)
+    if _m_price_fair:
+        _price = float(_m_price_fair.group(1))
+        _now_ep = int(ctx["now_dt"].timestamp())
+        for _sno in list(ctx["market_provider"].quotes.keys()):
+            ctx["market_provider"].quotes[_sno] = {"price": _price, "tick_at": _now_ep}
+        ctx["market_provider"].snapshot["index_tick_at"] = _now_ep
+        return
+    # TP-NAME-003 — FR-18: market provider returns name in quote for valuation job
+    _m_fetch_name = re.search(r'行情來源對 "([^"]+)" 回傳名稱 "([^"]+)"', step)
+    if _m_fetch_name:
+        _stock_no, _api_name = _m_fetch_name.group(1), _m_fetch_name.group(2)
+        _now_ep = int(ctx["now_dt"].timestamp())
+        ctx["market_provider"].quotes[_stock_no] = {"price": 2100.0, "tick_at": _now_ep, "name": _api_name}
+        return
     raise AssertionError(f"Unhandled GIVEN step: {step}")
 
 
@@ -1276,6 +1321,93 @@ def _handle_when(step: str, ctx: dict):
         return
     if step == "查詢 message 表":
         ctx["queried_rows"] = ctx["message_repo"].list_rows()
+        return
+    # TP-NAME-001 — FR-18: TWSE adapter call (must come before generic handlers)
+    if step == "呼叫 TWSE get_realtime_quotes":
+        from stock_monitor.adapters.market_data_twse import TwseRealtimeMarketDataProvider as _TwseCls
+        from unittest.mock import patch as _patch
+        import json as _json
+        _api_name = ctx.get("twse_api_name", "台積電_API")
+        _fake_body = _json.dumps({"msgArray": [
+            {"c": "2330", "a": "2000.0", "tlong": "1775802600000", "n": _api_name, "ex": "tse"},
+        ]}).encode()
+
+        class _Resp:
+            def read(self, n=-1): return _fake_body
+            def __enter__(self): return self
+            def __exit__(self, *a): return False
+
+        with _patch("stock_monitor.adapters.market_data_twse.request.urlopen", return_value=_Resp()):
+            _provider = _TwseCls()
+            ctx["twse_test_quotes"] = _provider.get_realtime_quotes(["2330"])
+        return
+    # TP-NAME-001 — FR-18: Yahoo adapter call
+    if step == "呼叫 Yahoo get_realtime_quotes":
+        from stock_monitor.adapters.market_data_yahoo import YahooFinanceMarketDataProvider as _YahooCls
+        from unittest.mock import patch as _patch
+        _api_name = ctx.get("yahoo_api_name", "台積電_API")
+        _html = (
+            '<!DOCTYPE html><html><body><script>var data = {'
+            f'"regularMarketPrice":2000.0,"regularMarketTime":1776100020,'
+            f'"longName":"{_api_name}"'
+            '};</script></body></html>'
+        )
+
+        class _Resp:
+            def read(self, n=-1): return _html.encode()
+            def __enter__(self): return self
+            def __exit__(self, *a): return False
+
+        with _patch("stock_monitor.adapters.market_data_yahoo.request.urlopen", return_value=_Resp()):
+            _provider = _YahooCls()
+            ctx["yahoo_test_quotes"] = _provider.get_realtime_quotes(["2330"])
+        return
+    # TP-NAME-002 — FR-18: run_minute_cycle for trigger row name test
+    if step == "執行分鐘輪詢":
+        ctx["last_result"] = run_minute_cycle(
+            now_dt=ctx["now_dt"],
+            market_data_provider=ctx["market_provider"],
+            line_client=ctx["line_client"],
+            watchlist_repo=ctx["watchlist_repo"],
+            message_repo=ctx["message_repo"],
+            pending_repo=ctx["pending_repo"],
+            pending_fallback=ctx["pending_fallback"],
+            logger=ctx["logger"],
+            cooldown_seconds=ctx["cooldown_seconds"],
+            retry_count=ctx["retry_count"],
+            stale_threshold_sec=ctx["stale_threshold_sec"],
+            timezone_name=ctx["timezone"],
+        )
+        return
+    # TP-NAME-003 — FR-18: valuation job WITH watchlist_repo + market_data_provider (must be before the generic handler)
+    if step.startswith('在交易日 "14:00" 觸發估值（傳入 watchlist_repo 與 market_data_provider）'):
+        ctx["is_trading_day"] = True
+        ctx["now_dt"] = _parse_dt("2026-04-10 14:00", ctx["timezone"])
+
+        class _CalcOkFR18:
+            def calculate(self_inner):
+                rows = ctx["watchlist_repo"].list_enabled()
+                return [
+                    {
+                        "stock_no": row["stock_no"],
+                        "trade_date": "2026-04-10",
+                        "method_name": "emily_composite",
+                        "method_version": "v1",
+                        "fair_price": float(row["manual_fair_price"]),
+                        "cheap_price": float(row["manual_cheap_price"]),
+                    }
+                    for row in rows
+                ]
+
+        ctx["last_result"] = run_daily_valuation_job(
+            now_dt=ctx["now_dt"],
+            is_trading_day=True,
+            calculator=_CalcOkFR18(),
+            snapshot_repo=ctx["valuation_snapshot_repo"],
+            logger=ctx["logger"],
+            watchlist_repo=ctx["watchlist_repo"],
+            market_data_provider=ctx["market_provider"],
+        )
         return
     if step.startswith('在交易日 "14:00" 觸發估值'):
         ctx["is_trading_day"] = True
@@ -1974,6 +2106,47 @@ def _handle_then(step: str, ctx: dict):
         assert "system_logs" not in _src, (
             "[TP-ARCH-004] CR-ARCH-06: opening_summary_sent_for_date still queries system_logs. "
             "After fix, use a dedicated idempotency store (not the event log table)."
+        )
+        return
+    # TP-NAME-001 — FR-18: TWSE adapter must not return name
+    if step == 'TWSE 報價 dict 不應包含 "name" 欄位':
+        quotes = ctx.get("twse_test_quotes", {})
+        assert "2330" in quotes, "[TP-NAME-001] TWSE quotes should contain stock 2330"
+        assert "name" not in quotes["2330"], (
+            "[TP-NAME-001] TWSE quote must NOT contain 'name' field "
+            f"(FR-18: names from DB only). Got keys: {list(quotes['2330'].keys())}"
+        )
+        return
+    # TP-NAME-001 — FR-18: Yahoo adapter must not return name
+    if step == 'Yahoo 報價 dict 不應包含 "name" 欄位':
+        quotes = ctx.get("yahoo_test_quotes", {})
+        assert "2330" in quotes, "[TP-NAME-001] Yahoo quotes should contain stock 2330"
+        assert "name" not in quotes["2330"], (
+            "[TP-NAME-001] Yahoo quote must NOT contain 'name' field "
+            f"(FR-18: names from DB only). Got keys: {list(quotes['2330'].keys())}"
+        )
+        return
+    # TP-NAME-002 — FR-18: trigger row must use DB stock_name
+    _m_line_contains = re.search(r'LINE 觸發通知應包含 "(.*)"', step)
+    if _m_line_contains:
+        _expected = _m_line_contains.group(1)
+        assert any(_expected in msg for msg in ctx["line_client"].sent), (
+            f"[TP-NAME-002] LINE notification should contain '{_expected}' "
+            f"(FR-18: use DB watchlist.stock_name for display_label). "
+            f"Got messages: {ctx['line_client'].sent}"
+        )
+        return
+    # TP-NAME-003 — FR-18: 14:00 valuation job must update watchlist stock_name from market data
+    _m_watchlist_name = re.search(r'watchlist "([^"]+)" 的 stock_name 應被更新為 "([^"]+)"', step)
+    if _m_watchlist_name:
+        _stock_no, _expected_name = _m_watchlist_name.group(1), _m_watchlist_name.group(2)
+        _rows = ctx["watchlist_repo"].list_enabled()
+        _row = next((r for r in _rows if str(r["stock_no"]) == _stock_no), None)
+        assert _row is not None, f"[TP-NAME-003] watchlist {_stock_no} not found"
+        _actual = str(_row.get("stock_name") or "").strip()
+        assert _actual == _expected_name, (
+            f"[TP-NAME-003] watchlist {_stock_no} stock_name should be '{_expected_name}' "
+            f"but got '{_actual}'. (FR-18: 14:00 valuation job must save stock names to DB)"
         )
         return
     raise AssertionError(f"Unhandled THEN step: {step}")

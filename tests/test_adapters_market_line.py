@@ -240,8 +240,39 @@ def test_twse_cold_start_no_y_returns_no_quote(monkeypatch):
     assert "2330" not in quotes, "no quote when both z and y are missing"
 
 
+def test_twse_quote_has_no_name_field(monkeypatch):
+    """[TP-NAME-001] FR-18: TWSE adapter get_realtime_quotes must NOT return 'name' field.
+    Stock names must come from DB (watchlist.stock_name), not from realtime API response."""
+    provider = TwseRealtimeMarketDataProvider(base_url="https://example.test/api")
+
+    def _with_name(req, timeout):
+        payload = {"msgArray": [
+            {"c": "2330", "a": "2000.0", "tlong": "1775802600000", "n": "台積電", "ex": "tse"},
+        ]}
+        return _FakeHttpResponse(body=json.dumps(payload))
+
+    monkeypatch.setattr("stock_monitor.adapters.market_data_twse.request.urlopen", _with_name)
+    quotes = provider.get_realtime_quotes(["2330"])
+    assert "2330" in quotes
+    assert "name" not in quotes["2330"], (
+        "[TP-NAME-001] TWSE quote must NOT contain 'name' field. "
+        f"FR-18: stock names must come from DB only. Got keys: {list(quotes['2330'].keys())}"
+    )
+
+
 def test_line_push_client_success_and_failures(monkeypatch):
     client = LinePushClient(channel_access_token="token", to_group_id="C1234567890")
+
+    captured = {}
+
+    def _ok_urlopen(req, timeout):
+        captured["url"] = req.full_url
+        captured["authorization"] = req.headers.get("Authorization")
+        captured["payload"] = json.loads(req.data.decode("utf-8"))
+        return _FakeHttpResponse(body='{"ok":true}', status=200)
+
+    monkeypatch.setattr("stock_monitor.adapters.line_messaging.request.urlopen", _ok_urlopen)
+    result = client.send("hello")
 
     captured = {}
 

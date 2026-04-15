@@ -245,7 +245,7 @@ def evaluate_manual_threshold_hits(watchlist_rows: list[dict], quotes: dict[str,
                 "stock_status": status,
                 "method": "manual_rule",
                 "price": price,
-                "stock_name": str(quote.get("name") or "").strip(),
+                "stock_name": str(row.get("stock_name") or "").strip(),
                 "fair_price": fair_price,
                 "cheap_price": cheap_price,
             }
@@ -253,7 +253,11 @@ def evaluate_manual_threshold_hits(watchlist_rows: list[dict], quotes: dict[str,
     return hits
 
 
-def evaluate_valuation_snapshot_hits(snapshot_rows: list[dict], quotes: dict[str, dict]) -> list[dict]:
+def evaluate_valuation_snapshot_hits(
+    snapshot_rows: list[dict],
+    quotes: dict[str, dict],
+    stock_name_map: dict[str, str] | None = None,
+) -> list[dict]:
     hits: list[dict] = []
     for row in snapshot_rows:
         stock_no = str(row["stock_no"])
@@ -280,7 +284,7 @@ def evaluate_valuation_snapshot_hits(snapshot_rows: list[dict], quotes: dict[str
                 "stock_status": status,
                 "method": method,
                 "price": price,
-                "stock_name": str(quote.get("name") or "").strip(),
+                "stock_name": str((stock_name_map or {}).get(stock_no) or "").strip(),
                 "fair_price": fair_price,
                 "cheap_price": cheap_price,
             }
@@ -296,6 +300,7 @@ def build_minute_rows(
     pending_fallback,
     cooldown_seconds: int,
     timezone_name: str = "Asia/Taipei",
+    stock_name_map: dict[str, str] | None = None,
 ) -> list[dict]:
     if not hits:
         return []
@@ -329,12 +334,14 @@ def build_minute_rows(
             continue
 
         prices = sorted({float(hit["price"]) for hit in stock_hits})
-        stock_name = ""
-        for hit in stock_hits:
-            candidate = str(hit.get("stock_name") or "").strip()
-            if candidate:
-                stock_name = candidate
-                break
+        # FR-18: stock name from DB stock_name_map takes priority; fall back to hit stock_name
+        stock_name = str((stock_name_map or {}).get(stock_no) or "").strip()
+        if not stock_name:
+            for hit in stock_hits:
+                candidate = str(hit.get("stock_name") or "").strip()
+                if candidate:
+                    stock_name = candidate
+                    break
         fair_price = next((float(hit["fair_price"]) for hit in stock_hits if hit.get("fair_price") is not None), None)
         cheap_price = next((float(hit["cheap_price"]) for hit in stock_hits if hit.get("cheap_price") is not None), None)
         display_label = f"{stock_name}({stock_no})" if stock_name else stock_no
@@ -427,9 +434,10 @@ def run_minute_cycle(
 
     stock_nos = [str(row["stock_no"]) for row in watchlist_rows]
     quotes = market_data_provider.get_realtime_quotes(stock_nos)
+    # FR-18: stock names come from DB (watchlist.stock_name), not from real-time quotes
     stock_name_map = {
-        str(stock_no): str((quote or {}).get("name") or "").strip()
-        for stock_no, quote in quotes.items()
+        str(row["stock_no"]): str(row.get("stock_name") or "").strip()
+        for row in watchlist_rows
     }
 
     _send_opening_summary_if_needed(
@@ -464,7 +472,11 @@ def run_minute_cycle(
                 stock_nos=stock_nos,
                 as_of_date=now_dt.strftime("%Y-%m-%d"),
             )
-            hits.extend(evaluate_valuation_snapshot_hits(snapshot_rows=snapshot_rows, quotes=filtered_quotes))
+            hits.extend(evaluate_valuation_snapshot_hits(
+                snapshot_rows=snapshot_rows,
+                quotes=filtered_quotes,
+                stock_name_map=stock_name_map,
+            ))
         except Exception as exc:
             logger.log("WARN", f"VALUATION_SNAPSHOT_FETCH_FAILED: {exc}")
 
@@ -476,6 +488,7 @@ def run_minute_cycle(
         pending_fallback=pending_fallback,
         cooldown_seconds=cooldown_seconds,
         timezone_name=timezone_name,
+        stock_name_map=stock_name_map,
     )
     if not rows:
         return {"status": "no_signal", "count": 0}

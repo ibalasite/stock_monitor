@@ -160,6 +160,27 @@ class TestYahooFinanceMarketDataProvider:
         assert any("3293" in u for u in captured_url)
         assert all(".TW" not in u for u in captured_url), "URL should not contain .TW when using HTML scraping"
 
+    # ------------------------------------------------------------------
+    # TP-ADP-001f: quote dict must NOT include name field (FR-18)
+    # ------------------------------------------------------------------
+    def test_tp_adp_001f_yahoo_quote_has_no_name_field(self, monkeypatch):
+        """[TP-ADP-001f] FR-18: Yahoo adapter get_realtime_quotes must NOT return 'name' field.
+        Stock names must come from DB (watchlist.stock_name), not from realtime scrape."""
+        provider = self._provider()
+
+        def _fake(req, timeout):
+            return _FakeHttpResponse(body=_yahoo_html_page(2035.0, 1776100020, name="台積電_YAHOO"))
+
+        monkeypatch.setattr(
+            "stock_monitor.adapters.market_data_yahoo.request.urlopen", _fake
+        )
+        quotes = provider.get_realtime_quotes(["2330"])
+        assert "2330" in quotes
+        assert "name" not in quotes["2330"], (
+            "[TP-ADP-001f] Yahoo quote must NOT contain 'name' field. "
+            f"FR-18: stock names must come from DB only. Got keys: {list(quotes['2330'].keys())}"
+        )
+
 
 # ===========================================================================
 # TP-ADP-002  CompositeMarketDataProvider Freshness-First
@@ -505,7 +526,7 @@ def test_yahoo_page_missing_price_field_skips(monkeypatch):
 
 
 def test_yahoo_page_no_longname_returns_empty_name(monkeypatch):
-    """HTML 含 price/time 但無 longName 時，name 為空字串、不 raise。"""
+    """HTML 含 price/time 但無 longName 時，quote 不含 name 欄位、不 raise，get_stock_names 回傳空。"""
     cls = require_symbol(
         "stock_monitor.adapters.market_data_yahoo",
         "YahooFinanceMarketDataProvider",
@@ -523,7 +544,8 @@ def test_yahoo_page_no_longname_returns_empty_name(monkeypatch):
     )
     quotes = provider.get_realtime_quotes(["2330"], exchange_map={})
     assert "2330" in quotes
-    assert quotes["2330"]["name"] == ""
+    assert "name" not in quotes["2330"]
+    assert provider.get_stock_names(["2330"]) == {}
 
 
 def test_yahoo_page_value_error_skips(monkeypatch):

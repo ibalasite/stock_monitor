@@ -161,3 +161,49 @@ def test_cov_val_002_event_normalization_and_persist_failure():
     assert any("VALUATION_PERSIST_FAILED" in message for _, message in logger.events), (
         "[COV-VAL-002] Snapshot persist failure must be logged."
     )
+
+
+def test_tp_val_007_valuation_job_saves_stock_names():
+    """FR-18: run_daily_valuation_job must save stock names via watchlist_repo when market_data_provider provided."""
+    run_daily_valuation_job = require_symbol(
+        "stock_monitor.application.valuation_scheduler",
+        "run_daily_valuation_job",
+        "TP-VAL-007",
+    )
+
+    saved_names: dict[str, str] = {}
+
+    class _FakeWatchlistRepo:
+        def list_enabled(self):
+            return [
+                {"stock_no": "2330", "stock_name": ""},
+                {"stock_no": "2317", "stock_name": ""},
+            ]
+
+        def update_stock_names(self, names: dict) -> None:
+            saved_names.update(names)
+
+    class _FakeMarketProvider:
+        def get_realtime_quotes(self, stock_nos):
+            return {
+                "2330": {"price": 1900.0, "tick_at": 1776000000, "name": "台積電"},
+                "2317": {"price": 140.0, "tick_at": 1776000000, "name": "鴻海"},
+            }
+
+    repo = _FakeSnapshotRepo()
+    logger = _FakeLogger(events=[])
+
+    result = run_daily_valuation_job(
+        now_dt=datetime(2026, 4, 10, 14, 0, 0),
+        is_trading_day=True,
+        calculator=_SuccessCalculator(),
+        snapshot_repo=repo,
+        logger=logger,
+        watchlist_repo=_FakeWatchlistRepo(),
+        market_data_provider=_FakeMarketProvider(),
+    )
+
+    assert result.get("status") == "executed", "[TP-VAL-007] Must execute valuation job."
+    assert saved_names.get("2330") == "台積電", "[TP-VAL-007] Must save 台積電 for 2330."
+    assert saved_names.get("2317") == "鴻海", "[TP-VAL-007] Must save 鴻海 for 2317."
+

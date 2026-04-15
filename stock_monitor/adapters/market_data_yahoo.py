@@ -57,6 +57,10 @@ class YahooFinanceMarketDataProvider:
     base_url: str = _BASE_URL
     timeout_sec: int = _TIMEOUT_SEC
 
+    def __post_init__(self) -> None:
+        # FR-18: cache stock Chinese names; not included in get_realtime_quotes() return.
+        self._name_cache: dict[str, str] = {}
+
     def get_realtime_quotes(
         self,
         stock_nos: list[str],
@@ -97,13 +101,21 @@ class YahooFinanceMarketDataProvider:
 
             m_name = _RE_NAME.search(html)
             name = m_name.group(1) if m_name else ""
+            # FR-18: cache name for get_stock_names(); do NOT include in quote dict
+            if name:
+                self._name_cache[stock_no] = name
 
             quotes[stock_no] = {
                 "stock_no": stock_no,
                 "price": price,
                 "tick_at": tick_at,
-                "name": name,
             }
 
         return quotes
+
+    def get_stock_names(self, stock_nos: list[str]) -> dict[str, str]:
+        """FR-18: Return cached stock Chinese names (populated during get_realtime_quotes).
+        Names are NOT included in get_realtime_quotes() return dict.
+        """
+        return {sno: self._name_cache[sno] for sno in stock_nos if sno in self._name_cache}
 

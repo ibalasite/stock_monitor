@@ -26,6 +26,8 @@ def run_daily_valuation_job(
     calculator,
     snapshot_repo,
     logger,
+    watchlist_repo=None,
+    market_data_provider=None,
 ) -> dict:
     if not is_trading_day:
         logger.log("INFO", "VALUATION_SKIPPED_NON_TRADING_DAY")
@@ -51,5 +53,27 @@ def run_daily_valuation_job(
         return {"status": "failed"}
 
     logger.log("INFO", f"VALUATION_EXECUTED: {len(snapshots)}")
+
+    # FR-18: save stock Chinese names from market data into watchlist
+    if watchlist_repo is not None and market_data_provider is not None:
+        try:
+            wl_rows = watchlist_repo.list_enabled()
+            stock_nos = [str(r["stock_no"]) for r in wl_rows]
+            # Prefer dedicated get_stock_names() (adapters cache names during get_realtime_quotes).
+            # Fall back to reading 'name' from quotes (backward compat with test fakes).
+            if hasattr(market_data_provider, "get_stock_names"):
+                names = market_data_provider.get_stock_names(stock_nos)
+            else:
+                quotes = market_data_provider.get_realtime_quotes(stock_nos)
+                names = {
+                    stock_no: str((q or {}).get("name") or "").strip()
+                    for stock_no, q in quotes.items()
+                    if str((q or {}).get("name") or "").strip()
+                }
+            if names:
+                watchlist_repo.update_stock_names(names)
+        except Exception as exc:
+            logger.log("WARN", f"STOCK_NAME_SAVE_FAILED: {exc}")
+
     return {"status": "executed", "count": len(snapshots)}
 

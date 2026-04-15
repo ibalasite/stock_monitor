@@ -1052,3 +1052,162 @@ def test_stock_monitor_app_script_entrypoint(monkeypatch, tmp_path: Path):
     with pytest.raises(SystemExit) as exc:
         runpy.run_module("stock_monitor.app", run_name="__main__")
     assert exc.value.code == 0
+
+
+def test_run_minute_cycle_uses_db_stock_name_not_quote_name():
+    """FR-18: opening summary stock display must use watchlist stock_name, not quote name."""
+    logger = _FakeLogger(events=[])
+    line_client = _FakeLineClient(sent=[])
+    message_repo = _FakeMessageRepo(last_sent_map={}, rows=[])
+    pending_repo = _FakePendingRepo(items=[])
+    fallback = _FakeFallback(rows=[])
+
+    now_epoch = int(datetime(2026, 4, 10, 9, 10, 0).timestamp())
+
+    # watchlist has stock_name from DB; quote has blank name (Yahoo win scenario)
+    # price 2100 > fair_price 2000, so no hit → only opening summary is sent
+    result = run_minute_cycle(
+        now_dt=datetime(2026, 4, 10, 9, 10, 0),
+        market_data_provider=_FakeMarketProvider(
+            snapshot={"index_tick_at": now_epoch},
+            quotes={"2330": {"price": 2100.0, "tick_at": now_epoch, "name": ""}},
+        ),
+        line_client=line_client,
+        watchlist_repo=_FakeWatchlistRepo(rows=[
+            {"stock_no": "2330", "manual_fair_price": 2000.0, "manual_cheap_price": 1500.0, "stock_name": "台積電"},
+        ]),
+        message_repo=message_repo,
+        pending_repo=pending_repo,
+        pending_fallback=fallback,
+        logger=logger,
+    )
+
+    assert result.get("status") in ("ok", "no_signal", "skipped", "persisted"), f"unexpected: {result}"
+    # The opening summary LINE message must contain 台積電(2330), NOT bare 2330
+    assert any("台積電(2330)" in msg for msg in line_client.sent), (
+        "FR-18: opening summary must use watchlist stock_name '台積電(2330)', got: " + str(line_client.sent)
+    )
+
+
+def test_evaluate_manual_threshold_hits_uses_watchlist_stock_name_not_quote_name():
+    """[TP-NAME-001] FR-18: evaluate_manual_threshold_hits must use watchlist_row['stock_name']
+    (from DB), NOT quote['name'] (from API). stock_name in hit must equal DB value."""
+    watchlist_rows = [
+        {
+            "stock_no": "2330",
+            "stock_name": "台積電_DB",
+            "manual_fair_price": 2000.0,
+            "manual_cheap_price": 1500.0,
+        }
+    ]
+    # Quote has a name from API — this must NOT appear in the hit
+    quotes = {"2330": {"price": 1900.0, "tick_at": 123456, "name": "台積電_QUOTE"}}
+    hits = evaluate_manual_threshold_hits(watchlist_rows=watchlist_rows, quotes=quotes)
+    assert len(hits) == 1
+    assert hits[0]["stock_name"] == "台積電_DB", (
+        f"[TP-NAME-001] stock_name in hit must come from DB watchlist row ('台積電_DB'), "
+        f"not from quote ('台積電_QUOTE'). Got: '{hits[0]['stock_name']}'"
+    )
+
+
+def test_evaluate_valuation_snapshot_hits_uses_stock_name_map():
+    """[TP-NAME-001] FR-18: evaluate_valuation_snapshot_hits must accept stock_name_map param
+    and use it for stock_name in hits, NOT quote['name'] from API."""
+    snapshot_rows = [
+        {
+            "stock_no": "2330",
+            "method_name": "emily_composite",
+            "method_version": "v1",
+            "fair_price": 2000.0,
+            "cheap_price": 1500.0,
+        }
+    ]
+    quotes = {"2330": {"price": 1900.0, "tick_at": 123456, "name": "台積電_QUOTE"}}
+    stock_name_map = {"2330": "台積電_DB"}
+    hits = evaluate_valuation_snapshot_hits(
+        snapshot_rows=snapshot_rows,
+        quotes=quotes,
+        stock_name_map=stock_name_map,
+    )
+    assert len(hits) == 1
+    assert hits[0]["stock_name"] == "台積電_DB", (
+        f"[TP-NAME-001] evaluate_valuation_snapshot_hits must accept stock_name_map "
+        f"and use it for stock_name. Got: '{hits[0]['stock_name']}'"
+    )
+
+
+def test_build_minute_rows_uses_stock_name_map_not_hit_name():
+    """[TP-NAME-002] FR-18: build_minute_rows must accept stock_name_map param and use
+    it to build display_label, NOT use hit['stock_name'] derived from quote['name']."""
+    now_dt = datetime(2026, 4, 10, 10, 21, 0)
+    now_epoch = int(now_dt.timestamp())
+    hits = [
+        {
+            "stock_no": "2330",
+            "stock_status": 1,
+            "method": "manual_rule",
+            "price": 1900.0,
+            "stock_name": "",   # empty — as if quote had no name
+            "fair_price": 2000.0,
+            "cheap_price": 1500.0,
+        }
+    ]
+    stock_name_map = {"2330": "台積電_DB"}
+    rows = build_minute_rows(
+        now_dt=now_dt,
+        hits=hits,
+        message_repo=_FakeMessageRepo(last_sent_map={}, rows=[]),
+        pending_repo=_FakePendingRepo(items=[]),
+        pending_fallback=_FakeFallback(rows=[]),
+        cooldown_seconds=300,
+        stock_name_map=stock_name_map,
+    )
+    assert len(rows) == 1
+    assert "台積電_DB(2330)" in rows[0]["message"], (
+        f"[TP-NAME-002] build_minute_rows message must include DB stock_name '台積電_DB(2330)'. "
+        f"Got: '{rows[0]['message']}'"
+    )
+
+
+def test_run_minute_cycle_trigger_row_uses_db_stock_name():
+    """[TP-NAME-002] FR-18: when price hits threshold, the LINE trigger notification
+    display_label must use watchlist.stock_name (DB), NOT quote name from API."""
+    logger = _FakeLogger(events=[])
+    # Pre-mark opening summary as sent so the only LINE messages are trigger notifications
+    logger.mark_opening_summary_sent("2026-04-10")
+    line_client = _FakeLineClient(sent=[])
+    message_repo = _FakeMessageRepo(last_sent_map={}, rows=[])
+    pending_repo = _FakePendingRepo(items=[])
+    fallback = _FakeFallback(rows=[])
+
+    now_epoch = int(datetime(2026, 4, 10, 10, 21, 0).timestamp())
+
+    # Price 1900 < fair_price 2000 → triggers status=1 notification
+    # Quote has no name — DB has stock_name="台積電_DB"
+    # Trigger row display_label must use DB name: "台積電_DB(2330)"
+    result = run_minute_cycle(
+        now_dt=datetime(2026, 4, 10, 10, 21, 0),
+        market_data_provider=_FakeMarketProvider(
+            snapshot={"index_tick_at": now_epoch},
+            quotes={"2330": {"price": 1900.0, "tick_at": now_epoch}},
+        ),
+        line_client=line_client,
+        watchlist_repo=_FakeWatchlistRepo(rows=[
+            {
+                "stock_no": "2330",
+                "manual_fair_price": 2000.0,
+                "manual_cheap_price": 1500.0,
+                "stock_name": "台積電_DB",
+            }
+        ]),
+        message_repo=message_repo,
+        pending_repo=pending_repo,
+        pending_fallback=fallback,
+        logger=logger,
+    )
+    assert result.get("status") not in (None,), f"unexpected: {result}"
+    assert any("台積電_DB(2330)" in msg for msg in line_client.sent), (
+        "[TP-NAME-002] Trigger row must use DB stock_name '台積電_DB(2330)'. "
+        f"Got messages: {line_client.sent}"
+    )
+

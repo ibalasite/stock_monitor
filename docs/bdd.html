@@ -27,7 +27,7 @@
   <div class="doc-pb-container">
     <div class="doc-pb-eyebrow">行為驅動開發規格 · BDD v1.0 · 2026-04-14</div>
     <p class="doc-pb-title">BDD 行為驅動規格</p>
-    <p class="doc-pb-sub">5 個 Feature 檔 · 76+ Scenarios · Gherkin 語法 · 業務規則可執行化</p>
+    <p class="doc-pb-sub">5 個 Feature 檔 · 79+ Scenarios · Gherkin 語法 · 業務規則可執行化</p>
   </div>
 </div>
 
@@ -50,6 +50,7 @@
       <li><a href="#uat">UAT 驗收 (TP-UAT)</a></li>
       <li><a href="#security">安全與架構 (TP-SEC/ARCH)</a></li>
       <li><a href="#adapters">行情 Adapter (TP-ADP)</a></li>
+      <li><a href="#name">名稱隔離 (TP-NAME)</a></li>
     </ul>
   </aside>
 
@@ -72,11 +73,11 @@
           <div class="bdd-stat-label">Feature 檔</div>
         </div>
         <div class="bdd-stat-card">
-          <div class="bdd-stat-num">76<span style="font-size:1rem">+</span></div>
+          <div class="bdd-stat-num">79<span style="font-size:1rem">+</span></div>
           <div class="bdd-stat-label">Scenarios</div>
         </div>
         <div class="bdd-stat-card">
-          <div class="bdd-stat-num">14</div>
+          <div class="bdd-stat-num">15</div>
           <div class="bdd-stat-label">BDD Rules</div>
         </div>
         <div class="bdd-stat-card">
@@ -102,8 +103,8 @@
           <h4>台股監控與 LINE 通知系統（完整 BDD 規格）</h4>
           <p>涵蓋所有核心業務規則：Schema、環境驗證、訊號策略、整合流程、LINE 模板、交易時段、估值排程及 UAT 驗收。</p>
           <div class="bdd-fc-meta">
-            <span class="tag blue">76+ Scenarios</span>
-            <span class="tag green">14 Rules</span>
+            <span class="tag blue">79+ Scenarios</span>
+            <span class="tag green">15 Rules</span>
             <span class="tag orange">@stock_monitor @bdd @pdd @edd @test_plan</span>
           </div>
         </div>
@@ -633,6 +634,54 @@
               <tr><td><span class="tp-badge tp-adp">TP-ADP-004</span></td><td>Yahoo 回應受 MAX_RESPONSE_BYTES 限制；截斷 JSON 無效 → WARN + 空 dict</td></tr>
             </tbody>
           </table>
+        </div>
+      </div>
+
+      <!-- TP-NAME -->
+      <h2 id="name">FR-18 — 股票名稱唯一來源為 DB（TP-NAME）</h2>
+      <div class="bdd-scenario-group">
+        <div class="bdd-sg-header">
+          <span class="bdd-sg-rule">Rule: 股票名稱唯一來源為 DB（FR-18 TP-NAME-*）</span>
+          <span class="tag blue">3 Scenarios</span>
+        </div>
+        <div class="bdd-scenario">
+          <div class="bdd-scenario-header">
+            <span class="tp-badge tp-name">TP-NAME-001</span>
+            <span class="bdd-sc-title">TWSE 與 Yahoo adapter 報價 dict 不含 name 欄位</span>
+          </div>
+          <ul class="bdd-steps">
+            <li><span class="bdd-kw">Given</span> TWSE adapter 回應包含 API 名稱 "台積電_API"</li>
+            <li><span class="bdd-kw">When</span> 呼叫 TWSE get_realtime_quotes</li>
+            <li><span class="bdd-kw">Then</span> TWSE 報價 dict 不應包含 "name" 欄位</li>
+            <li><span class="bdd-kw">Given</span> Yahoo adapter 回應包含 API 名稱 "台積電_API"</li>
+            <li><span class="bdd-kw">When</span> 呼叫 Yahoo get_realtime_quotes</li>
+            <li><span class="bdd-kw">Then</span> Yahoo 報價 dict 不應包含 "name" 欄位</li>
+          </ul>
+        </div>
+        <div class="bdd-scenario">
+          <div class="bdd-scenario-header">
+            <span class="tp-badge tp-name">TP-NAME-002</span>
+            <span class="bdd-sc-title">觸發通知列使用 DB 股票名稱，不使用 API 報價名稱</span>
+          </div>
+          <ul class="bdd-steps">
+            <li><span class="bdd-kw">Given</span> DB watchlist "2330" 的 stock_name 為 "台積電_DB"</li>
+            <li><span class="bdd-kw">And</span> 市場報價 "2330" 的 name 欄位為空字串</li>
+            <li><span class="bdd-kw">And</span> 市場價 1900 跌破合理價 2000</li>
+            <li><span class="bdd-kw">When</span> 執行分鐘輪詢</li>
+            <li><span class="bdd-kw">Then</span> LINE 觸發通知應包含 "台積電_DB(2330)"</li>
+          </ul>
+        </div>
+        <div class="bdd-scenario">
+          <div class="bdd-scenario-header">
+            <span class="tp-badge tp-name">TP-NAME-003</span>
+            <span class="bdd-sc-title">只有 14:00 估值 job 才抓取並回存股票名稱到 DB</span>
+          </div>
+          <ul class="bdd-steps">
+            <li><span class="bdd-kw">Given</span> DB watchlist "2330" 的 stock_name 為空字串</li>
+            <li><span class="bdd-kw">And</span> 行情來源對 "2330" 回傳名稱 "台積電"</li>
+            <li><span class="bdd-kw">When</span> 在交易日 "14:00" 觸發估值（傳入 watchlist_repo 與 market_data_provider）</li>
+            <li><span class="bdd-kw">Then</span> watchlist "2330" 的 stock_name 應被更新為 "台積電"</li>
+          </ul>
         </div>
       </div>
 

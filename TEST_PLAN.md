@@ -70,6 +70,7 @@
 | TP-DB-003 | EDD §6.4 | Migration | `message` unique/format/json 約束生效 |
 | TP-DB-004 | EDD §6.5 | Migration | `pending_delivery_ledger` 可正常寫讀 |
 | TP-DB-005 | EDD §6.3 | Migration | `valuation_snapshots` 唯一鍵需含 `method_version` |
+| TP-DB-006 | EDD §6.1 / FR-18 | Migration | `watchlist` 需有 `stock_name TEXT NOT NULL DEFAULT ''` 欄位，可 UPDATE，migration 補欄正確 |
 | TP-ENV-001 | EDD §8.1 | Integration | JSON1 不可用時服務 fail-fast |
 | TP-ENV-002 | EDD §8.1 | Integration | `PRAGMA foreign_keys=ON` 與 health check 驗證 |
 | TP-ENV-003 | PDD §7 FR-09 / EDD §7.1 | Integration | LINE 設定鍵値驗證與錯誤訊息（規範名 `LINE_*`、別名 `CHANNEL_*/TARGET_*`、無效値三組 Examples） |
@@ -104,6 +105,7 @@
 | TP-VAL-001 | EDD §4.2 | Integration | 14:00 交易日執行估值 |
 | TP-VAL-002 | EDD §4.2 | Integration | 非交易日不執行估值 |
 | TP-VAL-003 | EDD §6.3 | Integration | 估值失敗不覆蓋舊快照 |
+| TP-VAL-007 | PDD §7 FR-18 / EDD §6.1 | Integration | 14:00 估値時將股票中文名稱存入 `watchlist.stock_name` |
 | TP-VAL-004 | PDD §7 FR-11 / EDD §9.1 | Integration | 三方法同日可同時產生快照 |
 | TP-VAL-005 | PDD §7 FR-12 / EDD §9.2 | Integration | 單方法資料不足僅該方法 skip，不影響其它方法 |
 | TP-VAL-006 | PDD §7 FR-12 / EDD §6.7 | Integration | 主來源失敗時可切換備援並成功估值 |
@@ -133,6 +135,9 @@
 | TP-ADP-002 | EDD §13.5 CR-ADP-02 / PDD §7 FR-15 | Unit | `CompositeMarketDataProvider` 以 `tick_at` 較新者勝；相等時 TWSE 優先；兩者皆無時不加入結果 dict（呼叫端觸發 STALE_QUOTE）|
 | TP-ADP-003 | EDD §13.5 CR-ADP-03 / PDD §7 FR-15 | Unit | `TwseRealtimeMarketDataProvider` quotes 含 `exchange` 欄位（`tse`/`otc`）；`_price_cache` 在 `a` 欄为空/`-` 時回傳最後已知委賣一；冷啟動 cache 空回傳無此股票 |
 | TP-ADP-004 | EDD §13.5 CR-ADP-04 / EDD §13.1 CR-SEC-04 | Unit | `YahooFinanceMarketDataProvider` HTTP 回應受 `MAX_RESPONSE_BYTES` 限制；截斷後 JSON 無效時 WARN 且回傳空 dict |
+| TP-NAME-001 | PDD §7 FR-18 / EDD §6.1 | Unit | TWSE 與 Yahoo adapter `get_realtime_quotes()` 回傳 dict 不含 `name` 欄位；`get_stock_names()` 方法存在並從 cache 回傳；`evaluate_manual_threshold_hits` 從 `watchlist_row["stock_name"]` 取名稱；`evaluate_valuation_snapshot_hits` 接受 `stock_name_map` 參數 |
+| TP-NAME-002 | PDD §7 FR-18 / EDD §6.1 | Unit/BDD | `build_minute_rows` 接受 `stock_name_map` 參數，`display_label` 使用 DB 股票名稱（優先於 hit 內的 `stock_name`）；`run_minute_cycle` 觸發通知列包含 DB 名稱 `{stock_name}({stock_no})` |
+| TP-NAME-003 | PDD §7 FR-18 / EDD §6.1 | Integration/BDD | 只有 14:00 估值 job（`run_daily_valuation_job`）才從行情 API 抓取並呼叫 `update_stock_names()` 寫回 DB；盤中 `run_minute_cycle` 不寫名稱 |
 | TP-ARCH-006 | EDD §13.2 CR-ARCH-05 | Unit | `merge_minute_message` 需有生產呼叫點或標記為私有（`_merge_minute_message`） |
 | TP-CODE-001 | EDD §13.3 CR-CODE-01 | Unit | `build_minute_rows` 中 `render_line_template_message` 呼叫次數 ≤ 1（統一單一 context 呼叫，消除三段重複） |
 | TP-CODE-002 | EDD §13.3 CR-CODE-02 | Unit | `reconcile_pending_once` 函式簽名不含 `line_client` 參數（移除永遠不用的參數） |
@@ -205,6 +210,9 @@
 | TP-ARCH-002 | 專案已 import | 用 `grep -r "def render_line_template_message"` 掃瞄所有 `.py` | 僅在 `message_template.py` 出現一次；`runtime_service.py` 改用 import |
 | TP-ARCH-003 | DB 設定 + Mock LINE | `from stock_monitor.application.runtime_service import MinuteCycleConfig`；以 `MinuteCycleConfig` 呼叫 `run_minute_cycle` | import 成功；函式接受 config 物件呼叫正常 |
 | TP-ARCH-004 | 交易日 + watchlist 可用 | 設定「當日開盤摘要尚未發送」於 DB；在 09:01 後啟動 daemon 一次輪詢 | daemon 成功發送 1 封開盤摘要；冪等 key 從 DB 表讀取（不依賴 log LIKE 掃描） |
+| TP-NAME-001 | TWSE / Yahoo adapter 啟動 | 呼叫 `get_realtime_quotes(["2330"])`，HTML/API 含名稱 "台積電_API"；再呼叫 `get_stock_names(["2330"])` | `quotes["2330"]` 不含 `"name"` key；`get_stock_names` 從 cache 回傳 `{"2330": "台積電_API"}`；`evaluate_manual_threshold_hits` 從 watchlist_row["stock_name"] 取名稱 |
+| TP-NAME-002 | DB watchlist "2330" stock_name="台積電_DB"；API 報價不含 name；市場價跌破合理價 | 執行一次分鐘輪詢（`run_minute_cycle`） | 觸發通知列 `display_label` 為 `台積電_DB(2330)`；`build_minute_rows` 從 `stock_name_map` 取 DB 名稱，不再從 quote 取 |
+| TP-NAME-003 | DB watchlist "2330" stock_name=""；行情來源對 "2330" 回傳名稱 "台積電" | 在交易日 14:00 觸發 `run_daily_valuation_job`（傳入 watchlist_repo + market_data_provider） | `watchlist.stock_name` 更新為 "台積電"；`run_minute_cycle` 本身不呼叫 `update_stock_names` |
 
 ## 8. 失敗模式測試
 1. LINE 成功、DB 失敗（最關鍵）。  

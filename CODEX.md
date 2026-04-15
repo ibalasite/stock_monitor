@@ -1,6 +1,6 @@
 # CODEX.md - Stock Monitor AI 開發手冊
 
-最後更新：2026-04-14（Asia/Taipei, v1.0）
+最後更新：2026-04-15（Asia/Taipei, v1.1）
 對齊文件：`PDD_Stock_Monitoring_System.md`、`EDD_Stock_Monitoring_System.md`、`TEST_PLAN.md`、`USER_STORY_ACCEPTANCE_CRITERIA.md`、`API_CONTRACT.md`、`ADR.md`、`NFR_SLI_SLO.md`、`SECURITY_AND_SECRETS.md`、`OPERATIONS_RUNBOOK.md`
 
 ## 0. 使用方式
@@ -84,7 +84,7 @@ Alias（等效）：
 - 重試耗盡（`TP-INT-011`）
 
 ## 6. 資料模型最小要求
-- `watchlist`：`manual_cheap_price <= manual_fair_price`
+- `watchlist`：`manual_cheap_price <= manual_fair_price`；含 `stock_name TEXT NOT NULL DEFAULT ''`（FR-18，由 14:00 估值作業寫入）
 - `valuation_methods`：同 `method_name` 僅允許一個 `enabled=1`
 - `valuation_snapshots`：唯一鍵必含 `method_version`
 - `message`：`UNIQUE(stock_no, minute_bucket)`
@@ -108,6 +108,7 @@ Alias（等效）：
 | `stock_monitor.application.valuation_calculator` | `ManualValuationCalculator` |
 | `stock_monitor.application.runtime_service` | `MinuteCycleConfig` |
 | `stock_monitor.uat.scenarios` | `UAT_SCENARIOS` |
+| `stock_monitor.adapters.sqlite_repo` | `SqliteWatchlistRepository`（含 `update_stock_names(names: dict[str, str])`，FR-18） |
 | `stock_monitor.adapters.market_data_twse` | `TwseRealtimeMarketDataProvider`（含 `_price_cache`[最後已知委賣一]、`_exchange_cache`、`_tick_cache`） |
 | `stock_monitor.adapters.market_data_yahoo` | `YahooFinanceMarketDataProvider` |
 | `stock_monitor.adapters.market_data_composite` | `CompositeMarketDataProvider` |
@@ -139,7 +140,7 @@ python -m pytest -q tests/test_integration_workflow.py -k TP-INT-010
 
 ## 10. 完成定義（DoD）
 - `TP-DB-*`, `TP-ENV-*`, `TP-POL-*`, `TP-INT-*`, `TP-TRD-*`, `TP-VAL-*`, `TP-UAT-*` 全部綠燈
-- `TP-SEC-*`, `TP-ARCH-*` 全部綠燈（Code Review 改善項目）
+- `TP-SEC-*`, `TP-ARCH-*`, `TP-ADP-*`, `TP-NAME-*` 全部綠燈（Code Review 改善項目 + FR-18 名稱隔離）
 - UAT 14 條可追溯
 - coverage gate：`lines/branches/functions/statements = 100%`
 - 文件同步：若規則有變更，`PDD/EDD/TEST_PLAN/feature/CLAUDE/CODEX` 一並更新

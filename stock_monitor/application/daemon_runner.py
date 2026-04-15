@@ -137,6 +137,8 @@ def _run_daemon_loop(
                     calculator=calculator,
                     snapshot_repo=runtime["valuation_snapshot_repo"],
                     logger=runtime["logger"],
+                    watchlist_repo=runtime["watchlist_repo"],
+                    market_data_provider=runtime["market_provider"],
                 )
                 valuation_runs += 1
                 last_valuation_date = today

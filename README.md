@@ -17,7 +17,7 @@
 4. `pytest-bdd` 已安裝，`stock_monitoring_smoke.feature` 與完整 `stock_monitoring_system.feature` 皆可執行。
 5. `stock_monitor` 主程式套件已建立並實作核心測試契約。
 6. 最新狀態：
-   - `pytest -q tests`：最近一次基線（2026-04-15）為 `276 passed`（含完整 BDD + unit/integration/UAT contract + CR-* 改善驗證 + TP-ADP-001~004 + TP-FR17-001~009 + 委賣一 ask price，100% coverage）
+   - `pytest -q tests`：最近一次基線（2026-04-15）為 `289 passed`（含完整 BDD + unit/integration/UAT contract + CR-* 改善驗證 + TP-ADP-001~004 + TP-FR17-001~009 + 委賣一 ask price + FR-18 股票中文名稱 DB 持久化 + TP-NAME-001~003 adapter/runtime 名稱隔離，100% coverage）
    - Coverage gate：`100%`（line + branch）
    - CI：`.github/workflows/ci.yml` 已啟用（push / pull_request），且已採用 action SHA pin + 鎖版依賴 + `pip-audit`
    - 可執行入口：`python -m stock_monitor init-db|run-once|reconcile-once|valuation-once|run-daemon`
@@ -222,6 +222,22 @@ Live URL（啟用 Pages 後）：`https://ibalasite.github.io/stock_monitor/`
     - 新增測試：`tests/test_line_template_fr17_red.py`（26 條 TP-FR17-001~009）、`tests/bdd/steps/step_line_template_fr17.py`、`tests/bdd/test_line_template_fr17_bdd.py`
     - 全套測試：241 → **276 passed**，維持 100% coverage
     - 驗證腳本：`scripts/send_all_templates_preview.py`（4 則真實 LINE 訊息，全部以生產 template 路徑產生，HTTP 200）
+
+31. **FR-18：股票中文名稱 DB 持久化**：
+    - 每日 14:00 估值作業結束後，從行情來源取得中文名稱並寫入 `watchlist.stock_name`
+    - `run_minute_cycle` 中文股名改從 `watchlist.stock_name` 讀取，不再每分鐘查詢行情 API
+    - 新增 `update_stock_names(names: dict[str, str])` 方法於 `SqliteWatchlistRepository`
+    - `apply_schema()` 含 migration：既有 DB 自動新增 `stock_name TEXT NOT NULL DEFAULT ''` 欄位
+    - 新增測試：TP-DB-006、TP-VAL-007 及相關 sqlite_repo/runtime 測試
+    - 全套測試：276 → **281 passed**，維持 100% coverage
+
+32. **FR-18 完整強化：Adapter 名稱隔離（TP-NAME-001~003）**：
+    - `TwseRealtimeMarketDataProvider` / `YahooFinanceMarketDataProvider`：`get_realtime_quotes()` 不再回傳 `name` 欄位；新增 `get_stock_names(stock_nos)` 從 `_name_cache` 取得（HTTP 同次呼叫已快取）
+    - `CompositeMarketDataProvider`：移除 `get_realtime_quotes()` 中的名稱合併邏輯；新增 `get_stock_names()` 委派給 primary/secondary
+    - `evaluate_manual_threshold_hits`：`stock_name` 改從 `watchlist_row["stock_name"]` 取得
+    - `evaluate_valuation_snapshot_hits` / `build_minute_rows` / `run_minute_cycle`：透過 `stock_name_map`（DB）傳遞名稱，不從報價取
+    - 新增 BDD Scenario：TP-NAME-001、TP-NAME-002、TP-NAME-003（`stock_monitoring_system.feature` Rule: 股票名稱唯一來源為 DB）
+    - 全套測試：281 → **289 passed**，維持 100% coverage
 
 30. **鐵律設定：禁止自作主張（Never Add Unrequested Content）**：
     - 新增 `.github/copilot-instructions.md`（Copilot workspace-level 自動載入）

@@ -74,13 +74,18 @@ def given_opening_minute(opening_ctx: dict, dt_text: str):
 @given(parsers.parse('watchlist has stocks "{stock_csv}"'))
 def given_watchlist(opening_ctx: dict, stock_csv: str):
     defaults = {
-        "2330": (2000.0, 1500.0),
-        "2348": (72.0, 68.0),
-        "3293": (700.0, 680.0),
+        "2330": (2000.0, 1500.0, "台積電"),
+        "2348": (72.0, 68.0, "海悅"),
+        "3293": (700.0, 680.0, "鈊象"),
     }
+    names = {}
     for stock_no in [item.strip() for item in stock_csv.split(",") if item.strip()]:
-        fair, cheap = defaults.get(stock_no, (1500.0, 1000.0))
+        fair, cheap, name = defaults.get(stock_no, (1500.0, 1000.0, ""))
         opening_ctx["watchlist_repo"].upsert_manual_threshold(stock_no, fair=fair, cheap=cheap, enabled=1)
+        if name:
+            names[stock_no] = name
+    if names:
+        opening_ctx["watchlist_repo"].update_stock_names(names)
 
 
 @given("market quotes do not hit manual thresholds")

@@ -24,6 +24,10 @@ def connect_sqlite(db_path: str) -> sqlite3.Connection:
 
 def apply_schema(conn: sqlite3.Connection) -> None:
     conn.executescript(SCHEMA_SQL)
+    # Migration: add stock_name column if missing (for existing databases)
+    cols = {row[1] for row in conn.execute("PRAGMA table_info(watchlist)").fetchall()}
+    if "stock_name" not in cols:
+        conn.execute("ALTER TABLE watchlist ADD COLUMN stock_name TEXT NOT NULL DEFAULT ''")
     conn.commit()
 
 
@@ -34,13 +38,22 @@ class SqliteWatchlistRepository:
     def list_enabled(self) -> list[dict]:
         rows = self.conn.execute(
             """
-            SELECT stock_no, manual_fair_price, manual_cheap_price
+            SELECT stock_no, stock_name, manual_fair_price, manual_cheap_price
             FROM watchlist
             WHERE enabled = 1
             ORDER BY stock_no
             """
         ).fetchall()
         return [dict(row) for row in rows]
+
+    def update_stock_names(self, names: dict[str, str]) -> None:
+        """FR-18: Update stock_name for each stock_no in names dict."""
+        for stock_no, name in names.items():
+            self.conn.execute(
+                "UPDATE watchlist SET stock_name = ? WHERE stock_no = ?",
+                (str(name).strip(), str(stock_no)),
+            )
+        self.conn.commit()
 
     def upsert_manual_threshold(self, stock_no: str, fair: float, cheap: float, enabled: int = 1) -> None:
         now_epoch = _now_epoch()

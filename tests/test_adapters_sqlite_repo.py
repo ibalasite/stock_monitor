@@ -262,7 +262,39 @@ def test_valuation_snapshot_repo_list_latest_snapshots():
         conn.close()
 
 
-def test_valuation_snapshot_repo_list_latest_snapshots_empty_stock_list():
+def test_watchlist_repo_update_stock_names():
+    """FR-18: SqliteWatchlistRepository must have update_stock_names method."""
+    conn = connect_sqlite(":memory:")
+    try:
+        apply_schema(conn)
+        repo = SqliteWatchlistRepository(conn)
+        repo.upsert_manual_threshold("2330", 1500.0, 1000.0)
+        repo.upsert_manual_threshold("2317", 145.0, 130.0)
+
+        repo.update_stock_names({"2330": "台積電", "2317": "鴻海"})
+
+        rows = {r["stock_no"]: r for r in repo.list_enabled()}
+        assert rows["2330"]["stock_name"] == "台積電", "update_stock_names must write 台積電 for 2330"
+        assert rows["2317"]["stock_name"] == "鴻海", "update_stock_names must write 鴻海 for 2317"
+    finally:
+        conn.close()
+
+
+def test_watchlist_repo_list_enabled_returns_stock_name():
+    """FR-18: list_enabled() must include stock_name field in returned dicts."""
+    conn = connect_sqlite(":memory:")
+    try:
+        apply_schema(conn)
+        repo = SqliteWatchlistRepository(conn)
+        repo.upsert_manual_threshold("2330", 1500.0, 1000.0)
+
+        rows = repo.list_enabled()
+        assert len(rows) == 1
+        assert "stock_name" in rows[0], "list_enabled() must return stock_name field"
+        assert rows[0]["stock_name"] == "", "Initial stock_name must be empty string"
+    finally:
+        conn.close()
+
     conn = connect_sqlite(":memory:")
     try:
         apply_schema(conn)

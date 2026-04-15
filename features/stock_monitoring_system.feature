@@ -537,3 +537,37 @@ Feature: 台股監控與 LINE 通知系統（完整 BDD 規格）
       Then 不得使用 LIKE 查詢比對 system_logs.detail 判斷是否已發送
       And 應使用專屬 DB 狀態欄位或獨立資料表記錄已發送日期
 
+  Rule: 股票名稱唯一來源為 DB（FR-18 TP-NAME-*）
+    # FR-18：adapter 只提供報價（price/tick_at），名稱唯一來源為 watchlist.stock_name。
+    # 只有每日 14:00 估值 job 才從行情 API 抓取名稱並回存 DB。
+    # 屬業務管制：違反視為嚴重錯誤。
+
+    @TP-NAME-001
+    Scenario: [TP-NAME-001] TWSE 與 Yahoo adapter 報價 dict 不含 name 欄位
+      # FR-18：adapter 不得在報價中回傳名稱；名稱由 DB 提供。
+      Given TWSE adapter 回應包含 API 名稱 "台積電_API"
+      When 呼叫 TWSE get_realtime_quotes
+      Then TWSE 報價 dict 不應包含 "name" 欄位
+      Given Yahoo adapter 回應包含 API 名稱 "台積電_API"
+      When 呼叫 Yahoo get_realtime_quotes
+      Then Yahoo 報價 dict 不應包含 "name" 欄位
+
+    @TP-NAME-002
+    Scenario: [TP-NAME-002] 觸發通知列使用 DB 股票名稱，不使用 API 報價名稱
+      # FR-18：build_minute_rows / run_minute_cycle 必須從 stock_name_map（DB）
+      # 取股票名稱組成 display_label，不得從 quote["name"] 取值。
+      Given DB watchlist "2330" 的 stock_name 為 "台積電_DB"
+      And 市場報價 "2330" 的 name 欄位為空字串
+      And 市場價 1900 跌破合理價 2000
+      When 執行分鐘輪詢
+      Then LINE 觸發通知應包含 "台積電_DB(2330)"
+
+    @TP-NAME-003
+    Scenario: [TP-NAME-003] 只有 14:00 估值 job 才抓取並回存股票名稱到 DB
+      # FR-18：valuation job 傳入 watchlist_repo + market_data_provider 時
+      # 應呼叫 update_stock_names() 把名稱寫回 DB。
+      Given DB watchlist "2330" 的 stock_name 為空字串
+      And 行情來源對 "2330" 回傳名稱 "台積電"
+      When 在交易日 "14:00" 觸發估值（傳入 watchlist_repo 與 market_data_provider）
+      Then watchlist "2330" 的 stock_name 應被更新為 "台積電"
+

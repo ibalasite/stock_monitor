@@ -58,3 +58,12 @@ class CompositeMarketDataProvider:
     def get_market_snapshot(self, now_epoch: int) -> dict:
         """Delegate market snapshot entirely to primary (TWSE)."""
         return self.primary.get_market_snapshot(now_epoch)
+
+    def get_stock_names(self, stock_nos: list[str]) -> dict[str, str]:
+        """FR-18: Return cached stock names, preferring primary (TWSE) over secondary (Yahoo)."""
+        names: dict[str, str] = {}
+        if hasattr(self.secondary, "get_stock_names"):
+            names.update(self.secondary.get_stock_names(stock_nos))
+        if hasattr(self.primary, "get_stock_names"):
+            names.update(self.primary.get_stock_names(stock_nos))
+        return names

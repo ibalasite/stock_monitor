@@ -354,6 +354,7 @@ flowchart TD
 ```sql
 CREATE TABLE IF NOT EXISTS watchlist (
   stock_no TEXT PRIMARY KEY,                     -- ex: '2330'
+  stock_name TEXT NOT NULL DEFAULT '',           -- 中文名稱，每交易日 14:00 估值時更新（FR-18）
   manual_fair_price NUMERIC NOT NULL CHECK (manual_fair_price > 0),
   manual_cheap_price NUMERIC NOT NULL CHECK (manual_cheap_price > 0),
   enabled INTEGER NOT NULL DEFAULT 1 CHECK (enabled IN (0,1)),
@@ -362,6 +363,8 @@ CREATE TABLE IF NOT EXISTS watchlist (
   CHECK (manual_cheap_price <= manual_fair_price)
 );
 ```
+
+> **FR-18**：`stock_name` 欄位在每交易日 14:00 估值作業（`run_daily_valuation_job`）完成後，從即時報價取得中文名稱並 UPDATE。盤中 `run_minute_cycle` 建立 `stock_name_map` 一律讀 `watchlist.stock_name`，不再對即時報價的 `name` 欄位取值；既有資料庫以 `ALTER TABLE ... ADD COLUMN` migration 補欄，預設值為 `''`。
 
 ### 6.2 `valuation_methods`
 ```sql

@@ -142,6 +142,19 @@
 - 程式呼叫介面保持不變；工程實作細節（Jinja2 FileSystemLoader、路徑安全等）見 EDD §7。
 
 
+### FR-18 每日估值時儲存股票中文名稱（Stock Name Persistence）
+
+**目標**：股票中文名稱在每交易日 14:00 估值時一併寫入 SQLite，盤中分析與通知全程從 DB 取名稱，不在即時報價輪詢中額外抓取。
+
+**業務規格**：
+
+- `watchlist` 資料表新增 `stock_name TEXT NOT NULL DEFAULT ''` 欄位。
+- 每交易日 14:00 執行估值時，同步向行情來源取得各股票中文名稱，並以 UPDATE 寫入 `watchlist.stock_name`。
+- 盤中每分鐘監控循環（`run_minute_cycle`）的顯示名稱（`stock_name_map`）一律由 `watchlist.stock_name` 提供，不再從即時報價的 `name` 欄位取得。
+- 開盤摘要、觸發通知的股票顯示（如 `台積電(2330)`）均使用 DB 名稱。
+- 若 `watchlist.stock_name` 為空字串，顯示時 fallback 為股票代碼（如 `2330`），行為與現行一致。
+- 名稱不須每分鐘更新；無需額外的 API 呼叫頻率。
+
 ### FR-05 通知冷卻（Notification Cooldown）
 - 維度：`stock_no + stock_status`。
 - 規則：若最後一次通知 `update_time` 在 5 分鐘內，則不發送、也不更新該筆時間。
