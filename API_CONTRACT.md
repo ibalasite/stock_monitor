@@ -147,13 +147,18 @@
    - 所有出站 LINE 訊息（minute digest/opening summary/trigger row/test push）都必須先經過此介面
 
 ### 5.8 `AllListedStocksPort`（FR-19）
-1. `fetch_all_stocks() -> list[dict]`
-2. 回傳格式：`[{"stock_no": str, "stock_name": str, "market": "tse"|"otc"}, ...]`
+1. `get_all_listed_stocks() -> list[dict]`
+2. 回傳格式：`[{"stock_no": str, "stock_name": str, "yesterday_close": float|None, "market": "TWSE"|"TPEx"}, ...]`
 3. 契約：
    - HTTP 失敗時 retry 3 次後拋例外（不靜默吞掉）。
    - 回傳清單不得為空；若為空視為 fetch 失敗拋例外。
    - 只回傳普通股（排除 ETF、特別股、債券）。
 4. 預設實作：`TwseAllListedStocksProvider`（`stock_monitor/adapters/all_listed_stocks_twse.py`）。
+
+### 5.9 `scan-market` CLI 注入契約（FR-19）
+1. CLI 在呼叫 `run_market_scan_job` 前，必須組出 `valuation_methods`（由 DB `valuation_methods.enabled=1` 載入）。
+2. 禁止傳入空清單 `valuation_methods=[]` 作為正常掃描路徑。
+3. 若啟用方法數為 0，CLI 應 fail-fast 並回傳錯誤，不輸出 CSV。
 
 ## 6. 錯誤語意契約
 | Error Code | 行為 |
@@ -168,6 +173,7 @@
 | `TEMPLATE_RENDER_FAILED` | 寫 ERROR，該次通知視為失敗 |
 | `MARKET_SCAN_STOCK_ERROR` | 寫 ERROR（level），繼續下一支股票，不中斷整體掃描 |
 | `MARKET_SCAN_LIST_FETCH_FAILED` | scan-market fail-fast，印出錯誤後退出 |
+| `MARKET_SCAN_METHODS_EMPTY` | 無 `enabled=1` 估值方法時 fail-fast 退出，不輸出 CSV |
 
 ## 7. BDD 對應
 1. `features/stock_monitoring_system.feature` 的 `TP-ENV-*`、`TP-POL-*`、`TP-INT-*` 全部應可對應到本契約至少一個 Port 行為。

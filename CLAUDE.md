@@ -84,6 +84,11 @@ Alias（等效）：
 - `DATA_CONFLICT`
 - 重試耗盡（`TP-INT-011`）
 
+### 5.6 FR-19 掃描方法注入
+- `scan-market` 執行前必須從 DB 載入 `valuation_methods.enabled=1` 方法清單並注入掃描流程
+- 禁止空方法清單執行（`valuation_methods=[]`）
+- 若啟用方法數為 0，必須 fail-fast（`MARKET_SCAN_METHODS_EMPTY`），不得以全數 `uncalculable` 視為成功
+
 ## 6. 資料模型最小要求
 - `watchlist`：`manual_cheap_price <= manual_fair_price`；含 `stock_name TEXT NOT NULL DEFAULT ''`（FR-18，由 14:00 估値作業寫入）
 - `valuation_methods`：同 `method_name` 僅允許一個 `enabled=1`
