@@ -12,10 +12,11 @@
 3. tests 要求的 symbol contract
 
 ## 1. 規格優先順序（衝突時依序採用）
-1. `features/stock_monitoring_system.feature` + `tests/*.py`（可執行規格）
+1. `PDD_Stock_Monitoring_System.md`（產品需求，最高權威）
 2. `EDD_Stock_Monitoring_System.md`
-3. `PDD_Stock_Monitoring_System.md`
-4. `USER_STORY_ACCEPTANCE_CRITERIA.md`
+3. `USER_STORY_ACCEPTANCE_CRITERIA.md`
+4. `TEST_PLAN.md`
+5. `features/stock_monitoring_system.feature` + `tests/*.py`（可執行規格）
 
 已知衝突已定版：
 - `idempotency_key` 以 `stock_no + minute_bucket`（不含 `stock_status`）為準。

@@ -27,7 +27,7 @@
   <div class="doc-pb-container">
     <div class="doc-pb-eyebrow">產品規格文件 · PDD v1.0 · 2026-04-14</div>
     <p class="doc-pb-title">產品規格文件（PDD）</p>
-    <p class="doc-pb-sub">業務目標 · 功能需求 FR-01～FR-17 · UAT 驗收標準 · 風險因應 · 里程碑規劃</p>
+    <p class="doc-pb-sub">業務目標 · 功能需求 FR-01～fr-18 · UAT 驗收標準 · 風險因應 · 里程碑規劃</p>
   </div>
 </div>
 
@@ -67,8 +67,7 @@
       </p>
 
       <div class="banner success">
-        本文件對齊 EDD、TEST_PLAN、USER_STORY_ACCEPTANCE_CRITERIA 三份文件。
-        如有衝突，以「可執行規格（feature + tests）」為最高優先。
+        本文件是全專案所有文件的根源（Tier 1）。工程設計（EDD）、測試規格（TEST_PLAN）、BDD feature 均以本文件為上游；如有衝突，以本文件為準。
       </div>
 
       <!-- ── 背景 ── -->
@@ -313,7 +312,7 @@
         <li><span class="rule-id">FR-15</span><span class="rule-text">雙行情來源：TWSE MIS 主（委賣一 a 欄）+ Yahoo Finance HTML 副（委賣一 scraping）。</span></li>
         <li><span class="rule-id">FR-16</span><span class="rule-text">MarketDataPort 介面可注入替換；CompositeMarketDataProvider 實作 Freshness-First 聚合。</span></li>
         <li><span class="rule-id">FR-17</span><span class="rule-text">文字檔模板載入：LINE 推播文案以 <code>.j2</code> 純文字檔管理，存放於 <code>templates/line/</code>；非工程人員可用記事本直接修改 wording，不需動 Python；工程細節見 EDD §7。</span></li>
-      </ul>
+        <li><span class="rule-id">FR-18</span><span class="rule-text">每日估値時儲存股票中文名稱：watchlist 新增 <code>stock_name</code> 欄位，14:00 估値時同步寫入；盤中 <code>stock_name_map</code> 一律從 DB 取得，不從即時報價取。</span></li>
 
       <!-- ── NFR ── -->
       <h2 id="nfr">§8 非功能需求（NFR）</h2>

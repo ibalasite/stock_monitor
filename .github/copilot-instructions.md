@@ -1,5 +1,14 @@
 # GitHub Copilot Workspace Instructions — Stock Monitor
 
+## 規格根源宣告
+
+本專案以 `PDD_Stock_Monitoring_System.md` 為最高權威根源。所有工程設計、測試規格、BDD feature 都以 PDD 為上游，衝突時以 PDD 為準。
+
+**正確優先順序：**
+```
+PDD > EDD > USER_STORY_ACCEPTANCE_CRITERIA > TEST_PLAN > features + tests
+```
+
 ## 鐵律：禁止自作主張（Never Add Unrequested Content）
 
 這是本專案最高優先的行為約束，任何實作、腳本、訊息輸出都必須遵守：

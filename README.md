@@ -36,7 +36,7 @@
 | 頁面 | 說明 |
 |---|---|
 | [docs/index.html](docs/index.html) | 首頁：Hero、統計數字、架構圖、文件導覽、快速啟動 |
-| [docs/pdd.html](docs/pdd.html) | PDD 完整頁：FR-01~FR-16、UAT 15 條、雙來源規則、風險 |
+| [docs/pdd.html](docs/pdd.html) | PDD 完整頁：fr-01~FR-18、UAT 15 條、雙來源規則、風險 |
 | [docs/edd.html](docs/edd.html) | EDD 完整頁：業務規則、Clean Architecture（含 7 張架構 PNG）、SQLite schema、CR 禁止清單 |
 | [docs/site.css](docs/site.css) | 共用 CSS：固定 Navbar、sidebar TOC、RWD |
 
@@ -74,6 +74,8 @@ Live URL（啟用 Pages 後）：`https://ibalasite.github.io/stock_monitor/`
 | `OPERATIONS_RUNBOOK.md` | 維運與故障排除流程 | 日常操作、事故處理時 |
 | `CODEX.md` | Codex 執行手冊與 symbol contract | 使用 Codex 開發時 |
 | `CLAUDE.md` | Claude 執行手冊（與 CODEX 同語意） | 使用 Claude 開發時 |
+| `DOC_ROADMAP.md` | 文件上下游全成 Tier 對昖圖 | 追蹤文件依賴、確認衝突暮律時 |
+| `DEV_WORKFLOW.md` | 標準開發流程手冊（流程 A + 流程 B） | 展開新需求或 昇譜發現時 |
 | `README.md` | 專案入口與進度看板 | 每次進入專案第一個讀 |
 
 ## 3. 開發方法（BDD + Spec/Spac-Driven + TDD）
@@ -84,12 +86,13 @@ Live URL（啟用 Pages 後）：`https://ibalasite.github.io/stock_monitor/`
 
 ## 4. 標準開發流程（固定順序）
 1. 更新規格：`PDD -> EDD -> ADR/API_CONTRACT`。
-2. 更新行為：`.feature`。
-3. 建立/更新 BDD glue（`pytest-bdd` scenario + steps），先跑 BDD Red。
-4. 更新 `TEST_PLAN` 與內層 pytest 測試（unit/integration），先跑 TDD Red。
-5. 實作主程式讓測試逐批轉綠（先 unit/integration，再回歸 BDD scenario）。
-6. 重構與補文件。
-7. 最終驗收：BDD scenario 全綠 + TP/UAT 全綠 + coverage gate。
+2. 更新測試策略：`TEST_PLAN`（TP-ID 矩陣）。
+3. 更新行為：`.feature`。
+4. 建立/更新 BDD glue（`pytest-bdd` scenario + steps），先跑 BDD Red。
+5. 建立/更新內層 pytest 測試（unit/integration），先跑 TDD Red。
+6. 實作主程式讓測試逐批轉綠（先 unit/integration，再回歸 BDD scenario）。
+7. 重構與補文件。
+8. 最終驗收：BDD scenario 全綠 + TP/UAT 全綠 + coverage gate。
 
 ## 5. 目前做到哪一步
 ### 已完成

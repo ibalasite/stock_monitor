@@ -221,6 +221,47 @@
 2. 多來源報價價差超過門檻時標記 `DATA_CONFLICT`，該分鐘不觸發。
 3. `STALE_QUOTE/DATA_CONFLICT` 都需記錄 WARN 與對應股票代碼。
 
+### US-017 雙行情來源容錯
+- Priority：`P1`
+- Release：`M2`
+- Dependency：`US-002`
+- FR：`FR-15`
+- As 系統管理者, I want 行情採雙來源（TWSE 主 + Yahoo 副）並以 Freshness-First 取捨, So that 單一來源故障時監控仍能持續運作。
+
+**Acceptance Criteria**
+1. TWSE MIS 為主來源（委賣一 `a` 欄位）；Yahoo Finance HTML scraping 為副來源。
+2. 取捨規則：Yahoo 的 `regularMarketTime` 嚴格大於 TWSE cache 的 `tick_at` 時採 Yahoo，否則採 TWSE cache。
+3. TWSE cache 為空（冷啟動）時直接採 Yahoo 值。
+4. Yahoo 請求失敗（逾時 / HTTP 錯誤）時記錄 WARN，回退使用 TWSE cache，不中斷主流程。
+5. 兩者均無效時標記 `STALE_QUOTE`，跳過該分鐘通知。
+
+### US-018 行情 Adapter 可替換
+- Priority：`P1`
+- Release：`M2`
+- Dependency：`US-017`
+- FR：`FR-16`
+- As 開發者, I want 行情 adapter 透過 Port 介面注入, So that 未來可不改 Application layer 替換任一 provider。
+
+**Acceptance Criteria**
+1. `MarketDataPort` 定義 `get_realtime_quotes(stock_nos) -> dict[str, dict]` 與 `get_market_snapshot(now_epoch) -> dict`。
+2. `CompositeMarketDataProvider` 只依賴 `MarketDataPort` 介面，不直接依賴 TWSE 或 Yahoo 具體實作。
+3. 替換任一 provider 不需修改 Application layer 程式碼。
+4. Freshness-First 聚合邏輯集中在 `CompositeMarketDataProvider`，不散落各處。
+
+### US-019 每日估值時儲存股票中文名稱
+- Priority：`P1`
+- Release：`M2`
+- Dependency：`US-008`
+- FR：`FR-18`
+- As 使用者, I want 股票中文名稱在每日估值時一併存入 DB, So that 盤中通知顯示名稱不需每分鐘額外呼叫 API。
+
+**Acceptance Criteria**
+1. `watchlist` 資料表含 `stock_name TEXT NOT NULL DEFAULT ''` 欄位。
+2. 每交易日 14:00 估值時，同步取得各股票中文名稱並以 UPDATE 寫入 `watchlist.stock_name`。
+3. 盤中監控循環的 `stock_name_map` 一律由 `watchlist.stock_name` 提供，不從即時報價 `name` 欄位取得。
+4. `watchlist.stock_name` 為空字串時，顯示 fallback 為股票代碼（如 `2330`）。
+5. 名稱更新不引入每分鐘額外 API 呼叫。
+
 ## 4. 與 PDD UAT 對照
 1. UAT-1 對應 `US-003/US-004/US-005`。
 2. UAT-2 對應 `US-005`。
