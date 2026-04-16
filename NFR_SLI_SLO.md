@@ -1,8 +1,8 @@
 # NFR_SLI_SLO - Stock Monitoring System
 
-版本：v0.1  
-日期：2026-04-10  
-來源基準：`PDD_Stock_Monitoring_System.md`、`EDD_Stock_Monitoring_System.md`
+版本：v0.2  
+日期：2026-04-17  
+來源基準：`PDD_Stock_Monitoring_System.md`（v1.2）、`EDD_Stock_Monitoring_System.md`（v1.2）
 
 ## 1. 文件目的
 把 PDD/EDD 的非功能需求量化為可監控的 SLI/SLO，作為 BDD 驗收與營運門檻。
@@ -13,6 +13,7 @@
 3. 通知與落盤可追蹤，可補償。
 4. 估值方法可插拔且版本化。
 5. 所有出站 LINE 訊息文案（彙總/摘要/觸發列/測試推播）可模板化調整，不需修改主流程程式碼。
+6. **跨平台**：系統需在 macOS 14+（Apple Silicon / Intel）與 Windows 10/11 + Python 3.11+ 均可正常啟動並完整運作（FR-20）。
 
 ## 3. SLI 定義
 | SLI | 定義 | 計算方式 |

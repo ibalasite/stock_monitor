@@ -1,6 +1,6 @@
 # OPERATIONS_RUNBOOK - Stock Monitoring System
 
-版本：v0.4  
+版本：v0.5  
 日期：2026-04-17  
 來源基準：`PDD_Stock_Monitoring_System.md`（v1.1）、`EDD_Stock_Monitoring_System.md`（v1.1）
 
@@ -125,3 +125,45 @@ CSV 欄位：`stock_no`, `stock_name`, `agg_fair_price`, `agg_cheap_price`, `yes
 1. `MARKET_SCAN_LIST_FETCH_FAILED`：TWSE/TPEX API 不可達，確認網路後重試。
 2. `MARKET_SCAN_STOCK_ERROR`：個別股票估值例外，見 `system_logs` 中 event 欄位，其餘股票仍正常輸出。
 3. DB 不可寫：確認 `--db-path` 指定的路徑可讀寫。
+
+## 11. macOS Daemon 管理（FR-20）
+
+### 11.1 啟動 / 停止（手動）
+
+```bash
+# 啟動（背景執行，PID 寫入 logs/daemon.pid，log 寫入 logs/daemon.log）
+bash scripts/start_daemon.sh
+
+# 停止（送 SIGTERM，daemon 在當前分鐘週期結束後乾淨退出）
+bash scripts/stop_daemon.sh
+
+# 確認是否在跑
+cat logs/daemon.pid | xargs ps -p
+```
+
+### 11.2 SIGTERM 行為說明
+
+- daemon 收到 SIGTERM 後，會在**當前分鐘週期結束**時才退出（不強制中斷）。
+- 正常退出 log 訊息：`Daemon stopped (SIGTERM received)`。
+- 若 5 秒內未退出，可強制 kill：`kill -9 $(cat logs/daemon.pid)`。
+
+### 11.3 launchd 排程（自動啟停）
+
+1. 編輯 `scripts/com.stock_monitor.daemon.plist`：
+   - 將 `WorkingDirectory` 改為本機實際路徑（如 `/Users/tobala/projects/stock_monitor`）
+   - 填入 `LINE_CHANNEL_ACCESS_TOKEN` 與 `LINE_TO_GROUP_ID`
+2. 安裝：
+   ```bash
+   cp scripts/com.stock_monitor.daemon.plist ~/Library/LaunchAgents/
+   launchctl load ~/Library/LaunchAgents/com.stock_monitor.daemon.plist
+   ```
+3. 驗證：`launchctl list | grep stock_monitor`
+4. 卸載：`launchctl unload ~/Library/LaunchAgents/com.stock_monitor.daemon.plist`
+
+### 11.4 常見問題
+
+| 症狀 | 可能原因 | 處置 |
+|------|---------|------|
+| `start_daemon.sh: Permission denied` | 腳本未賦予執行權 | `chmod +x scripts/start_daemon.sh scripts/stop_daemon.sh` |
+| `No PID file found`（stop 時） | daemon 未啟動或已退出 | 確認 `logs/daemon.pid` 存在，或用 `ps aux | grep stock_monitor` 確認 |
+| launchd 未在排定時間啟動 | plist WorkingDirectory 路徑錯誤 | 用 `launchctl list com.stock_monitor.daemon` 看 exit code，再查 `logs/daemon.log` |

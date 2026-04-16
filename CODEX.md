@@ -120,6 +120,7 @@ Alias（等效）：
 | `stock_monitor.adapters.market_data_composite` | `CompositeMarketDataProvider` |
 | `stock_monitor.application.market_scan` | `run_market_scan_job`, `MarketScanResult` |
 | `stock_monitor.adapters.all_listed_stocks_twse` | `TwseAllListedStocksProvider` |
+| `stock_monitor.application.daemon_runner` | `_install_signal_handlers`（FR-20，SIGTERM 跨平台處理） |
 
 ## 8. TDD 執行規範
 1. 先跑對應測試確認紅燈
@@ -171,6 +172,9 @@ python -m pytest -q tests/test_integration_workflow.py -k TP-INT-010
 - **禁止** `TimeBucketService` 對無效時區名稱靜默設 `self._tz = None`（CR-CODE-05）
 - **禁止** `YahooFinanceMarketDataProvider` 在 HTTP 失敗時 raise exception 向上傳播（CR-ADP-01）
 - **禁止** `CompositeMarketDataProvider` 直接回傳任一來源的字典而不做 Freshness-First 比較（CR-ADP-02）
+- **禁止** 生產程式碼中使用 `os.path.join`、字串硬編碼路徑分隔符（`"/"+`、`"\\"+`）；一律使用 `pathlib.Path`（CR-PLAT-01）
+- **禁止** 在未判斷 `sys.platform != "win32"` 的情況下直接安裝 `signal.SIGTERM` handler（CR-PLAT-02）
+- **禁止** `scripts/start_daemon.sh` / `stop_daemon.sh` 未 `chmod +x`；plist WorkingDirectory 使用相對路徑（CR-PLAT-03）
 
 ## 13. Out of Scope（此階段不做）
 - 自動下單

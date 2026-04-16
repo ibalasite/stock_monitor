@@ -1,8 +1,8 @@
 # ADR - Architecture Decision Records
 
-版本：v0.3  
+版本：v0.4  
 日期：2026-04-17  
-來源基準：`PDD_Stock_Monitoring_System.md`（v1.1）、`EDD_Stock_Monitoring_System.md`（v1.1）
+來源基準：`PDD_Stock_Monitoring_System.md`（v1.2）、`EDD_Stock_Monitoring_System.md`（v1.2）
 
 ## ADR-001 使用 Clean Architecture 分層
 1. 狀態：Accepted
@@ -143,6 +143,22 @@
 4. 影響：
    - 每次 `evaluate_market_open_status` 前必須查詢 DB，確認當日是否已送出。
    - CR-CODE-06 對應實作改善：開盤檢查起始時間 08:45～09:00 區間唇均可評估，不定式限定在整分点 09:00。
+
+## ADR-015 跨平台路徑操作採 pathlib.Path；SIGTERM 處理需平台判斷
+1. 狀態：Accepted
+2. 決策：
+   - 所有生產程式碼的檔案路徑操作一律使用 `pathlib.Path`，禁止字串拼接 `/` 或 `\`（CR-PLAT-01）。
+   - daemon 啟動時安裝 SIGTERM handler，但需以 `sys.platform != "win32"` 為前提（Windows 不支援 SIGTERM，CR-PLAT-02）。
+   - macOS 提供 `start_daemon.sh` / `stop_daemon.sh`（bash）；Windows 沿用 `start_daemon.ps1` / `stop_daemon.ps1`（PowerShell）。
+   - launchd plist 作為範本提供（`scripts/com.stock_monitor.daemon.plist`），不自動安裝。
+3. 原因：
+   - `pathlib.Path` 在 Windows / macOS / Linux 均正確處理路徑分隔符，消除跨平台路徑 bug。
+   - SIGTERM 是 Unix-only 訊號；在 Windows 呼叫 `signal.signal(signal.SIGTERM, ...)` 會拋出 `AttributeError`，必須有平台判斷。
+   - 兩套腳本（sh / ps1）各自使用平台原生語法，比跨平台 wrapper 更易維護。
+4. 影響：
+   - `daemon_runner.py` 新增 `_install_signal_handlers(stop_event)`（EDD §15.6 Symbol Contract）。
+   - CLAUDE.md / CODEX.md §12 禁止清單登錄 CR-PLAT-01、CR-PLAT-02、CR-PLAT-03。
+   - 新增腳本：`scripts/start_daemon.sh`、`scripts/stop_daemon.sh`、`scripts/com.stock_monitor.daemon.plist`。
 
 ## ADR-014 雙行情來源採 Freshness-First 策略，行情 price 代表委賣一
 1. 狀態：Accepted
