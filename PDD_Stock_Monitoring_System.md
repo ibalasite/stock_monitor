@@ -173,6 +173,8 @@ python -m stock_monitor scan-market [--output-dir ./output] [--db-path data/stoc
 
 **估值方法**：使用資料庫中所有 `enabled=1` 的估值方法（預設：三方法全啟用）。每股票對每方法獨立計算，取**所有 SUCCESS 方法的算術平均值**作為聚合合理價（`agg_fair_price`）與聚合便宜價（`agg_cheap_price`）。
 
+**方法載入約束**：`scan-market` CLI 必須在執行前從資料庫讀取 `enabled=1` 的估值方法清單並注入掃描流程；禁止以空方法清單執行掃描。若啟用方法數為 0，CLI 需 fail-fast 並回傳錯誤訊息（不可靜默輸出全數 uncalculable）。
+
 **昨日收盤價來源**：
 - TWSE：`https://www.twse.com.tw/rwd/zh/afterTrading/STOCK_DAY_ALL?response=json`（含上市全股當日收盤價、股票名稱）。
 - TPEx：`https://www.tpex.org.tw/openapi/v1/tpex_stk_closingprice`（含上櫃全股當日收盤價、股票名稱）。
@@ -215,6 +217,7 @@ python -m stock_monitor scan-market [--output-dir ./output] [--db-path data/stoc
 **約束**：
 - 此功能不發送任何 LINE 訊息。
 - 若 DB 不可用，整個指令 fail-fast，不輸出任何 CSV。
+- 若 `enabled=1` 的估值方法為 0，整個指令 fail-fast，不輸出任何 CSV。
 - 若某支股票計算失敗（exception），記錄至 `system_logs` 並繼續處理其餘股票（不中斷整批）。
 - Upsert watchlist 時，若股票已存在且已在監控清單中，仍以本次計算結果更新 `manual_fair_price`、`manual_cheap_price`、`stock_name`；不更改 `enabled` 狀態。
 

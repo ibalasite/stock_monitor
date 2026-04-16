@@ -916,6 +916,11 @@ python -m stock_monitor scan-market \
     [--db-path data/stock_monitor.db]  # 預設同現有 --db-path
 ```
 
+CLI 路由行為補充（強制）：
+- `scan-market` 進入點必須先從資料庫載入 `valuation_methods.enabled=1` 的方法清單，並注入 `run_market_scan_job(..., valuation_methods=...)`。
+- 禁止硬編碼 `valuation_methods=[]` 或等效空清單。
+- 若啟用方法清單為空（0 筆），CLI 必須 fail-fast（回傳非 0 / 錯誤訊息），不得輸出「全數 uncalculable」作為成功結果。
+
 與現有 `run-daemon` / `valuation-once` 並列，在 Interface Layer `app.py` 路由，計算邏輯禁止放進 `app.py`（CR-ARCH-01）。
 
 ### 14.6 Symbol Contract 新增項目
@@ -930,7 +935,8 @@ python -m stock_monitor scan-market \
 1. 此功能不發送任何 LINE 訊息（不呼叫 `LinePushClient`）。
 2. 若 DB 不可用 → fail-fast，不輸出 CSV。
 3. 若股票清單 API 全部失敗 → fail-fast（無法掃描），不輸出空 CSV。
-4. 每支股票計算用同一批估值方法實例（不重建），複用 §9.1 的三方法公式。
-5. 输出 `watchlist_added.csv` 紀錄本次嘗試 upsert 的股票（包含 upsert 前已存在的），不區分「新增」或「更新」（由 stdout 摘要分開計算）。
-6. 本功能不更改 `valuation_snapshots`，僅操作 `watchlist`。
+4. 若 `valuation_methods.enabled=1` 方法數為 0 → fail-fast，不輸出 CSV。
+5. 每支股票計算用同一批估值方法實例（不重建），複用 §9.1 的三方法公式。
+6. 输出 `watchlist_added.csv` 紀錄本次嘗試 upsert 的股票（包含 upsert 前已存在的），不區分「新增」或「更新」（由 stdout 摘要分開計算）。
+7. 本功能不更改 `valuation_snapshots`，僅操作 `watchlist`。
 
