@@ -958,6 +958,51 @@ ON CONFLICT(stock_no) DO UPDATE SET
 
 **錯誤隔離**：每支股票計算以 try/except 包住，exception 寫 `system_logs`（level=ERROR, event=`MARKET_SCAN_STOCK_ERROR`），繼續下一支。
 
+### 14.3a 三條分流規則工程設計
+
+#### 規則 A：低於便宜價 → DB watchlist upsert
+
+| 項目 | 說明 |
+|---|---|
+| **觸發條件** | `yesterday_close <= agg_cheap_price`（至少 1 個方法 SUCCESS） |
+| **觸發語意** | 任意一個或多個估值方法算出的聚合便宜價高於市價，即視為符合進入觀察名單的條件 |
+| **處理步驟** | 1. 取 `agg_fair = mean(success_fairs)`、`agg_cheap = mean(success_cheaps)`<br>2. `_upsert_watchlist(conn, stock_no, stock_name, agg_fair, agg_cheap)`<br>3. `conn.commit()` 後計數 `watchlist_upserted += 1` |
+| **Upsert 行為** | 新股票：`enabled=1`；已存在股票：只更新 `stock_name / manual_fair_price / manual_cheap_price / updated_at`，**不改 `enabled`** |
+| **輸出** | DB `watchlist` 表 + `scan_{YYYYMMDD}_watchlist_added.csv` 記錄本次 upsert 明細 |
+| **相關模組** | `market_scan._upsert_watchlist()`、`market_scan.run_market_scan_job()` |
+
+#### 規則 B：高於便宜價且低於等於合理價 → near_fair 清單
+
+| 項目 | 說明 |
+|---|---|
+| **觸發條件** | `agg_cheap < yesterday_close <= agg_fair_price`（至少 1 個方法 SUCCESS） |
+| **觸發語意** | 市價已超過便宜價門檻但仍在合理價內，列為「接近合理價」觀察清單供參考 |
+| **處理步驟** | 1. 取 `agg_fair`、`agg_cheap`（同規則 A）<br>2. 組 `row_base` dict（含 stock_no / stock_name / agg_fair_price / agg_cheap_price / yesterday_close / methods_success / methods_skipped）<br>3. `near_fair_rows.append(row_base)` |
+| **輸出** | `scan_{YYYYMMDD}_near_fair.csv`（不寫 DB） |
+| **相關模組** | `market_scan.run_market_scan_job()` 內 `elif close <= agg_fair` 分支 |
+
+#### 規則 C：三方法均無法計算 → uncalculable 清單
+
+| 項目 | 說明 |
+|---|---|
+| **觸發條件** | `yesterday_close is None`（無報價）**或** 所有方法回傳狀態均為 `SKIP_*`（無 SUCCESS） |
+| **觸發語意** | 無法產生聚合估值，原因需逐方法記錄供後續追蹤 |
+| **分支 C1（無報價）** | `methods_skipped` 補上 `NO_PRICE`；`agg_fair_price / agg_cheap_price / yesterday_close` 均為空字串 |
+| **分支 C2（所有方法 SKIP）** | `methods_skipped` 記錄每個方法的 `method_label:SKIP_reason`；`agg_fair_price / agg_cheap_price` 均為空字串 |
+| **處理步驟** | 組 `row` dict 並 `uncalculable_rows.append(row)` |
+| **輸出** | `scan_{YYYYMMDD}_uncalculable.csv`（不寫 DB） |
+| **相關模組** | `market_scan.run_market_scan_job()` 內兩段 `uncalculable_rows.append` |
+
+#### 規則分流優先順序（工程實作順序）
+
+```
+if yesterday_close is None            → 規則 C1（uncalculable / NO_PRICE）
+elif success_count == 0               → 規則 C2（uncalculable / all SKIP）
+elif close <= agg_cheap               → 規則 A（watchlist upsert）
+elif close <= agg_fair                → 規則 B（near_fair CSV）
+else                                  → above_fair_not_output（僅計數，不寫檔）
+```
+
 ### 14.4 CSV 輸出規格
 
 **共用欄位**（全三張 CSV 均含）：
