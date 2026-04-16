@@ -1,6 +1,6 @@
 # EDD - 台股監控與 LINE 通知系統
 
-版本：v1.2  
+版本：v1.3  
 日期：2026-04-17  
 對齊文件：[PDD_Stock_Monitoring_System.md](PDD_Stock_Monitoring_System.md)
 
@@ -926,11 +926,16 @@ def run_market_scan_job(
 class MarketScanResult:
     scan_date: str                  # YYYY-MM-DD
     total_stocks: int
-    watchlist_upserted: int
+    watchlist_upserted: int         # 本次 upsert 總數（new + updated）
+    watchlist_new: int              # 本次新插入（upsert 前不存在）
+    watchlist_updated: int          # 本次更新既有（upsert 前已存在）
     near_fair_count: int
     uncalculable_count: int
+    above_fair_count: int           # 高於所有方法合理價，不輸出但納入計數確保總量對帳
     output_dir: str
 ```
+
+不變式：`total_stocks == watchlist_upserted + near_fair_count + uncalculable_count + above_fair_count`
 
 **聚合公式**：
 - 收集同股票所有 SUCCESS 方法的 `fair_price` 與 `cheap_price`
@@ -970,7 +975,7 @@ ON CONFLICT(stock_no) DO UPDATE SET
 |---|---|
 | **觸發條件** | `yesterday_close <= max(success_cheap_prices)`（至少 1 個方法 SUCCESS） |
 | **觸發語意** | 只要有任一啟用方法的便宜價 ≥ 市價，即視為符合進入觀察名單的條件（任一中即進） |
-| **處理步驟** | 1. 取 `fair_db = max(success_fairs)`、`cheap_db = max(success_cheaps)`<br>2. `_upsert_watchlist(conn, stock_no, stock_name, fair_db, cheap_db)`（DB 存 max，與觸發判斷一致）<br>3. `conn.commit()` 後計數 `watchlist_upserted += 1`<br>4. CSV 輸出欄位 `agg_fair_price / agg_cheap_price` 同樣使用 max 值 |
+| **處理步驟** | 1. 取 `fair_db = max(success_fairs)`、`cheap_db = max(success_cheaps)`<br>2. **upsert 前先 SELECT**：`SELECT 1 FROM watchlist WHERE stock_no = ?` 判斷是否已存在，設 `is_new = (result is None)`<br>3. `_upsert_watchlist(conn, stock_no, stock_name, fair_db, cheap_db)`（DB 存 max，與觸發判斷一致）<br>4. `conn.commit()` 後：`watchlist_upserted += 1`；若 `is_new` 則 `watchlist_new += 1`，否則 `watchlist_updated += 1`<br>5. CSV 輸出欄位 `agg_fair_price / agg_cheap_price` 同樣使用 max 值 |
 | **Upsert 行為** | 新股票：`enabled=1`；已存在股票：只更新 `stock_name / manual_fair_price / manual_cheap_price / updated_at`，**不改 `enabled`** |
 | **輸出** | DB `watchlist` 表 + `scan_{YYYYMMDD}_watchlist_added.csv` 記錄本次 upsert 明細 |
 | **相關模組** | `market_scan._upsert_watchlist()`、`market_scan.run_market_scan_job()` |
@@ -1057,7 +1062,7 @@ CLI 路由行為補充（強制）：
 3. 若股票清單 API 全部失敗 → fail-fast（無法掃描），不輸出空 CSV。
 4. 若 `valuation_methods.enabled=1` 方法數為 0 → fail-fast，不輸出 CSV。
 5. 每支股票計算用同一批估值方法實例（不重建），複用 §9.1 的三方法公式。
-6. 输出 `watchlist_added.csv` 紀錄本次嘗試 upsert 的股票（包含 upsert 前已存在的），不區分「新增」或「更新」（由 stdout 摘要分開計算）。
+6. 輸出 `watchlist_added.csv` 紀錄本次 upsert 的股票（包含原本已存在的）；`MarketScanResult` 以 `watchlist_new` / `watchlist_updated` 分別計數，CLI stdout 摘要須顯示「已加入監控清單：N（其中新增 X，更新 Y）」。
 7. 不可使用假公式或未對應資料來源的捷徑；每一方法結果都需能對應真實估值來源與理由。
 8. 執行時間與過程應反映逐檔逐方法實際計算，不得以未計算結果直接產生分類輸出。
 9. 本功能不更改 `valuation_snapshots`，僅操作 `watchlist`。
@@ -1080,12 +1085,14 @@ CLI 路由行為補充（強制）：
   - 決策順序依 §14.3 分流邏輯執行，禁止同股多重輸出。
 
 4. **可追溯資料模型**
-  - `methods_success`：記錄 SUCCESS 方法名稱列表。
-  - `methods_skipped`：記錄 `method:reason` 列表，保留無法計算原因。
+  - `methods_success`：記錄 SUCCESS 方法名稱列表（`|` 分隔）。
+  - `methods_skipped`：記錄 `method:reason` 列表（`,` 分隔），skip 原因直接內嵌，**不另設獨立欄位**。
   - `uncalculable.csv` 必須保留每方法 skip 原因；`near_fair.csv` / `watchlist_added.csv` 必須保留成功方法資訊。
-  - `above_fair_not_output` 不寫入三張輸出檔，但必須納入 run summary 計數，確保總量可對帳。
+  - `above_fair_not_output` 不寫入三張輸出檔，但 `MarketScanResult.above_fair_count` 必須計數，確保以下對帳不變式成立：
+    `total_stocks == watchlist_upserted + near_fair_count + uncalculable_count + above_fair_count`
 
 5. **watchlist upsert 行為模型**
+  - upsert 前先 `SELECT 1 FROM watchlist WHERE stock_no = ?` 判斷是否已存在（`is_new` flag），用於區分 `watchlist_new` 與 `watchlist_updated` 計數。
   - 當決策為 `watchlist_added` 時：只更新 `stock_name`、`manual_fair_price`、`manual_cheap_price`、`updated_at`。
   - `enabled` 一律保留資料庫既有值，不可在 upsert 路徑強制改寫。
 

@@ -1,6 +1,6 @@
 # PDD - 台股價格監控與 LINE 通知系統（V0/V1）
 
-版本：v1.2  
+版本：v1.3  
 日期：2026-04-17  
 狀態：Draft（可進入 review）
 
@@ -171,7 +171,7 @@ python -m stock_monitor scan-market [--output-dir ./output] [--db-path data/stoc
 - 全體上市（TWSE）普通股＋上櫃（TPEx）普通股。
 - 來源為 TWSE + TPEx 全市場清單。
 
-**估值方法**：使用資料庫中所有 `enabled=1` 的估值方法（預設：三方法全啟用）。每股票對每方法獨立計算，且每方法都必須產生獨立狀態（`SUCCESS` 或 `SKIP_*`）；取**所有 SUCCESS 方法的算術平均值**作為聚合合理價（`agg_fair_price`）與聚合便宜價（`agg_cheap_price`）。若三方法皆非 SUCCESS，則該股票無聚合價。
+**估值方法**：使用資料庫中所有 `enabled=1` 的估值方法（預設：三方法全啟用）。每股票對每方法獨立計算，且每方法都必須產生獨立狀態（`SUCCESS` 或 `SKIP_*`）；取**所有 SUCCESS 方法的最高值（max）**作為聚合合理價（`agg_fair_price`）與聚合便宜價（`agg_cheap_price`）。若三方法皆非 SUCCESS，則該股票無聚合價。
 
 **方法載入約束**：`scan-market` CLI 必須在執行前從資料庫讀取 `enabled=1` 的估值方法清單並注入掃描流程；禁止以空方法清單執行掃描。若啟用方法數為 0，CLI 需 fail-fast 並回傳錯誤訊息（不可靜默輸出全數 uncalculable）。
 

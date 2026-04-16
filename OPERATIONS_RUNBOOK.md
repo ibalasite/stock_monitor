@@ -115,11 +115,15 @@ python -m stock_monitor \
 ### 10.3 輸出說明
 | 檔案 | 說明 |
 |---|---|
-| `scan_results_above_cheap.csv` | 高於便宜價但低於合理價的股票 |
-| `scan_results_uncalculable.csv` | 全方法無法計算（含原因） |
+| `scan_YYYYMMDD_watchlist_added.csv` | 本次 upsert 進 watchlist 的股票明細 |
+| `scan_YYYYMMDD_near_fair.csv` | 高於便宜價但低於合理價的股票 |
+| `scan_YYYYMMDD_uncalculable.csv` | 全方法無法計算（含原因） |
 | watchlist（DB） | 低於便宜價股票自動 upsert |
 
-CSV 欄位：`stock_no`, `stock_name`, `agg_fair_price`, `agg_cheap_price`, `yesterday_close`, `methods_computed`, `methods_skipped`, `skip_reasons`。
+CSV 欄位：`stock_no`, `stock_name`, `agg_fair_price`, `agg_cheap_price`, `yesterday_close`, `methods_success`, `methods_skipped`。
+
+- `methods_success`：成功計算的方法名稱，如 `emily_composite_v1|oldbull_dividend_yield_v1`
+- `methods_skipped`：跳過的方法及原因（格式 `method:reason`），如 `raysky_blended_margin_v1:SKIP_INSUFFICIENT_DATA`；skip 原因直接內嵌，不另設獨立欄位
 
 ### 10.4 異常排查
 1. `MARKET_SCAN_LIST_FETCH_FAILED`：TWSE/TPEX API 不可達，確認網路後重試。
