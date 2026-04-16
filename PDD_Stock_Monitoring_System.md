@@ -1,6 +1,6 @@
 # PDD - 台股價格監控與 LINE 通知系統（V0/V1）
 
-版本：v1.1  
+版本：v1.2  
 日期：2026-04-17  
 狀態：Draft（可進入 review）
 
@@ -223,6 +223,34 @@ python -m stock_monitor scan-market [--output-dir ./output] [--db-path data/stoc
 - 每支股票都必須可追溯其去向：`watchlist_added`、`near_fair`、`uncalculable`，或明確標示為高於合理價未輸出。
 - 不可使用人造／假公式快速湊值，估值結果必須可對應到真實資料來源與方法理由。
 - 執行行為需反映逐檔逐方法計算，不可出現未實際計算卻快速產生結果的行為。
+
+### FR-20 macOS / Windows 雙平台相容（Cross-platform Compatibility）
+
+**目標**：系統所有功能（daemon 啟動、估值、掃描、LINE 通知、排程）在 macOS 14+（Apple Silicon / Intel）與 Windows 10/11 均可正常運作，不需修改業務程式碼。
+
+**範圍**：
+
+| 面向 | 要求 |
+|------|------|
+| Python 版本 | 3.11+（兩平台一致） |
+| 檔案路徑 | 所有路徑操作使用 `pathlib.Path`，禁止硬編碼 `/` 或 `\` |
+| 訊號處理 | daemon 需同時支援 `SIGTERM`（macOS/Linux）與 `KeyboardInterrupt`（兩平台），均可優雅關閉 |
+| 啟動腳本 | macOS：`scripts/start_daemon.sh` / `scripts/stop_daemon.sh`（bash）；Windows：`scripts/start_daemon.ps1` / `scripts/stop_daemon.ps1`（PowerShell） |
+| 排程 | macOS：提供 `scripts/com.stock_monitor.daemon.plist`（launchd）範本；Windows：`scripts/register_scheduled_tasks.ps1`（Task Scheduler） |
+| 環境變數 | 兩平台均以系統環境變數為準，不強制 `.env` |
+| 依賴安裝 | `requirements-dev.txt` 需在兩平台均可安裝（無平台限定套件） |
+
+**驗收條件**：
+1. 在 macOS 上執行 `python -m pytest -q tests` 全綠、coverage 100%。
+2. `scripts/start_daemon.sh` 可在 macOS 啟動 daemon 並寫入 PID 檔；`scripts/stop_daemon.sh` 可依 PID 優雅停止（SIGTERM）。
+3. daemon 收到 SIGTERM 後，需在當前分鐘週期結束後乾淨退出，不留孤兒行程。
+4. launchd plist 範本文件正確（格式可被 `plutil -lint` 驗證）。
+5. Windows 上同樣可執行所有 pytest 測試（CI 矩陣驗證）。
+6. `pathlib.Path` 覆蓋所有檔案操作路徑，無 `os.path.join` 硬編碼字串路徑。
+
+**不在範圍**：
+- 自動化跨平台 CI 矩陣（Windows runner）留待後期；當前以 macOS 本機驗證為主。
+- Linux 伺服器部署（Out of Scope 不變）。
 
 ### FR-05 通知冷卻（Notification Cooldown）
 - 維度：`stock_no + stock_status`。

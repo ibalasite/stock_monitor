@@ -1,11 +1,14 @@
 # EDD - 台股監控與 LINE 通知系統
 
-版本：v1.1  
+版本：v1.2  
 日期：2026-04-17  
-對齊文件：[PDD_Stock_Monitoring_System.md](c:/Projects/stock/PDD_Stock_Monitoring_System.md)
+對齊文件：[PDD_Stock_Monitoring_System.md](PDD_Stock_Monitoring_System.md)
+
+變更摘要（v1.2）：
+- 新增 §15 FR-20 macOS / Windows 雙平台相容工程設計。
 
 變更摘要（v1.1）：
-- 新增 §4.3 全市場估値揃描流程（FR-19）。
+- 新增 §4.3 全市場估値掃描流程（FR-19）。
 - 新增 §14 FR-19 全市場估値揃描設計規格（新 CLI 指令、Port、Adapter、Use Case、輸出規格）。
 - 更新 §1 範圍加入 FR-19 目標。
 - 新增 `AllListedStocksPort` 與 `TwseAllListedStocksProvider` 到架構層設計。
@@ -1233,4 +1236,177 @@ sequenceDiagram
   - `stock_monitor/db/schema.py` 的 `SCHEMA_SQL`
   - 對應 `TP-DB-*` 測試條目（至少包含 schema 與約束驗證）
 - 禁止只改程式碼或只改 SQL 而未同步 EDD 的 ER-Model / Table Schema。
+
+---
+
+## 15. FR-20 macOS / Windows 雙平台相容工程設計
+
+### 15.1 設計目標
+
+所有業務功能（daemon、估值、掃描、LINE 推播）需在以下兩個平台無差異運作：
+
+| 平台 | 版本 | Python | Shell |
+|------|------|--------|-------|
+| macOS | 14+（Apple Silicon / Intel） | 3.11+（Homebrew） | zsh / bash |
+| Windows | 10 / 11 | 3.11+（官方安裝） | PowerShell 5.1+ |
+
+---
+
+### 15.2 路徑操作規範
+
+**規則**：所有檔案路徑操作必須使用 `pathlib.Path`，禁止字串拼接 `/` 或 `\`。
+
+```python
+# 禁止（CR-PLAT-01）
+db_path = "data/stock_monitor.db"
+log_dir = "logs/" + "daemon.log"
+
+# 正確
+from pathlib import Path
+db_path = Path("data") / "stock_monitor.db"
+log_dir = Path("logs") / "daemon.log"
+```
+
+**禁止清單（CR-PLAT-01）**：生產程式碼中禁止出現 `os.path.join`、`"/" +`、`"\\" +` 等硬編碼路徑分隔符。
+
+---
+
+### 15.3 SIGTERM 優雅關閉設計
+
+**問題**：`daemon_runner.py` 目前只處理 `KeyboardInterrupt`，在 macOS 用 `kill` 或 launchd 停止時送出 SIGTERM，現行程式會強制終止。
+
+**解法**：在 daemon 啟動時安裝 SIGTERM handler，將訊號轉換為停止旗標：
+
+```python
+import signal
+import sys
+
+def _install_signal_handlers(stop_event):
+    """安裝跨平台訊號處理器（SIGTERM + KeyboardInterrupt）"""
+    if sys.platform != "win32":
+        # SIGTERM 僅在 Unix-like 系統存在
+        signal.signal(signal.SIGTERM, lambda sig, frame: stop_event.set())
+    # KeyboardInterrupt（Ctrl+C）透過 try/except 處理，兩平台均支援
+```
+
+- daemon 主迴圈改為檢查 `stop_event`，收到停止訊號後在當前分鐘週期結束時乾淨退出。
+- Windows 不支援 `SIGTERM`；在 Windows 使用 `taskkill /PID` 發送 `CTRL_C_EVENT` 或依賴 PowerShell 腳本的 `Stop-Process`。
+
+---
+
+### 15.4 macOS 啟動腳本設計
+
+**新增檔案**：`scripts/start_daemon.sh`、`scripts/stop_daemon.sh`
+
+```bash
+# start_daemon.sh（重點邏輯）
+#!/usr/bin/env bash
+PYTHON=/opt/homebrew/bin/python3.11
+PID_FILE=logs/daemon.pid
+LOG_FILE=logs/daemon.log
+
+mkdir -p logs
+nohup $PYTHON -m stock_monitor --db-path data/stock_monitor.db run-daemon \
+  --poll-interval-sec 60 --valuation-time 14:00 \
+  >> "$LOG_FILE" 2>&1 &
+echo $! > "$PID_FILE"
+echo "Daemon started (PID=$(cat $PID_FILE))"
+```
+
+```bash
+# stop_daemon.sh（重點邏輯）
+#!/usr/bin/env bash
+PID_FILE=logs/daemon.pid
+if [ -f "$PID_FILE" ]; then
+  PID=$(cat "$PID_FILE")
+  kill -TERM "$PID" 2>/dev/null && echo "Sent SIGTERM to PID=$PID"
+  rm -f "$PID_FILE"
+else
+  echo "No PID file found."
+fi
+```
+
+---
+
+### 15.5 macOS 排程（launchd）範本
+
+**新增檔案**：`scripts/com.stock_monitor.daemon.plist`
+
+```xml
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN"
+  "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>com.stock_monitor.daemon</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>/opt/homebrew/bin/python3.11</string>
+    <string>-m</string>
+    <string>stock_monitor</string>
+    <string>--db-path</string>
+    <string>data/stock_monitor.db</string>
+    <string>run-daemon</string>
+    <string>--poll-interval-sec</string>
+    <string>60</string>
+    <string>--valuation-time</string>
+    <string>14:00</string>
+  </array>
+  <key>StartCalendarInterval</key>
+  <array>
+    <!-- 週一至週五 08:50 啟動 -->
+    <dict>
+      <key>Hour</key><integer>8</integer>
+      <key>Minute</key><integer>50</integer>
+      <key>Weekday</key><integer>1</integer>
+    </dict>
+    <!-- ... 2~5 同理 -->
+  </array>
+  <key>StandardOutPath</key>
+  <string>logs/daemon.log</string>
+  <key>StandardErrorPath</key>
+  <string>logs/daemon.log</string>
+  <key>WorkingDirectory</key>
+  <string>/Users/USERNAME/projects/stock_monitor</string>
+  <key>EnvironmentVariables</key>
+  <dict>
+    <key>LINE_CHANNEL_ACCESS_TOKEN</key>
+    <string>YOUR_TOKEN</string>
+    <key>LINE_TO_GROUP_ID</key>
+    <string>YOUR_GROUP_ID</string>
+  </dict>
+</dict>
+</plist>
+```
+
+**安裝方式**（文件化，不自動執行）：
+```bash
+cp scripts/com.stock_monitor.daemon.plist ~/Library/LaunchAgents/
+launchctl load ~/Library/LaunchAgents/com.stock_monitor.daemon.plist
+```
+
+---
+
+### 15.6 Symbol Contract 新增項目（FR-20）
+
+| 模組 | Symbol | 說明 |
+|------|--------|------|
+| `stock_monitor.application.daemon_runner` | `_install_signal_handlers` | SIGTERM + KeyboardInterrupt 跨平台處理 |
+
+---
+
+### 15.7 CR 禁止清單（FR-20）
+
+| ID | 禁止事項 |
+|----|---------|
+| CR-PLAT-01 | 生產程式碼中禁止 `os.path.join`、字串硬編碼路徑分隔符（`"/"+`、`"\\"+`）；一律使用 `pathlib.Path` |
+| CR-PLAT-02 | `signal.SIGTERM` 必須有平台判斷（`sys.platform != "win32"`）才可安裝，禁止直接在 Windows 呼叫 `signal.signal(signal.SIGTERM, ...)`（AttributeError） |
+| CR-PLAT-03 | `start_daemon.sh` / `stop_daemon.sh` 必須 `chmod +x`；plist 中 WorkingDirectory 與 ProgramArguments 必須使用絕對路徑 |
+
+---
+
+### 15.8 DB 影響
+
+FR-20 不新增資料表、不變更 Schema。
 
