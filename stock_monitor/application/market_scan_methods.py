@@ -22,7 +22,11 @@ _METHOD_REGISTRY: dict[tuple[str, str], type] = {
 }
 
 
-def load_enabled_scan_methods(conn, as_of_date: str) -> list:  # noqa: ARG001
+def load_enabled_scan_methods(
+    conn,
+    as_of_date: str,  # noqa: ARG001
+    db_path: str | None = None,
+) -> list:
     """Load enabled valuation methods from DB for scan-market.
 
     Reads which methods are enabled from valuation_methods table,
@@ -30,6 +34,9 @@ def load_enabled_scan_methods(conn, as_of_date: str) -> list:  # noqa: ARG001
 
     as_of_date is accepted for interface compatibility but not used —
     real methods always fetch the freshest available data.
+
+    db_path is forwarded to FinMindFinancialDataProvider so the SWR cache
+    writes to the same SQLite file as the rest of the application.
 
     Raises RuntimeError("MARKET_SCAN_METHODS_EMPTY") when no enabled methods
     are registered in the DB or none match the known registry.
@@ -46,7 +53,7 @@ def load_enabled_scan_methods(conn, as_of_date: str) -> list:  # noqa: ARG001
     if not rows:
         raise RuntimeError("MARKET_SCAN_METHODS_EMPTY")
 
-    provider = FinMindFinancialDataProvider()
+    provider = FinMindFinancialDataProvider(db_path=db_path)
     methods: list = []
 
     for row in rows:

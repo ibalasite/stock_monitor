@@ -1,21 +1,29 @@
-"""FinMind financial data provider for Taiwan stocks.
+"""FinMind financial data provider for Taiwan stocks — SWR cache edition.
 
-Fetches real financial data (dividends, EPS, balance sheet, PE/PB history)
-from FinMind public API per individual stock_no.
+Fetch strategy (stale-while-revalidate):
+  1. In-memory cache  — same scan run, same (dataset, stock_no): hit directly.
+  2. DB cache fresh   — fetched_at within stale_days: return immediately.
+  3. DB cache stale   — older than stale_days: return stale data NOW,
+                        spawn daemon thread to refresh in background.
+  4. DB cache miss    — fetch from FinMind API, store in DB, return.
+
+Typical cadence: full scan runs every ~15 days.
+  - First run: each stock fetches from FinMind (~28 h at 300 req/h free tier).
+  - Subsequent runs: all hits from DB cache, essentially instant.
+  - Refresh: background threads silently keep cache fresh on stale hits.
 
 API base: https://api.finmindtrade.com/api/v4/data
 Rate limit: 300 req/hour (no token), 600 req/hour (with FINMIND_API_TOKEN).
 EDD §9.1 data source for the three baseline valuation methods.
-
-Run-level in-memory cache: within a single scan run, each (dataset, stock_no)
-pair is fetched at most once. The cache lives on the provider instance — create
-a new instance per scan run to get fresh data.
 """
 
 from __future__ import annotations
 
 import json
 import os
+import sqlite3
+import threading
+import time
 from datetime import datetime, timedelta
 from urllib import error, parse, request as urllib_request
 
@@ -23,9 +31,34 @@ _BASE_URL = "https://api.finmindtrade.com/api/v4/data"
 _TIMEOUT_SEC = 20
 _MAX_BYTES = 10 * 1024 * 1024  # 10 MB
 
+# Canonical start dates per dataset — always fetch enough history.
+# Cache key is (stock_no, dataset) so start_date is fixed, not dynamic.
+_DATASET_START: dict[str, str] = {
+    "TaiwanStockDividend":            "2010-01-01",
+    "TaiwanStockFinancialStatements": "2010-01-01",
+    "TaiwanStockBalanceSheet":        "2010-01-01",
+    "TaiwanStockPER":                 "2010-01-01",
+    "TaiwanStockPrice":               "2010-01-01",
+}
+
+_DEFAULT_STALE_DAYS = 15
+_CACHE_CREATE_SQL = """
+CREATE TABLE IF NOT EXISTS financial_data_cache (
+    stock_no   TEXT NOT NULL,
+    dataset    TEXT NOT NULL,
+    data_json  TEXT NOT NULL,
+    fetched_at INTEGER NOT NULL,
+    PRIMARY KEY (stock_no, dataset)
+)
+"""
+
+
+# ---------------------------------------------------------------------------
+# Low-level FinMind HTTP call (no caching)
+# ---------------------------------------------------------------------------
 
 def _fetch_finmind(dataset: str, stock_id: str, start_date: str, token: str = "") -> list[dict]:
-    """Low-level FinMind API call. Returns data list or empty list on error."""
+    """Raw FinMind API call. Returns data list or [] on any error."""
     params: dict = {
         "dataset": dataset,
         "data_id": str(stock_id),
@@ -53,45 +86,149 @@ def _fetch_finmind(dataset: str, stock_id: str, start_date: str, token: str = ""
     return payload.get("data", []) or []
 
 
+# ---------------------------------------------------------------------------
+# Provider
+# ---------------------------------------------------------------------------
+
 class FinMindFinancialDataProvider:
-    """Real financial data from FinMind API for Taiwan stocks.
+    """Real financial data from FinMind API with SQLite-backed SWR cache.
 
-    No persistent caching — data is fetched on each method call.
-    Set FINMIND_API_TOKEN env var for higher rate limits.
-
-    Field sources (EDD §5.13):
-        avg_dividend       ← TaiwanStockDividend.CashEarningsDistribution
-        eps_ttm/10y_avg    ← TaiwanStockFinancialStatements (type=EPS)
-        bps_latest         ← TaiwanStockPER.PBR × close_price reciprocal
-        current_assets     ← TaiwanStockBalanceSheet (type=CurrentAssets)
-        total_liabilities  ← TaiwanStockBalanceSheet (type=TotalLiabilities)
-        shares_outstanding ← TaiwanStockDividend.ParticipateDistributionOfTotalShares
-        pe/pb history      ← TaiwanStockPER.PER / PBR
-        price history      ← TaiwanStockPrice.max / min / close
+    Parameters
+    ----------
+    api_token:
+        FinMind API token. Defaults to FINMIND_API_TOKEN env var.
+        Works without token (300 req/h); with token (600 req/h).
+    db_path:
+        Path to SQLite DB for persistent cache.
+        Defaults to FINMIND_CACHE_DB_PATH env var or "data/stock_monitor.db".
+    stale_days:
+        Days before a cached entry is considered stale (default 15).
+        Stale entries are returned immediately while background refresh runs.
     """
 
-    def __init__(self, api_token: str | None = None, timeout: int = _TIMEOUT_SEC):
+    def __init__(
+        self,
+        api_token: str | None = None,
+        db_path: str | None = None,
+        stale_days: int = _DEFAULT_STALE_DAYS,
+    ):
         self._token = api_token or os.getenv("FINMIND_API_TOKEN", "")
-        # Run-level cache: (dataset, stock_no, start_date) → list[dict]
-        # Avoids duplicate API calls when multiple methods query the same data.
-        self._cache: dict[tuple[str, str, str], list[dict]] = {}
+        self._db_path = db_path or os.getenv("FINMIND_CACHE_DB_PATH", "data/stock_monitor.db")
+        self._stale_sec = stale_days * 86_400
+        # Run-level in-memory cache: avoids duplicate calls within one scan run.
+        self._mem: dict[tuple[str, str], list[dict]] = {}
+        # Tracks in-flight background refreshes to avoid duplicate threads.
+        self._refreshing: set[tuple[str, str]] = set()
+        self._lock = threading.Lock()
+        # Ensure cache table exists.
+        self._ensure_cache_table()
 
     # ------------------------------------------------------------------
-    # Internal helpers
+    # DB helpers
     # ------------------------------------------------------------------
 
-    def _fetch(self, dataset: str, stock_no: str, start_date: str) -> list[dict]:
-        key = (dataset, str(stock_no), start_date)
-        if key not in self._cache:
-            self._cache[key] = _fetch_finmind(dataset, stock_no, start_date, self._token)
-        return self._cache[key]
+    def _ensure_cache_table(self) -> None:
+        try:
+            with sqlite3.connect(self._db_path, timeout=5) as conn:
+                conn.execute(_CACHE_CREATE_SQL)
+                conn.commit()
+        except sqlite3.Error:
+            pass  # DB unavailable — degrade gracefully to API-only mode.
 
-    @staticmethod
-    def _start(years_back: int, extra_days: int = 90) -> str:
-        return (datetime.now() - timedelta(days=365 * years_back + extra_days)).strftime("%Y-%m-%d")
+    def _db_get(self, stock_no: str, dataset: str) -> tuple[list[dict], int] | None:
+        """Return (rows, fetched_at) from DB cache, or None if not found."""
+        try:
+            with sqlite3.connect(self._db_path, timeout=5) as conn:
+                row = conn.execute(
+                    "SELECT data_json, fetched_at FROM financial_data_cache WHERE stock_no=? AND dataset=?",
+                    (str(stock_no), dataset),
+                ).fetchone()
+            if row is None:
+                return None
+            return json.loads(row[0]), int(row[1])
+        except (sqlite3.Error, json.JSONDecodeError, ValueError):
+            return None
+
+    def _db_put(self, stock_no: str, dataset: str, rows: list[dict]) -> None:
+        """Upsert rows into DB cache with current timestamp."""
+        try:
+            with sqlite3.connect(self._db_path, timeout=5) as conn:
+                conn.execute(
+                    """
+                    INSERT INTO financial_data_cache (stock_no, dataset, data_json, fetched_at)
+                    VALUES (?, ?, ?, ?)
+                    ON CONFLICT(stock_no, dataset) DO UPDATE SET
+                        data_json  = excluded.data_json,
+                        fetched_at = excluded.fetched_at
+                    """,
+                    (str(stock_no), dataset, json.dumps(rows, ensure_ascii=False), int(time.time())),
+                )
+                conn.commit()
+        except sqlite3.Error:
+            pass  # Cache write failure is non-fatal.
 
     # ------------------------------------------------------------------
-    # Public API
+    # Background refresh
+    # ------------------------------------------------------------------
+
+    def _spawn_refresh(self, stock_no: str, dataset: str) -> None:
+        """Spawn a daemon thread to refresh a stale cache entry."""
+        key = (str(stock_no), dataset)
+        with self._lock:
+            if key in self._refreshing:
+                return  # Already refreshing — skip duplicate.
+            self._refreshing.add(key)
+
+        def _do() -> None:
+            try:
+                start = _DATASET_START.get(dataset, "2010-01-01")
+                rows = _fetch_finmind(dataset, stock_no, start, self._token)
+                if rows:
+                    self._db_put(stock_no, dataset, rows)
+                    # Update in-memory cache so next stock in this scan sees fresh data.
+                    with self._lock:
+                        self._mem[key] = rows
+            finally:
+                with self._lock:
+                    self._refreshing.discard(key)
+
+        t = threading.Thread(target=_do, daemon=True, name=f"finmind-refresh-{dataset}-{stock_no}")
+        t.start()
+
+    # ------------------------------------------------------------------
+    # Core fetch — SWR cache logic
+    # ------------------------------------------------------------------
+
+    def _fetch(self, dataset: str, stock_no: str) -> list[dict]:
+        """Return data for (dataset, stock_no) using SWR strategy."""
+        key = (str(stock_no), dataset)
+
+        # 1. In-memory cache (run-level dedup)
+        with self._lock:
+            if key in self._mem:
+                return self._mem[key]
+
+        # 2 & 3. DB cache
+        cached = self._db_get(stock_no, dataset)
+        if cached is not None:
+            rows, fetched_at = cached
+            age = int(time.time()) - fetched_at
+            with self._lock:
+                self._mem[key] = rows  # promote to mem cache
+            if age >= self._stale_sec:
+                self._spawn_refresh(stock_no, dataset)  # stale → background refresh
+            return rows
+
+        # 4. Cache miss — fetch fresh, store, return
+        start = _DATASET_START.get(dataset, "2010-01-01")
+        rows = _fetch_finmind(dataset, stock_no, start, self._token)
+        self._db_put(stock_no, dataset, rows)
+        with self._lock:
+            self._mem[key] = rows
+        return rows
+
+    # ------------------------------------------------------------------
+    # Public data methods (EDD §9.1 inputs)
     # ------------------------------------------------------------------
 
     def get_avg_dividend(self, stock_no: str, years: int = 5) -> float | None:
@@ -100,14 +237,15 @@ class FinMindFinancialDataProvider:
         Sums CashEarningsDistribution + CashStatutorySurplus per fiscal year,
         then averages across years. Returns None if no dividend data found.
         """
-        rows = self._fetch("TaiwanStockDividend", stock_no, self._start(years))
+        rows = self._fetch("TaiwanStockDividend", stock_no)
         if not rows:
             return None
 
+        cutoff_year = datetime.now().year - years
         by_year: dict[str, float] = {}
         for row in rows:
             year = str(row.get("year") or "")[:4]
-            if not year or not year.isdigit():
+            if not year or not year.isdigit() or int(year) < cutoff_year:
                 continue
             cash = float(row.get("CashEarningsDistribution") or 0.0)
             cash += float(row.get("CashStatutorySurplus") or 0.0)
@@ -123,10 +261,10 @@ class FinMindFinancialDataProvider:
 
         EPS rows from TaiwanStockFinancialStatements (type='EPS') are quarterly.
         TTM = sum of the 4 most recent quarters.
-        Annual avg = average of the most recent N annual Q4 values.
-        Returns None if insufficient data (fewer than 4 quarters).
+        Annual avg = average of the most recent N calendar-year values.
+        Returns None if fewer than 4 quarters available.
         """
-        rows = self._fetch("TaiwanStockFinancialStatements", stock_no, self._start(years))
+        rows = self._fetch("TaiwanStockFinancialStatements", stock_no)
         if not rows:
             return None
 
@@ -142,7 +280,7 @@ class FinMindFinancialDataProvider:
             return None
         eps_ttm = sum(float(r.get("value") or 0) for r in recent4)
 
-        # Annual avg: take the latest Q4 (highest-date per year) per year
+        # Annual avg: latest Q entry per calendar year, take N most recent years
         by_year: dict[str, float] = {}
         for r in eps_rows:
             year = (r.get("date") or "")[:4]
@@ -158,21 +296,18 @@ class FinMindFinancialDataProvider:
         }
 
     def get_balance_sheet_data(self, stock_no: str) -> dict | None:
-        """Returns current_assets and total_liabilities (NT$ thousands) from latest period.
-
-        Returns None if no balance sheet data found.
-        """
-        rows = self._fetch("TaiwanStockBalanceSheet", stock_no, self._start(2))
+        """Returns current_assets and total_liabilities (NT$ thousands) from latest period."""
+        rows = self._fetch("TaiwanStockBalanceSheet", stock_no)
         if not rows:
             return None
 
-        rows.sort(key=lambda r: r.get("date", ""), reverse=True)
-        latest_date = rows[0].get("date") if rows else None
+        rows_sorted = sorted(rows, key=lambda r: r.get("date", ""), reverse=True)
+        latest_date = rows_sorted[0].get("date") if rows_sorted else None
         if not latest_date:
             return None
 
         result: dict[str, float] = {}
-        for r in rows:
+        for r in rows_sorted:
             if r.get("date") != latest_date:
                 break
             t = r.get("type", "")
@@ -181,47 +316,39 @@ class FinMindFinancialDataProvider:
             elif t == "TotalLiabilities":
                 result["total_liabilities"] = float(r.get("value") or 0)
 
-        return result if len(result) == 2 else None  # require both fields
+        return result if len(result) == 2 else None
 
     def get_pe_pb_stats(self, stock_no: str, years: int = 10) -> dict | None:
         """Returns annual PE/PB stats and estimated latest BPS.
 
-        Returns dict with:
-            pe_low_avg   - average of annual minimum PE over N years
-            pe_mid_avg   - average of annual mean PE over N years
-            pb_low_avg   - average of annual minimum PB over N years
-            pb_mid_avg   - average of annual mean PB over N years
-            bps_latest   - estimated from latest close / latest PBR (approx)
-
+        Returns dict:
+            pe_low_avg, pe_mid_avg — average of annual min/mean PE over N years
+            pb_low_avg, pb_mid_avg — average of annual min/mean PB over N years
+            bps_latest             — estimated from latest close / latest PBR
         Returns None if fewer than 1 year of valid data.
         """
-        rows = self._fetch("TaiwanStockPER", stock_no, self._start(years))
+        rows = self._fetch("TaiwanStockPER", stock_no)
         if not rows:
             return None
 
-        rows.sort(key=lambda r: r.get("date", ""))
+        rows_sorted = sorted(rows, key=lambda r: r.get("date", ""))
 
-        # Group by year
         by_year: dict[str, list[tuple[float, float]]] = {}
-        for r in rows:
+        for r in rows_sorted:
             year = (r.get("date") or "")[:4]
-            per = r.get("PER")
-            pbr = r.get("PBR")
-            if per is not None and pbr is not None:
-                try:
-                    p, b = float(per), float(pbr)
-                    if p > 0 and b > 0:
-                        by_year.setdefault(year, []).append((p, b))
-                except (TypeError, ValueError):
-                    continue
+            try:
+                p, b = float(r.get("PER") or 0), float(r.get("PBR") or 0)
+                if p > 0 and b > 0:
+                    by_year.setdefault(year, []).append((p, b))
+            except (TypeError, ValueError):
+                continue
 
         if not by_year:
             return None
 
-        recent_years = list(by_year.values())[-years:]
+        recent = list(by_year.values())[-years:]
         pe_lows, pe_mids, pb_lows, pb_mids = [], [], [], []
-
-        for year_data in recent_years:
+        for year_data in recent:
             pers = [d[0] for d in year_data]
             pbrs = [d[1] for d in year_data]
             pe_lows.append(min(pers))
@@ -229,16 +356,14 @@ class FinMindFinancialDataProvider:
             pb_lows.append(min(pbrs))
             pb_mids.append(sum(pbrs) / len(pbrs))
 
-        # Estimate latest BPS: fetch recent close and use latest PBR
-        price_rows = self._fetch(
-            "TaiwanStockPrice", stock_no,
-            (datetime.now() - timedelta(days=30)).strftime("%Y-%m-%d"),
-        )
+        # Approximate BPS: latest close ÷ latest PBR
+        price_rows = self._fetch("TaiwanStockPrice", stock_no)
         bps_latest: float | None = None
-        if price_rows and rows:
+        if price_rows and rows_sorted:
             try:
-                latest_close = float(price_rows[-1].get("close") or 0)
-                latest_pbr = float(rows[-1].get("PBR") or 0)
+                price_rows_sorted = sorted(price_rows, key=lambda r: r.get("date", ""))
+                latest_close = float(price_rows_sorted[-1].get("close") or 0)
+                latest_pbr = float(rows_sorted[-1].get("PBR") or 0)
                 if latest_close > 0 and latest_pbr > 0:
                     bps_latest = round(latest_close / latest_pbr, 2)
             except (TypeError, ValueError, IndexError):
@@ -256,11 +381,8 @@ class FinMindFinancialDataProvider:
         }
 
     def get_price_annual_stats(self, stock_no: str, years: int = 10) -> dict | None:
-        """Returns year_low_10y (avg of annual lows) and year_avg_10y (avg of annual closes).
-
-        Returns None if fewer than 1 year of price data.
-        """
-        rows = self._fetch("TaiwanStockPrice", stock_no, self._start(years))
+        """Returns year_low_10y (avg of annual lows) and year_avg_10y (avg of annual closes)."""
+        rows = self._fetch("TaiwanStockPrice", stock_no)
         if not rows:
             return None
 
@@ -287,23 +409,18 @@ class FinMindFinancialDataProvider:
 
         if not annual_lows:
             return None
-
         return {
             "year_low_10y": round(sum(annual_lows) / len(annual_lows), 2),
             "year_avg_10y": round(sum(annual_avgs) / len(annual_avgs), 2),
         }
 
     def get_shares_outstanding(self, stock_no: str) -> float | None:
-        """Shares participating in the most recent dividend distribution (approximation).
-
-        Uses TaiwanStockDividend.ParticipateDistributionOfTotalShares as proxy
-        for shares outstanding. Returns None if unavailable.
-        """
-        rows = self._fetch("TaiwanStockDividend", stock_no, self._start(2))
+        """Shares participating in the most recent dividend distribution (proxy for outstanding shares)."""
+        rows = self._fetch("TaiwanStockDividend", stock_no)
         if not rows:
             return None
-        rows.sort(key=lambda r: r.get("date", ""), reverse=True)
-        for r in rows:
+        rows_sorted = sorted(rows, key=lambda r: r.get("date", ""), reverse=True)
+        for r in rows_sorted:
             v = r.get("ParticipateDistributionOfTotalShares")
             if v is not None:
                 try:

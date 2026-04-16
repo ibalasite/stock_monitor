@@ -93,5 +93,16 @@ CREATE TABLE IF NOT EXISTS system_logs (
 CREATE TABLE IF NOT EXISTS opening_summary_sent_dates (
   trade_date TEXT PRIMARY KEY
 );
+
+CREATE TABLE IF NOT EXISTS financial_data_cache (
+  stock_no  TEXT NOT NULL,
+  dataset   TEXT NOT NULL,
+  data_json TEXT NOT NULL CHECK (json_valid(data_json)),
+  fetched_at INTEGER NOT NULL,
+  PRIMARY KEY (stock_no, dataset)
+);
+
+CREATE INDEX IF NOT EXISTS idx_fdc_fetched_at
+ON financial_data_cache(fetched_at);
 """
 
