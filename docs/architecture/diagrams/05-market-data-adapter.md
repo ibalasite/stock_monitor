@@ -84,6 +84,8 @@ flowchart TD
     BOTH -- No --> EITHER
     EITHER -- Yes --> USE_AVAIL
     EITHER -- No --> STALE
+
+    style WRAPPER fill:none,stroke:none
 ```
 
 ---
