@@ -55,17 +55,22 @@ flowchart TD
             ASK_OK["price = 委賣一\ntick_at = regularMarketTime"]
             FB_PRICE["fallback: price = regularMarketPrice\n（盤後/休市）"]
             HTTP_FAIL["WARN log\nyahoo_quote = None"]
+            HPAD1[" "]
+            HPAD2[" "]
             YAHOO_OUT["→ yahoo_quote"]
 
             YF_CALL --> HTTP_CHK
             HTTP_CHK -- Yes --> HTML_PARSE --> ASK_CHK
             ASK_CHK -- Yes --> ASK_OK
             ASK_CHK -- No --> FB_PRICE
-            HTTP_CHK -- No --> HTTP_FAIL
+            HTTP_CHK -- No --> HTTP_FAIL --> HPAD1 --> HPAD2
             ASK_OK --> YAHOO_OUT
             FB_PRICE --> YAHOO_OUT
-            HTTP_FAIL --> YAHOO_OUT
+            HPAD2 --> YAHOO_OUT
         end
+
+        style HPAD1 fill:none,stroke:none,color:none
+        style HPAD2 fill:none,stroke:none,color:none
     end
 
     MERGE["Composite 合併邏輯\n（per stock_no）"]
