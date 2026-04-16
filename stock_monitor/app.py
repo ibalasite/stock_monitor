@@ -63,8 +63,9 @@ def main(argv: list[str] | None = None) -> int:
         conn = connect_sqlite(args.db_path)
         try:
             apply_schema(conn)
+            scan_date_local = datetime.now(_resolve_timezone(args.timezone)).strftime("%Y-%m-%d")
             try:
-                valuation_methods = load_enabled_scan_methods(conn)
+                valuation_methods = load_enabled_scan_methods(conn, as_of_date=scan_date_local)
             except RuntimeError as exc:
                 print(json.dumps({
                     "status": "error",
