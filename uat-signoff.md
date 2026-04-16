@@ -10,7 +10,7 @@
 
 ## 3. 驗證結果摘要
 - 自動化測試: `PASS`
-- 測試總數: `327 passed`
+- 測試總數: `335 passed`
 - Coverage Gate: `100% PASS`
 - 結論: 進入 UAT 簽核階段條件已滿足
 
