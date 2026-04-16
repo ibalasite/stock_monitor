@@ -22,7 +22,15 @@ if [ -f "${PID_FILE}" ]; then
 fi
 
 cd "${PROJECT_ROOT}"
-nohup python3 -m stock_monitor run-daemon >> "${LOG_FILE}" 2>&1 &
+
+# Resolve Python 3.11+ interpreter (project requires Python 3.11+)
+PYTHON=$(command -v python3.11 2>/dev/null || command -v python3 2>/dev/null)
+if [ -z "${PYTHON}" ]; then
+    echo "ERROR: Python 3.11+ not found. Install Python 3.11 before running the daemon."
+    exit 1
+fi
+
+nohup env PYTHONUNBUFFERED=1 "${PYTHON}" -m stock_monitor run-daemon >> "${LOG_FILE}" 2>&1 &
 DAEMON_PID=$!
 echo "${DAEMON_PID}" > "${PID_FILE}"
 echo "Daemon started (PID ${DAEMON_PID}). Logs: ${LOG_FILE}"
