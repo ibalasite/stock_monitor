@@ -196,7 +196,7 @@ img { max-width: 100%; height: auto; display: block; }
   padding: 40px 48px 80px;
   max-width: calc(var(--sidebar-w) + var(--content-max) + 96px);
 }
-.content-inner { max-width: var(--content-max); }
+.content-inner { max-width: var(--content-max); margin: 0 auto; }
 
 /* ---- Hero card (index page) ---- */
 .hero {
