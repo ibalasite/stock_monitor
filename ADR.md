@@ -144,6 +144,23 @@
    - 每次 `evaluate_market_open_status` 前必須查詢 DB，確認當日是否已送出。
    - CR-CODE-06 對應實作改善：開盤檢查起始時間 08:45～09:00 區間唇均可評估，不定式限定在整分点 09:00。
 
+## ADR-016 FR-19 watchlist upsert 採 SELECT-before-upsert 以區分新增 vs 更新
+1. 狀態：Accepted
+2. 決策：
+   - 掃描到符合便宜價的股票執行 watchlist upsert 前，先執行 `SELECT 1 FROM watchlist WHERE stock_no = ?` 判斷是否已存在。
+   - 已存在 → `watchlist_updated` 計數 +1；不存在 → `watchlist_new` 計數 +1。
+   - `MarketScanResult` 新增三個純量欄位：`watchlist_upserted`（總數）、`watchlist_new`（本次新增）、`watchlist_updated`（本次更新）。
+   - 不變式：`watchlist_new + watchlist_updated == watchlist_upserted`。
+3. 原因：
+   - PDD §14 要求 watchlist_added.csv 內容（新增 vs 更新）可追溯，純 upsert 計數無法滿足。
+   - SELECT-before-upsert 在 SQLite 上成本極低（主鍵索引查詢），無需額外異動 schema 或引入 RETURNING 子句（SQLite 版本相容性考量）。
+   - 相較 A2 方案（UPSERT RETURNING + 比較 changes()），A1 邏輯更清晰且無平台版本依賴。
+4. 影響：
+   - `market_scan.py` 的 upsert 區段需在每次 upsert 前加一次 SELECT 判斷。
+   - `MarketScanResult` dataclass 新增 `watchlist_new: int = 0` 與 `watchlist_updated: int = 0`。
+   - `scan_YYYYMMDD_watchlist_added.csv` 輸出欄位不變，但後端計數拆分為兩欄位供測試斷言。
+   - `API_CONTRACT.md` §4.3 同步更新（v0.4）。
+
 ## ADR-015 跨平台路徑操作採 pathlib.Path；SIGTERM 處理需平台判斷
 1. 狀態：Accepted
 2. 決策：

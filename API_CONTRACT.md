@@ -1,8 +1,8 @@
 # API_CONTRACT - Stock Monitoring System
 
-版本：v0.3  
+版本：v0.4  
 日期：2026-04-17  
-來源基準：`PDD_Stock_Monitoring_System.md`（v1.1）、`EDD_Stock_Monitoring_System.md`（v1.1）
+來源基準：`PDD_Stock_Monitoring_System.md`（v1.3）、`EDD_Stock_Monitoring_System.md`（v1.3）
 
 ## 1. 文件目的
 定義應用層與基礎設施層的介面契約，讓 BDD 與 TDD 可直接依契約落地測試與實作。
@@ -63,13 +63,21 @@
 ### 4.3 MarketScanResult（FR-19）
 | 欄位 | 型別 | 說明 |
 |---|---|---|
+| `scan_date` | `str` | 掃描日期（`YYYYMMDD`） |
 | `total_stocks` | `int` | 本次掃描股票總數 |
-| `below_cheap` | `list[dict]` | 低於便宜價，已 upsert watchlist |
-| `above_cheap_below_fair` | `list[dict]` | 高於便宜價但低於合理價，輸出 CSV |
-| `uncalculable` | `list[dict]` | 所有方法均 SKIP，附原因，輸出 CSV |
-| `errors` | `list[dict]` | 計算拋例外的股票，附 error message |
+| `watchlist_upserted` | `int` | upsert 進 watchlist 的股票數（低於便宜價） |
+| `watchlist_new` | `int` | 本次新增（原本不在 watchlist）的股票數 |
+| `watchlist_updated` | `int` | 本次更新（原本已在 watchlist）的股票數 |
+| `near_fair_count` | `int` | 高於便宜價但低於合理價的股票數（輸出 near_fair CSV） |
+| `uncalculable_count` | `int` | 全方法無法計算的股票數（輸出 uncalculable CSV） |
+| `above_fair_count` | `int` | 高於合理價的股票數（不輸出 CSV） |
+| `output_dir` | `str` | CSV 輸出目錄路徑 |
 
-各子清單的 dict 欄位：`stock_no`, `stock_name`, `agg_fair_price`, `agg_cheap_price`, `yesterday_close`, `methods_computed`, `methods_skipped`, `skip_reasons`。
+不變式：`watchlist_new + watchlist_updated == watchlist_upserted`。
+
+CSV 共用欄位（三份 CSV 均適用）：`stock_no`, `stock_name`, `agg_fair_price`, `agg_cheap_price`, `yesterday_close`, `methods_success`, `methods_skipped`。
+- `methods_success`：成功計算方法名稱，`|` 分隔，如 `emily_composite_v1|oldbull_dividend_yield_v1`。
+- `methods_skipped`：跳過方法與原因，格式 `method:reason`，`|` 分隔，如 `raysky_blended_margin_v1:SKIP_INSUFFICIENT_DATA`。無獨立 `skip_reasons` 欄位。
 
 ### 4.3 OutboundLineMessage
 | 欄位 | 型別 | 說明 |
