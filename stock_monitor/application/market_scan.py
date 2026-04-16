@@ -126,104 +126,112 @@ def run_market_scan_job(
     conn = connect_sqlite(db_path)
     apply_schema(conn)
 
-    stocks = stocks_provider.get_all_listed_stocks()
+    try:
+        stocks = stocks_provider.get_all_listed_stocks()
 
-    near_fair_rows: list[dict] = []
-    uncalculable_rows: list[dict] = []
-    watchlist_upserted = 0
-    watchlist_new = 0
-    watchlist_updated = 0
-    above_fair_count = 0
+        near_fair_rows: list[dict] = []
+        uncalculable_rows: list[dict] = []
+        watchlist_upserted = 0
+        watchlist_new = 0
+        watchlist_updated = 0
+        above_fair_count = 0
 
-    for stock in stocks:
-        stock_no: str = stock["stock_no"]
-        stock_name: str = stock["stock_name"]
-        close: float | None = stock.get("yesterday_close")
+        for stock in stocks:
+            stock_no: str = stock["stock_no"]
+            stock_name: str = stock["stock_name"]
+            close: float | None = stock.get("yesterday_close")
 
-        success_fairs: list[float] = []
-        success_cheaps: list[float] = []
-        methods_success: list[str] = []
-        methods_skipped: list[str] = []
+            success_fairs: list[float] = []
+            success_cheaps: list[float] = []
+            methods_success: list[str] = []
+            methods_skipped: list[str] = []
 
-        for method in valuation_methods:
-            try:
-                result = method.compute(stock_no, scan_date)
-            except Exception as exc:
-                _write_system_log(
-                    conn,
-                    "ERROR",
-                    "MARKET_SCAN_STOCK_ERROR",
-                    f"stock_no={stock_no} method={getattr(method, 'method_name', '?')} error={exc}",
-                )
-                conn.commit()
+            for method in valuation_methods:
+                try:
+                    result = method.compute(stock_no, scan_date)
+                except Exception as exc:
+                    _write_system_log(
+                        conn,
+                        "ERROR",
+                        "MARKET_SCAN_STOCK_ERROR",
+                        f"stock_no={stock_no} method={getattr(method, 'method_name', '?')} error={exc}",
+                    )
+                    conn.commit()
+                    continue
+
+                status = result.get("status", "")
+                method_label = f"{result.get('method_name', getattr(method, 'method_name', '?'))}_{result.get('method_version', getattr(method, 'method_version', 'v1'))}"
+
+                if status == "SUCCESS":
+                    fair = result.get("fair_price")
+                    cheap = result.get("cheap_price")
+                    if fair is not None and cheap is not None:
+                        success_fairs.append(float(fair))
+                        success_cheaps.append(float(cheap))
+                        methods_success.append(method_label)
+                else:
+                    methods_skipped.append(f"{method_label}:{status}")
+
+            # Classification
+            if close is None:
+                # No price data → uncalculable
+                uncalculable_rows.append({
+                    "stock_no": stock_no,
+                    "stock_name": stock_name,
+                    "agg_fair_price": "",
+                    "agg_cheap_price": "",
+                    "yesterday_close": "",
+                    "methods_success": "|".join(methods_success),
+                    "methods_skipped": "|".join(methods_skipped) or "NO_PRICE",
+                })
                 continue
 
-            status = result.get("status", "")
-            method_label = f"{result.get('method_name', getattr(method, 'method_name', '?'))}_{result.get('method_version', getattr(method, 'method_version', 'v1'))}"
+            if not success_fairs:
+                # All methods skipped → uncalculable
+                uncalculable_rows.append({
+                    "stock_no": stock_no,
+                    "stock_name": stock_name,
+                    "agg_fair_price": "",
+                    "agg_cheap_price": "",
+                    "yesterday_close": str(close),
+                    "methods_success": "",
+                    "methods_skipped": "|".join(methods_skipped),
+                })
+                continue
 
-            if status == "SUCCESS":
-                fair = result.get("fair_price")
-                cheap = result.get("cheap_price")
-                if fair is not None and cheap is not None:
-                    success_fairs.append(float(fair))
-                    success_cheaps.append(float(cheap))
-                    methods_success.append(method_label)
-            else:
-                methods_skipped.append(f"{method_label}:{status}")
-
-        # Classification
-        if close is None:
-            # No price data → uncalculable
-            uncalculable_rows.append({
+            agg_fair = max(success_fairs)
+            agg_cheap = max(success_cheaps)
+            row_base = {
                 "stock_no": stock_no,
                 "stock_name": stock_name,
-                "agg_fair_price": "",
-                "agg_cheap_price": "",
-                "yesterday_close": "",
+                "agg_fair_price": f"{agg_fair:.2f}",
+                "agg_cheap_price": f"{agg_cheap:.2f}",
+                "yesterday_close": f"{close:.2f}",
                 "methods_success": "|".join(methods_success),
-                "methods_skipped": "|".join(methods_skipped) or "NO_PRICE",
-            })
-            continue
-
-        if not success_fairs:
-            # All methods skipped → uncalculable
-            uncalculable_rows.append({
-                "stock_no": stock_no,
-                "stock_name": stock_name,
-                "agg_fair_price": "",
-                "agg_cheap_price": "",
-                "yesterday_close": str(close),
-                "methods_success": "",
                 "methods_skipped": "|".join(methods_skipped),
-            })
-            continue
+            }
 
-        agg_fair = max(success_fairs)
-        agg_cheap = max(success_cheaps)
-        row_base = {
-            "stock_no": stock_no,
-            "stock_name": stock_name,
-            "agg_fair_price": f"{agg_fair:.2f}",
-            "agg_cheap_price": f"{agg_cheap:.2f}",
-            "yesterday_close": f"{close:.2f}",
-            "methods_success": "|".join(methods_success),
-            "methods_skipped": "|".join(methods_skipped),
-        }
-
-        if close <= agg_cheap:
-            kind = _upsert_watchlist(conn, stock_no, stock_name, agg_fair, agg_cheap)
-            conn.commit()
-            watchlist_upserted += 1
-            if kind == "new":
-                watchlist_new += 1
+            if close <= agg_cheap:
+                kind = _upsert_watchlist(conn, stock_no, stock_name, agg_fair, agg_cheap)
+                conn.commit()
+                watchlist_upserted += 1
+                if kind == "new":
+                    watchlist_new += 1
+                else:  # "updated"
+                    watchlist_updated += 1
+            elif close <= agg_fair:
+                near_fair_rows.append(row_base)
             else:
-                watchlist_updated += 1
-        elif close <= agg_fair:
-            near_fair_rows.append(row_base)
-        else:
-            above_fair_count += 1
+                above_fair_count += 1
 
-    conn.close()
+    finally:
+        conn.close()
+
+    # Guard invariant before returning (ADR-016)
+    assert watchlist_new + watchlist_updated == watchlist_upserted, (
+        f"watchlist_new({watchlist_new}) + watchlist_updated({watchlist_updated}) "
+        f"!= watchlist_upserted({watchlist_upserted})"
+    )
 
     # Write CSVs (scan_YYYYMMDD_*.csv — EDD §14.4 / gap-4 fix)
     out = Path(output_dir)
