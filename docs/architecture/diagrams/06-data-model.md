@@ -7,27 +7,66 @@
 ## 6.1 ER 圖
 
 ```mermaid
-flowchart TD
-    WL["watchlist\n────────────\nstock_no PK\nmanual_fair_price  ⟨cheap ≤ fair⟩\nmanual_cheap_price\nenabled  0/1\ncreated_at  epoch UTC\nupdated_at  epoch UTC"]
+erDiagram
+    watchlist {
+        TEXT stock_no PK
+        REAL manual_fair_price "cheap≤fair"
+        REAL manual_cheap_price
+        INT  enabled "0/1"
+        INT  created_at "epoch UTC"
+        INT  updated_at "epoch UTC"
+    }
+    valuation_methods {
+        TEXT method_name PK
+        TEXT method_version PK
+        INT  enabled "0/1"
+        INT  created_at
+        INT  updated_at
+    }
+    valuation_snapshots {
+        INT  id PK
+        TEXT stock_no FK
+        TEXT trade_date "YYYY-MM-DD"
+        TEXT method_name FK
+        TEXT method_version FK
+        REAL fair_price "cheap≤fair"
+        REAL cheap_price
+        INT  created_at
+    }
+    message {
+        INT  id PK
+        TEXT stock_no FK
+        TEXT message
+        INT  stock_status "1 or 2"
+        JSON methods_hit "array"
+        TEXT minute_bucket "YYYY-MM-DD HH:mm"
+        INT  update_time "epoch UTC"
+    }
+    pending_delivery_ledger {
+        INT  id PK
+        TEXT minute_bucket
+        JSON payload_json
+        TEXT status "PENDING/RECONCILED/FAILED"
+        INT  retry_count
+        TEXT last_error
+        INT  created_at
+        INT  updated_at
+    }
+    system_logs {
+        INT  id PK
+        TEXT level "INFO/WARN/ERROR"
+        TEXT event
+        TEXT detail
+        INT  created_at "epoch UTC"
+    }
+    opening_summary_sent_dates {
+        TEXT trade_date PK "YYYY-MM-DD"
+        INT  sent_at "epoch UTC"
+    }
 
-    VM["valuation_methods\n────────────\nmethod_name PK\nmethod_version PK\nenabled  0/1\ncreated_at\nupdated_at"]
-
-    VS["valuation_snapshots\n────────────\nid PK\nstock_no FK\ntrade_date  YYYY-MM-DD\nmethod_name FK\nmethod_version FK\nfair_price  ⟨cheap ≤ fair⟩\ncheap_price\ncreated_at"]
-
-    MSG["message\n────────────\nid PK\nstock_no FK\nmessage\nstock_status  1 or 2\nmethods_hit  JSON array\nminute_bucket  YYYY-MM-DD HH:mm\nupdate_time  epoch UTC"]
-
-    PDL["pending_delivery_ledger\n────────────\nid PK\nminute_bucket\npayload_json\nstatus  PENDING/RECONCILED/FAILED\nretry_count\nlast_error\ncreated_at\nupdated_at"]
-
-    SL["system_logs\n────────────\nid PK\nlevel  INFO/WARN/ERROR\nevent\ndetail\ncreated_at  epoch UTC"]
-
-    OSD["opening_summary_sent_dates\n────────────\ntrade_date PK  YYYY-MM-DD\nsent_at  epoch UTC"]
-
-    WL -- "stock_no" --> VS
-    WL -- "stock_no" --> MSG
-    VM -- "method_name+version" --> VS
-    VS ~~~ PDL
-    MSG ~~~ SL
-    PDL ~~~ OSD
+    watchlist ||--o{ valuation_snapshots : "stock_no"
+    watchlist ||--o{ message : "stock_no"
+    valuation_methods ||--o{ valuation_snapshots : "method_name+version"
 ```
 
 ---
