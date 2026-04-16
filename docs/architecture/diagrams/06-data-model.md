@@ -7,6 +7,7 @@
 ## 6.1 ER 圖
 
 ```mermaid
+%%{init: {"er": {"layoutDirection": "TB"}} }%%
 erDiagram
     watchlist {
         TEXT stock_no PK
@@ -67,6 +68,9 @@ erDiagram
     watchlist ||--o{ valuation_snapshots : "stock_no"
     watchlist ||--o{ message : "stock_no"
     valuation_methods ||--o{ valuation_snapshots : "method_name+version"
+    message ||--o{ pending_delivery_ledger : "補償"
+    message ||--o{ system_logs : "事件記錄"
+    valuation_snapshots ||--o{ opening_summary_sent_dates : "日結"
 ```
 
 ---
