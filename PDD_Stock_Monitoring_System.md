@@ -183,7 +183,7 @@ python -m stock_monitor scan-market [--output-dir ./output] [--db-path data/stoc
 **分流規則**：
 | 條件 | 動作 |
 |------|------|
-| `yesterday_close <= max(success_cheap_prices)`（至少一個方法的便宜價 ≥ 市價） | Upsert 進 `watchlist`（`manual_fair_price = mean(success_fairs)`、`manual_cheap_price = mean(success_cheaps)`、`stock_name`；若已存在不得覆寫既有 `enabled` 狀態） |
+| `yesterday_close <= max(success_cheap_prices)`（至少一個方法的便宜價 ≥ 市價） | Upsert 進 `watchlist`（`manual_fair_price = max(success_fairs)`、`manual_cheap_price = max(success_cheaps)`、`stock_name`；若已存在不得覆寫既有 `enabled` 狀態） |
 | `max(success_cheap_prices) < yesterday_close <= max(success_fair_prices)` | 寫入 `scan_YYYYMMDD_near_fair.csv`（任一方法合理價 ≥ 市價） |
 | 所有方法均為 `SKIP_*`（無法計算） | 寫入 `scan_YYYYMMDD_uncalculable.csv`（含每方法 skip 原因） |
 
@@ -193,8 +193,8 @@ python -m stock_monitor scan-market [--output-dir ./output] [--db-path data/stoc
 |------|------|
 | `stock_no` | 股票代碼 |
 | `stock_name` | 股票中文名稱 |
-| `agg_fair_price` | 聚合合理價（成功方法算術平均；無法計算時為空） |
-| `agg_cheap_price` | 聚合便宜價（成功方法算術平均，作為 CSV 參考值；入 DB 判斷使用 max，見分流規則） |
+| `agg_fair_price` | 聚合合理價（成功方法中最高值 max） |
+| `agg_cheap_price` | 聚合便宜價（成功方法中最高值 max） |
 | `yesterday_close` | 昨日收盤價 |
 | `methods_success` | 成功計算的方法名稱清單（逗號分隔） |
 | `methods_skipped` | 跳過的方法及原因（`method:reason` 格式，逗號分隔） |
