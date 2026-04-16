@@ -184,7 +184,7 @@ python -m stock_monitor scan-market [--output-dir ./output] [--db-path data/stoc
 | 條件 | 動作 |
 |------|------|
 | `yesterday_close <= max(success_cheap_prices)`（至少一個方法的便宜價 ≥ 市價） | Upsert 進 `watchlist`（`manual_fair_price = mean(success_fairs)`、`manual_cheap_price = mean(success_cheaps)`、`stock_name`；若已存在不得覆寫既有 `enabled` 狀態） |
-| `max(success_cheap_prices) < yesterday_close <= mean(success_fair_prices)` | 寫入 `scan_YYYYMMDD_near_fair.csv` |
+| `max(success_cheap_prices) < yesterday_close <= max(success_fair_prices)` | 寫入 `scan_YYYYMMDD_near_fair.csv`（任一方法合理價 ≥ 市價） |
 | 所有方法均為 `SKIP_*`（無法計算） | 寫入 `scan_YYYYMMDD_uncalculable.csv`（含每方法 skip 原因） |
 
 **輸出欄位（全三個輸出均含）**：

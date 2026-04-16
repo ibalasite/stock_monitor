@@ -940,7 +940,7 @@ class MarketScanResult:
 1. 無法取得收盤價（`yesterday_close is None`）→ uncalculable（reason: `NO_PRICE`）
 2. 所有方法 SKIP_* → uncalculable（reason：各方法原因彙整）
 3. `yesterday_close <= max(success_cheaps)` → watchlist upsert（任一方法便宜價 ≥ 市價）
-4. `max(success_cheaps) < yesterday_close <= agg_fair` → near_fair CSV
+4. `max(success_cheaps) < yesterday_close <= max(success_fairs)` → near_fair CSV（任一方法合理價 ≥ 市價）
 5. `yesterday_close > agg_fair` → 不輸出（已高於合理價，不需列出）
 
 補充：每支股票都必須有明確去向（`watchlist_added` / `near_fair` / `uncalculable` / `above_fair_not_output`）。
@@ -976,9 +976,9 @@ ON CONFLICT(stock_no) DO UPDATE SET
 
 | 項目 | 說明 |
 |---|---|
-| **觸發條件** | `max(success_cheaps) < yesterday_close <= mean(success_fairs)`（至少 1 個方法 SUCCESS） |
-| **觸發語意** | 所有方法的便宜價都低於市價（任一方法都不認為便宜），但市價仍在平均合理價內，列為「接近合理價」觀察清單供參考 |
-| **處理步驟** | 1. 取 `cheap_trigger = max(success_cheaps)`、`agg_fair = mean(success_fairs)`、`agg_cheap = mean(success_cheaps)`<br>2. 組 `row_base` dict（含 stock_no / stock_name / agg_fair_price / agg_cheap_price / yesterday_close / methods_success / methods_skipped）<br>3. `near_fair_rows.append(row_base)` |
+| **觸發條件** | `max(success_cheaps) < yesterday_close <= max(success_fairs)`（至少 1 個方法 SUCCESS） |
+| **觸發語意** | 所有方法的便宜價都低於市價（任一方法都不認為便宜），但至少有一個方法的合理價 ≥ 市價，列為「接近合理價」觀察清單供參考（任一中即列） |
+| **處理步驟** | 1. 取 `cheap_trigger = max(success_cheaps)`、`fair_trigger = max(success_fairs)`、`agg_fair = mean(success_fairs)`、`agg_cheap = mean(success_cheaps)`<br>2. 組 `row_base` dict（含 stock_no / stock_name / agg_fair_price / agg_cheap_price / yesterday_close / methods_success / methods_skipped）<br>3. `near_fair_rows.append(row_base)` |
 | **輸出** | `scan_{YYYYMMDD}_near_fair.csv`（不寫 DB） |
 | **相關模組** | `market_scan.run_market_scan_job()` 內 `elif close <= agg_fair` 分支 |
 
@@ -999,8 +999,8 @@ ON CONFLICT(stock_no) DO UPDATE SET
 ```
 if yesterday_close is None               → 規則 C1（uncalculable / NO_PRICE）
 elif success_count == 0                  → 規則 C2（uncalculable / all SKIP）
-elif close <= max(success_cheaps)        → 規則 A（watchlist upsert，任一中即進）
-elif close <= mean(success_fairs)        → 規則 B（near_fair CSV）
+elif close <= max(success_cheaps)        → 規則 A（watchlist upsert，任一方法便宜即進）
+elif close <= max(success_fairs)         → 規則 B（near_fair CSV，任一方法合理即列）
 else                                     → above_fair_not_output（僅計數，不寫檔）
 ```
 
