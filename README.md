@@ -1,6 +1,6 @@
 # Stock Monitoring System - README
 
-更新日期：2026-04-16（Code Review 週期完成：CR-COV-01/SEC-05/VAL-01/DAEMON-01/TPL-01 全部修正）  
+更新日期：2026-04-17（FR-19 全市場估值掃描完成：scan-market CLI + 全量測試 327 passed）  
 專案目標：台股價格監控 + LINE 群組通知 + 每日估值 + SQLite 落盤 + 補償機制
 
 ## 📄 線上文件網站（GitHub Pages）
@@ -17,7 +17,7 @@
 4. `pytest-bdd` 已安裝，`stock_monitoring_smoke.feature` 與完整 `stock_monitoring_system.feature` 皆可執行。
 5. `stock_monitor` 主程式套件已建立並實作核心測試契約。
 6. 最新狀態：
-   - `pytest -q tests`：最近一次基線（2026-04-16）為 `304 passed`（含完整 BDD + unit/integration/UAT contract + CR-* 改善驗證 + TP-ADP-001~004 + TP-FR17-001~009 + 委賣一 ask price + FR-18 股票中文名稱 DB 持久化 + TP-NAME-001~003 adapter/runtime 名稱隔離 + CR-ADP-04 Yahoo 1MB 限制 + TP-DB-006 migration 子案例 + TP-SEC-003 Yahoo 覆蓋 + Code Review 週期 CR-COV-01/SEC-05/VAL-01/DAEMON-01/TPL-01，100% coverage）
+    - `pytest -q tests`：最近一次基線（2026-04-17）為 `327 passed`（含 FR-19 `scan-market` adapter/use case/CLI 與 TP-SCAN-001~006、TP-UAT-016，coverage 維持 100%）
    - Coverage gate：`100%`（line + branch）
    - CI：`.github/workflows/ci.yml` 已啟用（push / pull_request），且已採用 action SHA pin + 鎖版依賴 + `pip-audit`
    - 可執行入口：`python -m stock_monitor init-db|run-once|reconcile-once|valuation-once|run-daemon`
@@ -261,6 +261,12 @@ Live URL（啟用 Pages 後）：`https://ibalasite.github.io/stock_monitor/`
     - **CR-TPL-01**：`message_template.py` 新增模組層級 `_env_cache: dict[str, Environment]`；`render()` 以模板目錄路徑為 cache key，同目錄第二次 render 直接復用已建 `Environment`，避免每次重建 `FileSystemLoader`；新增 `TP-TPL-005`
     - 全套測試：291 → **304 passed**，維持 100% coverage
 
+35. **2026-04-17 FR-19 全市場估值掃描（commit `0c5ede1`）**：
+    - 新增 `TwseAllListedStocksProvider`（TWSE `STOCK_DAY_ALL` + TPEx `closingprice`，ordinary stock 篩選，retry 3 次，TWSE fail-fast，TPEx tolerated）
+    - 新增 `run_market_scan_job` + `MarketScanResult`：三分類（below_cheap / near_fair / uncalculable）、watchlist upsert（不覆蓋 `enabled`）、CSV 輸出、`MARKET_SCAN_STOCK_ERROR` 隔離記錄
+    - `app.py` 新增 `scan-market` 指令與 `--output-dir`
+    - 全套測試：304 → **327 passed**，coverage 維持 **100%**
+
 ## 6. 下一步要做什麼（建議執行順序）
 1. 在 GitHub 啟用 GitHub Pages：Repo → Settings → Pages → Source: branch `main` / folder `/docs` → Save，讓 `docs/index.html`、`docs/pdd.html`、`docs/edd.html` 正式對外服務。
 2. 完成正式人工 UAT 簽核（PO/QA/Eng Lead），填寫 `uat-signoff.md`。
@@ -288,8 +294,8 @@ python -m pip install --require-hashes -r requirements-dev.txt
 ```powershell
 python -m pytest -q tests
 ```
-5. 最近一次基線結果（2026-04-16）：
-   - `304 passed`
+5. 最近一次基線結果（2026-04-17）：
+    - `327 passed`
    - coverage `100%`
    - 實際請以你當次執行輸出為準
 

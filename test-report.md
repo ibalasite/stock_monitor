@@ -1,15 +1,15 @@
 # Test Report
 
 ## 1. 測試摘要
-- 執行時間: 2026-04-16 +08:00
+- 執行時間: 2026-04-17 +08:00
 - 測試命令: `python -m pytest -q tests`
-- 測試結果: `304 passed`
+- 測試結果: `327 passed`
 - Coverage Gate: `100%` (statement + branch)
 - Gate 結論: `PASS`
 
 ## 2. Coverage 結果
 - 目標門檻: `--cov-fail-under=100`
-- 實際結果: `TOTAL 1203 statements, 304 branches, 100.00%`
+- 實際結果: `TOTAL 1398 statements, 356 branches, 100.00%`
 - 各模組 coverage: 全部 `100%`
 
 ## 3. CI 設定
@@ -38,7 +38,8 @@
 - 新增 UAT 案例：`TP-UAT-012`
 - 新增開盤摘要案例：`TP-INT-012`、`TP-UAT-013`
 - 新增文件對齊案例：`TP-UAT-014`（所有 LINE 出站訊息模板化）
+- 新增全市場掃描案例：`TP-SCAN-001~006`、`TP-UAT-016`（`scan-market` CLI、watchlist upsert、CSV 輸出、無 LINE 推播）
 
 ## 5. 風險與備註
-- 本次執行無阻斷 warning，測試輸出已清理完成。
+- 本次執行維持 `327 passed` 與 `100%` coverage gate，非阻斷 warning 不影響 gate 結果。
 - 目前可直接作為 CI 與 UAT 簽核基準版本。
