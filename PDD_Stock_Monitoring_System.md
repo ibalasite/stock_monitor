@@ -432,6 +432,7 @@ python -m stock_monitor scan-market [--output-dir ./output] [--db-path data/stoc
 14. 所有發送到 LINE 的訊息（彙總、摘要、觸發列、測試推播）皆須透過 `template_key + context` 渲染；程式碼中不得直接硬編碼最終文案。
 15. 盤中行情採雙來源（TWSE 主 + Yahoo Finance 副）：以 `tick_at` 較新者為準（Freshness-First）；Yahoo Finance 呼叫失敗不得中斷主流程；兩者均無法取得時該分鐘 `STALE_QUOTE`。
 16. 執行 `scan-market` 指令後，所有上市上櫃普通股依三方法估值結果正確三分類：低於便宜價者 upsert watchlist（`enabled=1`）；介於便宜價與合理價間者輸出 `scan_results_above_cheap.csv`；無法計算者輸出 `scan_results_uncalculable.csv`（含原因）；全程不發送 LINE 通知。
+17. 在 macOS 上執行 `python -m pytest -q tests` 全綠、coverage 100%；`scripts/start_daemon.sh` 可啟動 daemon 並寫入 PID 檔；`scripts/stop_daemon.sh` 送 SIGTERM 後 daemon 乾淨退出；launchd plist 可通過 `plutil -lint` 驗證。
 
 ## 13. 風險與因應
 - 資料源中斷：加重試、fallback、錯誤告警。

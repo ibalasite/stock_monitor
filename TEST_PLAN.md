@@ -1,6 +1,6 @@
 # TEST_PLAN - Stock Monitor System
 
-版本：v1.0  
+版本：v1.1  
 日期：2026-04-17  
 依據文件：[EDD_Stock_Monitoring_System.md](c:/Projects/stock/EDD_Stock_Monitoring_System.md), [PDD_Stock_Monitoring_System.md](c:/Projects/stock/PDD_Stock_Monitoring_System.md), [USER_STORY_ACCEPTANCE_CRITERIA.md](c:/Projects/stock/USER_STORY_ACCEPTANCE_CRITERIA.md)
 
@@ -15,6 +15,7 @@
 8. 驗證 Code Review 定版的 16 項改善行動（EDD §13）中具可驗證行為的項目均有對應測試案例。
 9. 驗證雙行情來源（TWSE + Yahoo Finance）Composite Adapter 的 Freshness-First 邏輯與 Yahoo 失敗容錯（EDD §13.5 / PDD FR-15，TP-ADP-001~004）。
 10. 驗證全市場估值掃描（FR-19）：清單擷取、三分類邏輯、watchlist upsert、CSV 輸出（TP-SCAN-001~006、TP-UAT-016）。
+11. 驗證 macOS / Windows 跨平台相容（FR-20）：pathlib 路徑、SIGTERM 優雅關閉、bash 腳本、launchd plist 格式（TP-PLAT-001~005、TP-UAT-017）。
 
 ## 2. 測試範圍
 ### In Scope
@@ -135,6 +136,12 @@
 | TP-UAT-013 | PDD §12 UAT-13 | UAT | 開盤第一個可交易分鐘先發監控設定摘要且同日不重複 |
 | TP-UAT-014 | PDD §12 UAT-14 | UAT | 所有 LINE 出站訊息皆透過模板渲染，且程式碼無硬編碼最終文案 |
 | TP-UAT-016 | PDD §12 UAT-16 / FR-19 | UAT | `scan-market` CLI 執行後：watchlist 正確 upsert、兩個 CSV 正確產出、全程無 LINE 推播 |
+| TP-UAT-017 | PDD §12 UAT-17 / FR-20 / US-021 | UAT | macOS 端對端冒煙：pytest 全綠 + coverage 100%；start/stop daemon 腳本可用；SIGTERM 乾淨退出；plist 通過 plutil lint |
+| TP-PLAT-001 | EDD §15.2 CR-PLAT-01 / FR-20 | Unit | 靜態掃描 `stock_monitor/` 下所有 `.py` 檔，確認無 `os.path.join`、`"/"+`、`"\\"+` 硬編碼路徑分隔符 |
+| TP-PLAT-002 | EDD §15.3 CR-PLAT-02 / FR-20 | Unit | `_install_signal_handlers` 存在於 `daemon_runner`；在模擬 `sys.platform="win32"` 條件下不安裝 SIGTERM handler，不拋 AttributeError |
+| TP-PLAT-003 | EDD §15.3 / FR-20 | Integration | daemon 收到 SIGTERM 後，stop_event 被設定，主迴圈在當前週期結束後退出，exit code 為 0 |
+| TP-PLAT-004 | EDD §15.5 CR-PLAT-03 / FR-20 | Unit | `scripts/com.stock_monitor.daemon.plist` 存在且 `plutil -lint` 驗證通過 |
+| TP-PLAT-005 | EDD §15.4 CR-PLAT-03 / FR-20 | Unit | `scripts/start_daemon.sh` 與 `scripts/stop_daemon.sh` 存在且具執行權限（`-x`） |
 | TP-SEC-001 | EDD §13.1 CR-SEC-01 | Unit | `LinePushClient` 的 `repr()` 輸出不得包含 token 明文 |
 | TP-SEC-002 | EDD §13.1 CR-SEC-03 / §13.3 CR-CODE-05 | Unit | 無效時區名稱引發啟動時 `ValueError`，不得靜默 fallback UTC |
 | TP-SEC-003 | EDD §13.1 CR-SEC-04 / EDD §13.5 CR-ADP-04 | Unit | HTTP 回應讀取有大小上限，超大回應不得無限占用記憶體（TWSE adapter + Yahoo adapter 均涵蓋；Yahoo `MAX_RESPONSE_BYTES` 需 ≤ 1 MB，與 TWSE 相同） |
@@ -217,6 +224,12 @@
 | TP-UAT-013 | 系統可運行 | 依 PDD UAT-13 執行並記錄證據 | 通過且具開盤摘要內容與同日去重證據 |
 | TP-UAT-014 | 系統可運行 | 依 PDD UAT-14 執行並記錄證據 | 通過且具彙總/摘要/觸發列/測試推播模板渲染證據 |
 | TP-UAT-016 | 系統可運行、DB 已初始化、`valuation_methods` 含 3 方法 | 依 PDD UAT-16 執行 `scan-market` 並記錄證據 | 通過且具 watchlist upsert 截圖/log、兩個 CSV 內容、`system_logs` 無 `LINE_SEND` 事件 |
+| TP-UAT-017 | macOS 環境、python3.11 已安裝、env vars 已設 | ① `python -m pytest -q tests`；② `bash scripts/start_daemon.sh`，確認 PID 寫入；③ `bash scripts/stop_daemon.sh`，確認乾淨退出；④ `plutil -lint scripts/com.stock_monitor.daemon.plist` | ① 全綠 + coverage 100%；② PID 檔存在，行程可見；③ 行程消失，PID 檔移除；④ 輸出 `OK` |
+| TP-PLAT-001 | 無（靜態掃描） | `grep -rn "os\.path\.join\|\"\/\" *+\|\"\\\\\\\\\"\|os\.sep" stock_monitor/` | grep 回傳空（無硬編碼路徑） |
+| TP-PLAT-002 | 無 | 從 `daemon_runner` import `_install_signal_handlers`；模擬 `sys.platform = "win32"` 呼叫之；確認無 `signal.SIGTERM` handler 被安裝 | import 成功；no AttributeError；`signal.getsignal(signal.SIGTERM)` 仍為預設值 |
+| TP-PLAT-003 | daemon 可正常啟動 | 以 `threading.Timer` 在 daemon 啟動後 2 秒送 SIGTERM；觀察 loop 退出 | loop 在當前週期後退出；exit code 0；log 含「Daemon stopped」 |
+| TP-PLAT-004 | macOS + `plutil` CLI 可用 | `plutil -lint scripts/com.stock_monitor.daemon.plist` | exit code 0；stdout 含 `OK` |
+| TP-PLAT-005 | 無 | `os.access("scripts/start_daemon.sh", os.X_OK)` + `os.access("scripts/stop_daemon.sh", os.X_OK)` | 兩者皆回傳 `True` |
 | TP-SEC-001 | `LinePushClient` 已載入 | 呼叫 `repr(LinePushClient(token="abc", to="xyz"))` | 輸出字串不包含 `abc`；欄位顯示為 `***` 或省略 |
 | TP-SEC-002 | 無 | 以無效時區名稱（如 `"Invalid/Tz"`）初始化 `TimeBucketService` 或呼叫 `_resolve_timezone` | 立即 `raise ValueError`，不繼續執行，不返回 UTC |
 | TP-SEC-003 | Mock HTTP server 回傳超過 1 MB 的 body | 分別呼叫 TWSE adapter 與 Yahoo adapter 的 URL 讀取路徑 | 兩個 adapter 均只讀取至各自的 `MAX_RESPONSE_BYTES`（≤ 1 MB），不引發 `MemoryError`；Yahoo `MAX_RESPONSE_BYTES = 1_048_576` |

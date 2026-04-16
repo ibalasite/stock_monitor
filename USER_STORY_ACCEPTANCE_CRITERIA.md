@@ -1,6 +1,6 @@
 # User Story + 驗收條件（Stock Monitoring）
 
-版本：v0.5  
+版本：v0.6  
 日期：2026-04-17  
 對應文件：`PDD_Stock_Monitoring_System.md`
 
@@ -283,6 +283,21 @@
 11. `scan-market` 執行前必須從 DB 載入 `valuation_methods.enabled=1` 方法清單並注入掃描，不可硬編碼空方法清單。
 12. 若啟用方法數為 0，CLI 必須 fail-fast（非 0 exit code），不得以「全數 uncalculable」視為成功。
 
+### US-021 macOS / Windows 雙平台相容
+- Priority：`P1`
+- Release：`M2`
+- Dependency：`US-001`
+- FR：`FR-20`
+- As 個人投資者（使用 macOS 開發機）, I want 系統在 macOS 與 Windows 均可完整運作, So that 開發環境切換不影響功能正確性。
+
+**Acceptance Criteria**
+1. 在 macOS 上執行 `python -m pytest -q tests` 全部通過，coverage 100%。
+2. `scripts/start_daemon.sh` 執行後，daemon 在背景啟動並在 `logs/daemon.pid` 寫入 PID。
+3. `scripts/stop_daemon.sh` 執行後，送出 SIGTERM，daemon 在當前分鐘週期結束後乾淨退出，無殘留行程。
+4. `plutil -lint scripts/com.stock_monitor.daemon.plist` 回傳無錯誤。
+5. 所有生產程式碼（`stock_monitor/` 下）中不存在 `os.path.join`、`"/"+`、`"\\"+` 等硬編碼路徑分隔符；一律使用 `pathlib.Path`。
+6. `signal.SIGTERM` handler 安裝前必須有 `sys.platform != "win32"` 判斷；在 Windows 模擬環境下不引發 `AttributeError`。
+
 ## 4. 與 PDD UAT 對照
 1. UAT-1 對應 `US-003/US-004/US-005`。
 2. UAT-2 對應 `US-005`。
@@ -297,6 +312,7 @@
 11. UAT-14 對應 `US-016`。
 12. UAT-15 對應 `US-017`。
 13. UAT-16 對應 `US-020`。
+14. UAT-17 對應 `US-021`。
 
 ## 5. BDD 拆分建議
 1. `P0` 先建 `.feature`：`US-011 -> US-001 -> US-002 -> US-003 -> US-004 -> US-005 -> US-006 -> US-012 -> US-010`。
