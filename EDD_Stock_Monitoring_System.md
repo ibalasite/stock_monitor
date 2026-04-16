@@ -947,3 +947,38 @@ CLI 路由行為補充（強制）：
 8. 執行時間與過程應反映逐檔逐方法實際計算，不得以未計算結果直接產生分類輸出。
 9. 本功能不更改 `valuation_snapshots`，僅操作 `watchlist`。
 
+### 14.8 對應工程設計補充（FR-19）
+
+為避免 FR-19 僅停留在規則描述，本節明確定義工程落地：
+
+1. **逐檔逐方法執行模型**
+  - 掃描主迴圈以「每檔股票」為單位執行；每檔股票固定遍歷同一批 `valuation_methods`。
+  - 每個方法都必須產生一筆結果狀態：`SUCCESS` 或 `SKIP_*`（不可缺漏）。
+  - 單一方法失敗不得中斷該股票剩餘方法；單一股票失敗不得中斷整批掃描。
+
+2. **聚合計算模型**
+  - 僅收集 `SUCCESS` 方法的 `fair_price` / `cheap_price` 進行平均。
+  - 當 `success_count = 0` 時，`agg_fair_price` 與 `agg_cheap_price` 必須為空值，且分流至 `uncalculable`。
+
+3. **分流決策模型（單一路徑）**
+  - 每支股票只能有一個最終決策：`watchlist_added`、`near_fair`、`uncalculable`、`above_fair_not_output`。
+  - 決策順序依 §14.3 分流邏輯執行，禁止同股多重輸出。
+
+4. **可追溯資料模型**
+  - `methods_success`：記錄 SUCCESS 方法名稱列表。
+  - `methods_skipped`：記錄 `method:reason` 列表，保留無法計算原因。
+  - `uncalculable.csv` 必須保留每方法 skip 原因；`near_fair.csv` / `watchlist_added.csv` 必須保留成功方法資訊。
+  - `above_fair_not_output` 不寫入三張輸出檔，但必須納入 run summary 計數，確保總量可對帳。
+
+5. **watchlist upsert 行為模型**
+  - 當決策為 `watchlist_added` 時：只更新 `stock_name`、`manual_fair_price`、`manual_cheap_price`、`updated_at`。
+  - `enabled` 一律保留資料庫既有值，不可在 upsert 路徑強制改寫。
+
+6. **真實估值來源約束（反假算）**
+  - 方法輸入必須來自實際資料來源（資料庫/行情/財報來源），不可使用與來源無關之硬編碼公式替代。
+  - 方法結果需可由 `method_name + status + reason` 回溯判定依據。
+
+7. **不發 LINE 的流程隔離**
+  - `scan-market` 僅可呼叫市場掃描、CSV 輸出、watchlist persistence、system log。
+  - 禁止依賴或呼叫任何 LINE push 路徑。
+
