@@ -1,8 +1,8 @@
 # OPERATIONS_RUNBOOK - Stock Monitoring System
 
-版本：v0.3  
-日期：2026-04-14  
-來源基準：`PDD_Stock_Monitoring_System.md`、`EDD_Stock_Monitoring_System.md`（v0.8）
+版本：v0.4  
+日期：2026-04-17  
+來源基準：`PDD_Stock_Monitoring_System.md`（v1.1）、`EDD_Stock_Monitoring_System.md`（v1.1）
 
 ## 1. 文件目的
 定義上線、日常巡檢、故障排查與補償操作流程，確保系統行為與規格一致。
@@ -96,3 +96,32 @@
 1. 任何營運流程改動，先更新 `PDD/EDD`。
 2. 同步更新 `.feature` 與 `TEST_PLAN`。
 3. 測試綠燈後才允許上線。
+
+## 10. scan-market CLI 操作指南（FR-19）
+### 10.1 指令格式
+```bash
+python -m stock_monitor \
+  --db-path data/stock_monitor.db \
+  scan-market \
+  [--output-dir ./output]
+```
+
+### 10.2 執行前提
+1. DB 已初始化（`init-db` 已執行）。
+2. `valuation_methods` 表中 3 個估值方法均有 `enabled=1` 記錄。
+3. 網路可連到 TWSE 與 TPEX 公開 API。
+4. `--output-dir` 目錄可寫（預設為當前目錄）。
+
+### 10.3 輸出說明
+| 檔案 | 說明 |
+|---|---|
+| `scan_results_above_cheap.csv` | 高於便宜價但低於合理價的股票 |
+| `scan_results_uncalculable.csv` | 全方法無法計算（含原因） |
+| watchlist（DB） | 低於便宜價股票自動 upsert |
+
+CSV 欄位：`stock_no`, `stock_name`, `agg_fair_price`, `agg_cheap_price`, `yesterday_close`, `methods_computed`, `methods_skipped`, `skip_reasons`。
+
+### 10.4 異常排查
+1. `MARKET_SCAN_LIST_FETCH_FAILED`：TWSE/TPEX API 不可達，確認網路後重試。
+2. `MARKET_SCAN_STOCK_ERROR`：個別股票估值例外，見 `system_logs` 中 event 欄位，其餘股票仍正常輸出。
+3. DB 不可寫：確認 `--db-path` 指定的路徑可讀寫。

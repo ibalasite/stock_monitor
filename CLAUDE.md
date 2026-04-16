@@ -1,7 +1,7 @@
 # CLAUDE.md - Stock Monitor AI 開發手冊
 
-最後更新：2026-04-15（Asia/Taipei, v1.1）
-對齊文件：`PDD_Stock_Monitoring_System.md`、`EDD_Stock_Monitoring_System.md`、`TEST_PLAN.md`、`USER_STORY_ACCEPTANCE_CRITERIA.md`、`API_CONTRACT.md`、`ADR.md`、`NFR_SLI_SLO.md`、`SECURITY_AND_SECRETS.md`、`OPERATIONS_RUNBOOK.md`
+最後更新：2026-04-17（Asia/Taipei, v1.2）
+對齊文件：`PDD_Stock_Monitoring_System.md`（v1.1）、`EDD_Stock_Monitoring_System.md`（v1.1）、`TEST_PLAN.md`、`USER_STORY_ACCEPTANCE_CRITERIA.md`、`API_CONTRACT.md`、`ADR.md`、`NFR_SLI_SLO.md`、`SECURITY_AND_SECRETS.md`、`OPERATIONS_RUNBOOK.md`
 
 本檔與 `CODEX.md` 保持同一份規格語意，任一檔更新時需同步另一檔。
 
@@ -113,6 +113,8 @@ Alias（等效）：
 | `stock_monitor.adapters.market_data_twse` | `TwseRealtimeMarketDataProvider`（含 `_price_cache`、`_exchange_cache`、`_tick_cache`） |
 | `stock_monitor.adapters.market_data_yahoo` | `YahooFinanceMarketDataProvider` |
 | `stock_monitor.adapters.market_data_composite` | `CompositeMarketDataProvider` |
+| `stock_monitor.application.market_scan` | `run_market_scan_job`, `MarketScanResult` |
+| `stock_monitor.adapters.all_listed_stocks_twse` | `TwseAllListedStocksProvider` |
 
 ## 8. TDD 執行規範
 1. 先跑對應測試確認紅燈

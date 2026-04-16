@@ -1,8 +1,8 @@
 # ADR - Architecture Decision Records
 
-版本：v0.2  
-日期：2026-04-14  
-來源基準：`PDD_Stock_Monitoring_System.md`、`EDD_Stock_Monitoring_System.md`（v0.8）
+版本：v0.3  
+日期：2026-04-17  
+來源基準：`PDD_Stock_Monitoring_System.md`（v1.1）、`EDD_Stock_Monitoring_System.md`（v1.1）
 
 ## ADR-001 使用 Clean Architecture 分層
 1. 狀態：Accepted
@@ -77,6 +77,19 @@
    - 與舊設定相容，同時明確新規範。
 4. 影響：
    - 啟動檢核需支援兩組鍵並定義優先序。
+
+## ADR-009 全市場行情清單採獨立 AllListedStocksPort
+1. 狀態：Accepted
+2. 決策：
+   - 新增 `AllListedStocksPort` 抽象介面，預設實作為 `TwseAllListedStocksProvider`。
+   - 主清單取自 TWSE（上市）與 TPEX（上櫃）公開 API，retry 上限 3 次。
+   - 此 Port 與現有 `MarketDataPort` 完全分離，只負責「所有股票代碼清單」。
+3. 原因：
+   - FR-19 掃描範圍是全市場，不適合走既有 per-stock 的 `MarketDataPort`。
+   - 抽象介面允許測試以 stub 取代，不必真實呼叫外部 API。
+4. 影響：
+   - 新增 `stock_monitor/adapters/all_listed_stocks_twse.py`。
+   - 測試 symbol：`TwseAllListedStocksProvider`。
 
 ## ADR-009 BDD + Spec-Driven 流程先規格後實作
 1. 狀態：Accepted

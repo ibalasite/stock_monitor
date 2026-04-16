@@ -1,8 +1,8 @@
 # API_CONTRACT - Stock Monitoring System
 
-版本：v0.2  
-日期：2026-04-14  
-來源基準：`PDD_Stock_Monitoring_System.md`、`EDD_Stock_Monitoring_System.md`
+版本：v0.3  
+日期：2026-04-17  
+來源基準：`PDD_Stock_Monitoring_System.md`（v1.1）、`EDD_Stock_Monitoring_System.md`（v1.1）
 
 ## 1. 文件目的
 定義應用層與基礎設施層的介面契約，讓 BDD 與 TDD 可直接依契約落地測試與實作。
@@ -59,6 +59,17 @@
 | `message_text` | `str` | LINE 單封彙總訊息內容（由 template 渲染） |
 | `template_key` | `str` | 渲染使用模板鍵（例如 `line_minute_digest_v1`） |
 | `idempotency_key` | `str` | `minute_bucket` 層級請求鍵（發送層） |
+
+### 4.3 MarketScanResult（FR-19）
+| 欄位 | 型別 | 說明 |
+|---|---|---|
+| `total_stocks` | `int` | 本次掃描股票總數 |
+| `below_cheap` | `list[dict]` | 低於便宜價，已 upsert watchlist |
+| `above_cheap_below_fair` | `list[dict]` | 高於便宜價但低於合理價，輸出 CSV |
+| `uncalculable` | `list[dict]` | 所有方法均 SKIP，附原因，輸出 CSV |
+| `errors` | `list[dict]` | 計算拋例外的股票，附 error message |
+
+各子清單的 dict 欄位：`stock_no`, `stock_name`, `agg_fair_price`, `agg_cheap_price`, `yesterday_close`, `methods_computed`, `methods_skipped`, `skip_reasons`。
 
 ### 4.3 OutboundLineMessage
 | 欄位 | 型別 | 說明 |
@@ -135,6 +146,15 @@
    - render 輸出不可為空字串
    - 所有出站 LINE 訊息（minute digest/opening summary/trigger row/test push）都必須先經過此介面
 
+### 5.8 `AllListedStocksPort`（FR-19）
+1. `fetch_all_stocks() -> list[dict]`
+2. 回傳格式：`[{"stock_no": str, "stock_name": str, "market": "tse"|"otc"}, ...]`
+3. 契約：
+   - HTTP 失敗時 retry 3 次後拋例外（不靜默吞掉）。
+   - 回傳清單不得為空；若為空視為 fetch 失敗拋例外。
+   - 只回傳普通股（排除 ETF、特別股、債券）。
+4. 預設實作：`TwseAllListedStocksProvider`（`stock_monitor/adapters/all_listed_stocks_twse.py`）。
+
 ## 6. 錯誤語意契約
 | Error Code | 行為 |
 |---|---|
@@ -146,6 +166,8 @@
 | `DB_WRITE_FAILED_AFTER_SEND` | 寫補償佇列，視同已通知 |
 | `TEMPLATE_NOT_FOUND` | 寫 ERROR，該次通知視為失敗 |
 | `TEMPLATE_RENDER_FAILED` | 寫 ERROR，該次通知視為失敗 |
+| `MARKET_SCAN_STOCK_ERROR` | 寫 ERROR（level），繼續下一支股票，不中斷整體掃描 |
+| `MARKET_SCAN_LIST_FETCH_FAILED` | scan-market fail-fast，印出錯誤後退出 |
 
 ## 7. BDD 對應
 1. `features/stock_monitoring_system.feature` 的 `TP-ENV-*`、`TP-POL-*`、`TP-INT-*` 全部應可對應到本契約至少一個 Port 行為。
