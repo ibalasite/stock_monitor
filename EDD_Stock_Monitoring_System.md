@@ -1,8 +1,15 @@
 # EDD - 台股監控與 LINE 通知系統
 
-版本：v1.0  
-日期：2026-04-14  
+版本：v1.1  
+日期：2026-04-17  
 對齊文件：[PDD_Stock_Monitoring_System.md](c:/Projects/stock/PDD_Stock_Monitoring_System.md)
+
+變更摘要（v1.1）：
+- 新增 §4.3 全市場估値揃描流程（FR-19）。
+- 新增 §14 FR-19 全市場估値揃描設計規格（新 CLI 指令、Port、Adapter、Use Case、輸出規格）。
+- 更新 §1 範圍加入 FR-19 目標。
+- 新增 `AllListedStocksPort` 與 `TwseAllListedStocksProvider` 到架構層設計。
+- 新增 `market_scan.run_market_scan_job` 到 symbol contract。
 
 變更摘要（v0.9）：
 - 新增 §3.3 雙行情來源架構（`YahooFinanceMarketDataProvider`、`CompositeMarketDataProvider`）。
@@ -45,7 +52,7 @@
 | v0.8 | 2026-04-14 | no schema break | Code Review 品質改善定版：安全強化（token repr、時區驗證、HTTP 回應邊界）、架構對齊（Calculator → application 層、render 單一入口、SRP）、API 清潔（MinuteCycleConfig、開盤摘要 DB 冪等、觸發容錯）|
 | v0.9 | 2026-04-14 | no schema break | 雙行情來源架構：新增 `YahooFinanceMarketDataProvider`（HTML scraping）、`CompositeMarketDataProvider`（Freshness-First）；`TwseRealtimeMarketDataProvider` 加入 `_price_cache` 與 `ex` 快取 |
 | v1.0 | 2026-04-14 | no schema break | 行情 price 改為**委賣一**（最佳委賣價）：TWSE 採 `a` 欄位第一值；Yahoo 採 HTML 委賣價區塊委賣一，盤後 fallback `regularMarketPrice` |
-
+| v1.1 | 2026-04-17 | no schema break | 新增 FR-19 全市場估值掃描：新 CLI `scan-market`、`AllListedStocksPort`、`TwseAllListedStocksProvider`、`run_market_scan_job`、CSV 輸出規格 |
 ## 1. 目的與範圍
 本文件定義工程實作細節，交付目標：
 1. 盤中每分鐘監控台股價格。
@@ -57,8 +64,7 @@
 7. 每日 14:00 對三方法逐股估值，資料不足時跳過且不覆蓋舊值。
 8. 每交易日開盤第一個可交易分鐘先推送「監控設定摘要」（股票/方法/fair/cheap），同日僅一次。
 9. LINE 訊息文本採模板渲染，不將完整文案硬寫於業務流程程式。
-10. 盤中行情採雙來源（TWSE MIS 主 + Yahoo Finance TW HTML 副），以 `tick_at` 較新者為準（Freshness-First，PDD FR-15）。行情 `price` 代表**委賣一**（最佳委賣價），反映當下可立即成交之買入價格。
-
+10. 盤中行情採雙來源（TWSE MIS 主 + Yahoo Finance TW HTML 副），以 `tick_at` 較新者為準（Freshness-First，PDD FR-15）。行情 `price` 代表**委賣一**（最佳委賣價），反映當下可立即成交之買入價格。11. 上市上櫃全市場估値揃描（PDD FR-19）：手動執行 CLI 命令 `scan-market`，一次計算全體普通股三方法估値，依是否低於便宜價自動 upsert 監控清單或輸出 CSV，不發送 LINE 。
 ## 2. 關鍵業務規則（定版）
 ### 2.1 訊號狀態
 - `stock_status=1`：低於合理價（below fair）
@@ -336,6 +342,35 @@ flowchart TD
     R -- SKIP_* --> L[Write warn/error log, keep previous snapshot]
     U --> END
     L --> END
+```
+
+### 4.3 全市場估值掃描流程（FR-19）
+```mermaid
+flowchart TD
+    CLI["CLI: scan-market"] --> DB_CHECK{DB 可用?}
+    DB_CHECK -- No --> FAIL[Fail-fast exit]
+    DB_CHECK -- Yes --> FETCH[Fetch all listed stocks\nTWSE STOCK_DAY_ALL\n+ TPEx closing price API]
+    FETCH --> FILTER[Filter: 普通股 only\n排除 ETF/TDR/warrants]
+    FILTER --> LOAD_M[Load enabled valuation methods]
+    LOAD_M --> LOOP["For each stock (isolated error)"]
+    LOOP --> CALC["Compute fair/cheap\n(all enabled methods)"]
+    CALC --> AGG{Any SUCCESS?}
+    AGG -- No --> UNCALC[Add to uncalculable list]
+    AGG -- Yes --> AGGREGATE[Average of SUCCESS methods\nagg_fair, agg_cheap]
+    AGGREGATE --> CMP{yesterday_close vs agg_cheap}
+    CMP -- "close <= agg_cheap" --> WL[Upsert watchlist\nenabled=1\nmanual_fair/cheap=agg values]
+    CMP -- "cheap < close <= fair" --> NF[Add to near_fair list]
+    CMP -- "close > fair" --> SKIP_OUT[Skip output\nstock not triggered]
+    UNCALC --> LOG_ERR[Write system_logs]
+    WL --> COLLECT[Collect results]
+    NF --> COLLECT
+    UNCALC --> COLLECT
+    SKIP_OUT --> COLLECT
+    COLLECT --> NEXT{More stocks?}
+    NEXT -- Yes --> LOOP
+    NEXT -- No --> WRITE_CSV[Write 3 CSV files]
+    WRITE_CSV --> STDOUT[Print summary to stdout]
+    STDOUT --> END[Done]
 ```
 
 ## 5. 交易日與開盤判斷
@@ -761,3 +796,141 @@ LINE_TEMPLATE_OPENING_SUMMARY=line_opening_summary_mobile_compact_v1
 | CR-ADP-02 | 🟠 | `CompositeMarketDataProvider` 必須以 `tick_at` 比較選取較新報價；相等時以 TWSE 為準；兩者皆無時不加入結果 dict（由呼叫端觸發 STALE_QUOTE）| ✅ 已修正 | TP-ADP-002 |
 | CR-ADP-03 | 🟡 | `TwseRealtimeMarketDataProvider` 回傳的 quotes dict 需含 `exchange` 欄位（值為 `tse` 或 `otc`），供 Composite 注入 Yahoo adapter symbol mapping | ✅ 已修正 | TP-ADP-003 |
 | CR-ADP-04 | 🟡 | Yahoo adapter 的 HTTP 回應也需受 `MAX_RESPONSE_BYTES` 限制（與 TWSE adapter 相同 1 MB 上限） | ✅ 已修正 | TP-ADP-004 |
+
+## 14. FR-19 全市場估值掃描設計規格
+
+### 14.1 新增 Port 介面
+
+```python
+# stock_monitor/adapters/all_listed_stocks_port.py  (pure interface, placed in adapters 目錄)
+class AllListedStocksPort(ABC):
+    @abstractmethod
+    def get_all_listed_stocks(self) -> list[dict]:
+        """
+        回傳全體上市＋上櫃普通股清單。
+        每筆 dict 需含：
+          stock_no: str          - 股票代碼
+          stock_name: str        - 中文名稱
+          yesterday_close: float - 前一交易日收盤價
+          market: str            - 'TWSE' | 'TPEx'
+        失敗時回傳空 list 並寫 ERROR log，不得 raise 影響主流程。
+        """
+```
+
+### 14.2 新增 Adapter：TwseAllListedStocksProvider
+
+```
+stock_monitor/adapters/all_listed_stocks_twse.py
+```
+
+- **TWSE 來源**：`GET https://www.twse.com.tw/rwd/zh/afterTrading/STOCK_DAY_ALL?response=json`
+  - 欄位映射：`證券代號` → `stock_no`、`證券名稱` → `stock_name`、`收盤價` → `yesterday_close`
+  - 篩選：代號為 4 位數字（`^\d{4}$`）且名稱不含「存託憑證」「ETF」「DR」「認購」「認售」
+- **TPEx 來源**：`GET https://www.tpex.org.tw/openapi/v1/tpex_stk_closingprice`
+  - 欄位映射：`SecuritiesCompanyCode` → `stock_no`、`CompanyName` → `stock_name`、`Close` → `yesterday_close`
+  - 篩選：同上
+- **HTTP 行為**：各請求 timeout 30 秒；失敗時寫 ERROR log，回傳已取得部分（不中斷整批）。
+- **價格處理**：`yesterday_close` 若為字串（含逗號）需 `replace(',', '')` 後轉 float；非數字格式的股票跳過（price=None，流入 uncalculable）。
+
+### 14.3 新增 Use Case：run_market_scan_job
+
+```
+stock_monitor/application/market_scan.py
+```
+
+**函式簽章**：
+```python
+def run_market_scan_job(
+    db_path: str,
+    output_dir: str,
+    stocks_provider: AllListedStocksPort,
+    valuation_methods: list,         # enabled ValuationMethodPort implementations
+) -> MarketScanResult:
+    ...
+```
+
+**MarketScanResult dataclass**：
+```python
+@dataclass
+class MarketScanResult:
+    scan_date: str                  # YYYY-MM-DD
+    total_stocks: int
+    watchlist_upserted: int
+    near_fair_count: int
+    uncalculable_count: int
+    output_dir: str
+```
+
+**聚合公式**：
+- 收集同股票所有 SUCCESS 方法的 `fair_price` 與 `cheap_price`
+- `agg_fair = mean(success_fairs)`；`agg_cheap = mean(success_cheaps)`
+- 至少 1 個 SUCCESS 才進行分流；否則進 uncalculable
+
+**分流邏輯**（依序判斷）：
+1. 無法取得收盤價（`yesterday_close is None`）→ uncalculable（reason: `NO_PRICE`）
+2. 所有方法 SKIP_* → uncalculable（reason：各方法原因彙整）
+3. `yesterday_close <= agg_cheap` → watchlist upsert
+4. `agg_cheap < yesterday_close <= agg_fair` → near_fair CSV
+5. `yesterday_close > agg_fair` → 不輸出（已高於合理價，不需列出）
+
+**Watchlist Upsert SQL**：
+```sql
+INSERT INTO watchlist (stock_no, stock_name, manual_fair_price, manual_cheap_price, enabled, created_at, updated_at)
+VALUES (?, ?, ?, ?, 1, ?, ?)
+ON CONFLICT(stock_no) DO UPDATE SET
+    stock_name = excluded.stock_name,
+    manual_fair_price = excluded.manual_fair_price,
+    manual_cheap_price = excluded.manual_cheap_price,
+    updated_at = excluded.updated_at;
+-- 注意：不更改 enabled 欄位（保留現有停用狀態）
+```
+
+**錯誤隔離**：每支股票計算以 try/except 包住，exception 寫 `system_logs`（level=ERROR, event=`MARKET_SCAN_STOCK_ERROR`），繼續下一支。
+
+### 14.4 CSV 輸出規格
+
+**共用欄位**（全三張 CSV 均含）：
+```
+stock_no, stock_name, agg_fair_price, agg_cheap_price, yesterday_close, methods_success, methods_skipped
+```
+
+**欄位說明**：
+| 欄位 | 說明 |
+|------|------|
+| `methods_success` | 成功方法清單，如 `emily_composite_v1|oldbull_dividend_yield_v1` |
+| `methods_skipped` | 跳過方法及原因，如 `raysky_blended_margin_v1:SKIP_INSUFFICIENT_DATA` |
+
+**檔案名稱規則**：
+- `{output_dir}/scan_{YYYYMMDD}_watchlist_added.csv`
+- `{output_dir}/scan_{YYYYMMDD}_near_fair.csv`
+- `{output_dir}/scan_{YYYYMMDD}_uncalculable.csv`
+
+輸出目錄若不存在，自動建立（`mkdir -p`）。檔案若已存在，覆蓋（overwrite）。
+
+### 14.5 CLI 新增指令
+
+```
+# stock_monitor/app.py 新增 subcommand
+python -m stock_monitor scan-market \
+    [--output-dir ./output]          # 預設 ./output
+    [--db-path data/stock_monitor.db]  # 預設同現有 --db-path
+```
+
+與現有 `run-daemon` / `valuation-once` 並列，在 Interface Layer `app.py` 路由，計算邏輯禁止放進 `app.py`（CR-ARCH-01）。
+
+### 14.6 Symbol Contract 新增項目
+
+| 模組 | Symbol |
+|---|---|
+| `stock_monitor.application.market_scan` | `run_market_scan_job`, `MarketScanResult` |
+| `stock_monitor.adapters.all_listed_stocks_twse` | `TwseAllListedStocksProvider` |
+
+### 14.7 設計約束
+
+1. 此功能不發送任何 LINE 訊息（不呼叫 `LinePushClient`）。
+2. 若 DB 不可用 → fail-fast，不輸出 CSV。
+3. 若股票清單 API 全部失敗 → fail-fast（無法掃描），不輸出空 CSV。
+4. 每支股票計算用同一批估值方法實例（不重建），複用 §9.1 的三方法公式。
+5. 输出 `watchlist_added.csv` 紀錄本次嘗試 upsert 的股票（包含 upsert 前已存在的），不區分「新增」或「更新」（由 stdout 摘要分開計算）。
+6. 本功能不更改 `valuation_snapshots`，僅操作 `watchlist`。
+

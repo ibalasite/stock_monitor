@@ -1,7 +1,7 @@
 # PDD - 台股價格監控與 LINE 通知系統（V0/V1）
 
-版本：v1.0  
-日期：2026-04-14  
+版本：v1.1  
+日期：2026-04-17  
 狀態：Draft（可進入 review）
 
 ## 1. 文件目的
@@ -99,7 +99,7 @@
 - 若同時符合 `1` 與 `2`，僅發送 `2`（便宜價優先）。
 - Phase 1 優先使用手動價格（例如：2330 fair=1500, cheap=1000）。
 
-> **編號說明**：FR-04 此編號預留，目前未使用。FR-15～18 為後期加入功能，依制定日期緊接 FR-03 排列；邏輯順序請參閱 EDD §3.3／§7.6／§9.x。
+> **編號說明**：FR-04 此編號預留，目前未使用。FR-15～19 為後期加入功能，依制定日期緊接 FR-03 排列；邏輯順序請參閱 EDD §3.3／§7.6／§9.x。
 
 ### FR-15 雙行情來源（TWSE 主 + Yahoo Finance 副）
 - 盤中行情採雙來源抓取：
@@ -156,6 +156,67 @@
 - 開盤摘要、觸發通知的股票顯示（如 `台積電(2330)`）均使用 DB 名稱。
 - 若 `watchlist.stock_name` 為空字串，顯示時 fallback 為股票代碼（如 `2330`），行為與現行一致。
 - 名稱不須每分鐘更新；無需額外的 API 呼叫頻率。
+
+### FR-19 全市場估值掃描（Market-wide Valuation Scan）
+
+**目標**：提供一個手動執行的 CLI 指令，一次掃描全體上市＋上櫃股票，以三種估值方法計算合理價與便宜價，按計算結果自動分流：達便宜價的股票加入監控清單，接近合理價的輸出 CSV，無法計算的輸出原因清單。
+
+**觸發方式**：手動 CLI 指令，不受交易時段限制，隨時可執行。
+
+```
+python -m stock_monitor scan-market [--output-dir ./output] [--db-path data/stock_monitor.db]
+```
+
+**掃描範圍**：
+- 全體上市（TWSE）普通股＋上櫃（TPEx）普通股。
+- 排除特別股、存託憑證（TDR）、ETF、認購（售）權證等非普通股標的（估值方法需財報資料，此類標的通常無法計算）。
+
+**估值方法**：使用資料庫中所有 `enabled=1` 的估值方法（預設：三方法全啟用）。每股票對每方法獨立計算，取**所有 SUCCESS 方法的算術平均值**作為聚合合理價（`agg_fair_price`）與聚合便宜價（`agg_cheap_price`）。
+
+**昨日收盤價來源**：
+- TWSE：`https://www.twse.com.tw/rwd/zh/afterTrading/STOCK_DAY_ALL?response=json`（含上市全股當日收盤價、股票名稱）。
+- TPEx：`https://www.tpex.org.tw/openapi/v1/tpex_stk_closingprice`（含上櫃全股當日收盤價、股票名稱）。
+- 以上 API 均為前一交易日最終收盤價（非盤中即時）。
+
+**分流規則**：
+| 條件 | 動作 |
+|------|------|
+| `yesterday_close <= agg_cheap_price` | Upsert 進 `watchlist`（`enabled=1`，`manual_fair_price = agg_fair_price`，`manual_cheap_price = agg_cheap_price`，`stock_name` 同步寫入） |
+| `agg_cheap_price < yesterday_close <= agg_fair_price` | 寫入 `scan_YYYYMMDD_near_fair.csv` |
+| 所有方法均為 `SKIP_*`（無法計算） | 寫入 `scan_YYYYMMDD_uncalculable.csv`（含每方法 skip 原因） |
+
+**輸出欄位（全三個輸出均含）**：
+
+| 欄位 | 說明 |
+|------|------|
+| `stock_no` | 股票代碼 |
+| `stock_name` | 股票中文名稱 |
+| `agg_fair_price` | 聚合合理價（啟用方法平均；無法計算時為空） |
+| `agg_cheap_price` | 聚合便宜價（啟用方法平均；無法計算時為空） |
+| `yesterday_close` | 昨日收盤價 |
+| `methods_success` | 成功計算的方法名稱清單（逗號分隔） |
+| `methods_skipped` | 跳過的方法及原因（`method:reason` 格式，逗號分隔） |
+
+**輸出檔案**（預設輸出目錄 `./output/`）：
+- `output/scan_YYYYMMDD_watchlist_added.csv`：已（嘗試）加入 watchlist 的股票明細。
+- `output/scan_YYYYMMDD_near_fair.csv`：高於便宜價但低於合理價的股票。
+- `output/scan_YYYYMMDD_uncalculable.csv`：所有方法均無法計算的股票。
+
+**stdout 執行摘要**（非 LINE 訊息，僅本地 terminal 輸出）：
+```
+掃描完成 2026-04-17
+  總股數：1,752
+  已加入監控清單：38（其中新增 25，更新 13）
+  接近合理價：127
+  無法計算：1,587（資料不足 1,412，來源錯誤 175）
+  輸出目錄：./output/
+```
+
+**約束**：
+- 此功能不發送任何 LINE 訊息。
+- 若 DB 不可用，整個指令 fail-fast，不輸出任何 CSV。
+- 若某支股票計算失敗（exception），記錄至 `system_logs` 並繼續處理其餘股票（不中斷整批）。
+- Upsert watchlist 時，若股票已存在且已在監控清單中，仍以本次計算結果更新 `manual_fair_price`、`manual_cheap_price`、`stock_name`；不更改 `enabled` 狀態。
 
 ### FR-05 通知冷卻（Notification Cooldown）
 - 維度：`stock_no + stock_status`。
