@@ -280,6 +280,8 @@
 8. 完成後以 stdout 印出摘要統計（不發送 LINE）。
 9. TWSE/TPEX 清單擷取 retry 3 次後失敗：CLI 輸出錯誤訊息並以非 0 exit code 結束。
 10. 個別股票計算例外不中斷整體掃描；寫入 `system_logs`（level=ERROR, event=MARKET_SCAN_STOCK_ERROR）。
+11. `scan-market` 執行前必須從 DB 載入 `valuation_methods.enabled=1` 方法清單並注入掃描，不可硬編碼空方法清單。
+12. 若啟用方法數為 0，CLI 必須 fail-fast（非 0 exit code），不得以「全數 uncalculable」視為成功。
 
 ## 4. 與 PDD UAT 對照
 1. UAT-1 對應 `US-003/US-004/US-005`。
