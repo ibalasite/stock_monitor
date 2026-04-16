@@ -269,67 +269,194 @@
         <p class="diagram-label">圖 6b — 補償機制：LINE 成功 + DB 失敗時寫入 pending_delivery_ledger，補償完成前視同已通知</p>
       </div>
 
+      <!-- ── watchlist ── -->
       <h3>watchlist</h3>
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th>Column</th><th>Type</th><th>Key</th><th>Default</th><th>Constraint／說明</th></tr></thead>
+          <tbody>
+            <tr><td>stock_no</td><td>TEXT</td><td>PK</td><td>—</td><td>ex: '2330'</td></tr>
+            <tr><td>stock_name</td><td>TEXT</td><td></td><td>''</td><td>FR-18，14:00 估值作業寫入</td></tr>
+            <tr><td>manual_fair_price</td><td>NUMERIC</td><td></td><td>—</td><td>CHECK &gt; 0；業務約束 cheap ≤ fair</td></tr>
+            <tr><td>manual_cheap_price</td><td>NUMERIC</td><td></td><td>—</td><td>CHECK &gt; 0；業務約束 cheap ≤ fair</td></tr>
+            <tr><td>enabled</td><td>INTEGER</td><td></td><td>1</td><td>CHECK IN (0,1)</td></tr>
+            <tr><td>created_at</td><td>INTEGER</td><td></td><td>—</td><td>epoch UTC</td></tr>
+            <tr><td>updated_at</td><td>INTEGER</td><td></td><td>—</td><td>epoch UTC</td></tr>
+          </tbody>
+        </table>
+      </div>
       <pre><code>CREATE TABLE IF NOT EXISTS watchlist (
-  stock_no TEXT PRIMARY KEY,                     -- ex: '2330'
+  stock_no           TEXT    PRIMARY KEY,
+  stock_name         TEXT    NOT NULL DEFAULT '',
   manual_fair_price  NUMERIC NOT NULL CHECK (manual_fair_price > 0),
   manual_cheap_price NUMERIC NOT NULL CHECK (manual_cheap_price > 0),
-  enabled INTEGER NOT NULL DEFAULT 1 CHECK (enabled IN (0,1)),
-  created_at INTEGER NOT NULL,
-  updated_at INTEGER NOT NULL,
-  CHECK (manual_cheap_price <= manual_fair_price)  -- 業務約束
+  enabled            INTEGER NOT NULL DEFAULT 1 CHECK (enabled IN (0,1)),
+  created_at         INTEGER NOT NULL,
+  updated_at         INTEGER NOT NULL,
+  CHECK (manual_cheap_price <= manual_fair_price)
 );</code></pre>
 
+      <!-- ── valuation_methods ── -->
       <h3>valuation_methods</h3>
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th>Column</th><th>Type</th><th>Key</th><th>Default</th><th>Constraint／說明</th></tr></thead>
+          <tbody>
+            <tr><td>method_name</td><td>TEXT</td><td>PK</td><td>—</td><td>複合 PK (method_name, method_version)</td></tr>
+            <tr><td>method_version</td><td>TEXT</td><td>PK</td><td>—</td><td>複合 PK</td></tr>
+            <tr><td>enabled</td><td>INTEGER</td><td></td><td>1</td><td>CHECK IN (0,1)；同名稱同時僅一個 enabled=1（UNIQUE INDEX）</td></tr>
+            <tr><td>created_at</td><td>INTEGER</td><td></td><td>—</td><td>epoch UTC</td></tr>
+            <tr><td>updated_at</td><td>INTEGER</td><td></td><td>—</td><td>epoch UTC</td></tr>
+          </tbody>
+        </table>
+      </div>
       <pre><code>CREATE TABLE IF NOT EXISTS valuation_methods (
-  method_name    TEXT NOT NULL,
-  method_version TEXT NOT NULL,
-  enabled INTEGER NOT NULL DEFAULT 1 CHECK (enabled IN (0,1)),
-  created_at INTEGER NOT NULL,
-  updated_at INTEGER NOT NULL,
+  method_name    TEXT    NOT NULL,
+  method_version TEXT    NOT NULL,
+  enabled        INTEGER NOT NULL DEFAULT 1 CHECK (enabled IN (0,1)),
+  created_at     INTEGER NOT NULL,
+  updated_at     INTEGER NOT NULL,
   PRIMARY KEY (method_name, method_version)
 );
--- 同名稱同時僅一個 enabled=1
 CREATE UNIQUE INDEX IF NOT EXISTS ux_method_single_enabled
 ON valuation_methods(method_name) WHERE enabled = 1;</code></pre>
 
+      <!-- ── valuation_snapshots ── -->
       <h3>valuation_snapshots</h3>
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th>Column</th><th>Type</th><th>Key</th><th>Default</th><th>Constraint／說明</th></tr></thead>
+          <tbody>
+            <tr><td>id</td><td>INTEGER</td><td>PK</td><td>AUTOINCREMENT</td><td></td></tr>
+            <tr><td>stock_no</td><td>TEXT</td><td>FK</td><td>—</td><td>→ watchlist.stock_no</td></tr>
+            <tr><td>trade_date</td><td>TEXT</td><td></td><td>—</td><td>YYYY-MM-DD</td></tr>
+            <tr><td>method_name</td><td>TEXT</td><td>FK</td><td>—</td><td>→ valuation_methods</td></tr>
+            <tr><td>method_version</td><td>TEXT</td><td>FK</td><td>—</td><td>→ valuation_methods</td></tr>
+            <tr><td>fair_price</td><td>NUMERIC</td><td></td><td>—</td><td>CHECK &gt; 0；cheap ≤ fair</td></tr>
+            <tr><td>cheap_price</td><td>NUMERIC</td><td></td><td>—</td><td>CHECK &gt; 0</td></tr>
+            <tr><td>created_at</td><td>INTEGER</td><td></td><td>—</td><td>epoch UTC；UNIQUE(stock_no, trade_date, method_name, method_version)</td></tr>
+          </tbody>
+        </table>
+      </div>
       <pre><code>CREATE TABLE IF NOT EXISTS valuation_snapshots (
-  id INTEGER PRIMARY KEY AUTOINCREMENT,
-  stock_no, trade_date, method_name, method_version,
-  fair_price  NUMERIC NOT NULL CHECK (fair_price > 0),
-  cheap_price NUMERIC NOT NULL CHECK (cheap_price > 0),
-  created_at  INTEGER NOT NULL,
+  id             INTEGER PRIMARY KEY AUTOINCREMENT,
+  stock_no       TEXT    NOT NULL,
+  trade_date     TEXT    NOT NULL,
+  method_name    TEXT    NOT NULL,
+  method_version TEXT    NOT NULL,
+  fair_price     NUMERIC NOT NULL CHECK (fair_price > 0),
+  cheap_price    NUMERIC NOT NULL CHECK (cheap_price > 0),
+  created_at     INTEGER NOT NULL,
   CHECK (cheap_price <= fair_price),
-  UNIQUE(stock_no, trade_date, method_name, method_version)
+  UNIQUE (stock_no, trade_date, method_name, method_version),
+  FOREIGN KEY (stock_no) REFERENCES watchlist(stock_no),
+  FOREIGN KEY (method_name, method_version)
+    REFERENCES valuation_methods(method_name, method_version)
 );</code></pre>
 
+      <!-- ── message ── -->
       <h3>message</h3>
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th>Column</th><th>Type</th><th>Key</th><th>Default</th><th>Constraint／說明</th></tr></thead>
+          <tbody>
+            <tr><td>id</td><td>INTEGER</td><td>PK</td><td>AUTOINCREMENT</td><td></td></tr>
+            <tr><td>stock_no</td><td>TEXT</td><td>FK</td><td>—</td><td>→ watchlist.stock_no</td></tr>
+            <tr><td>message</td><td>TEXT</td><td></td><td>—</td><td></td></tr>
+            <tr><td>stock_status</td><td>INTEGER</td><td></td><td>—</td><td>CHECK IN (1,2)</td></tr>
+            <tr><td>methods_hit</td><td>TEXT</td><td></td><td>—</td><td>JSON array；json_valid() AND json_type='array'</td></tr>
+            <tr><td>minute_bucket</td><td>TEXT</td><td></td><td>—</td><td>YYYY-MM-DD HH:mm；UNIQUE(stock_no, minute_bucket)</td></tr>
+            <tr><td>update_time</td><td>INTEGER</td><td></td><td>—</td><td>epoch UTC；冷卻查詢 INDEX 依賴</td></tr>
+          </tbody>
+        </table>
+      </div>
       <pre><code>CREATE TABLE IF NOT EXISTS message (
-  id INTEGER PRIMARY KEY AUTOINCREMENT,
-  stock_no     TEXT    NOT NULL,
-  message      TEXT    NOT NULL,
-  stock_status INTEGER NOT NULL CHECK (stock_status IN (1,2)),
-  methods_hit  TEXT    NOT NULL  -- JSON array, ex: ["emily_composite_v1"]
+  id            INTEGER PRIMARY KEY AUTOINCREMENT,
+  stock_no      TEXT    NOT NULL,
+  message       TEXT    NOT NULL,
+  stock_status  INTEGER NOT NULL CHECK (stock_status IN (1,2)),
+  methods_hit   TEXT    NOT NULL
     CHECK (json_valid(methods_hit) AND json_type(methods_hit) = 'array'),
-  minute_bucket TEXT  NOT NULL   -- YYYY-MM-DD HH:mm (Asia/Taipei)
-    CHECK (length(minute_bucket) = 16 AND ...),
-  update_time  INTEGER NOT NULL,
-  UNIQUE(stock_no, minute_bucket)  -- 同分鐘冪等鍵
+  minute_bucket TEXT    NOT NULL
+    CHECK (
+      length(minute_bucket) = 16
+      AND minute_bucket GLOB '[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9] [0-9][0-9]:[0-9][0-9]'
+      AND substr(minute_bucket,5,1)  = '-'
+      AND substr(minute_bucket,8,1)  = '-'
+      AND substr(minute_bucket,11,1) = ' '
+      AND substr(minute_bucket,14,1) = ':'
+    ),
+  update_time   INTEGER NOT NULL,
+  FOREIGN KEY (stock_no) REFERENCES watchlist(stock_no),
+  UNIQUE (stock_no, minute_bucket)
 );
 CREATE INDEX IF NOT EXISTS idx_message_cooldown
 ON message(stock_no, stock_status, update_time DESC);</code></pre>
 
+      <!-- ── pending_delivery_ledger ── -->
       <h3>pending_delivery_ledger</h3>
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th>Column</th><th>Type</th><th>Key</th><th>Default</th><th>Constraint／說明</th></tr></thead>
+          <tbody>
+            <tr><td>id</td><td>INTEGER</td><td>PK</td><td>AUTOINCREMENT</td><td></td></tr>
+            <tr><td>minute_bucket</td><td>TEXT</td><td></td><td>—</td><td></td></tr>
+            <tr><td>payload_json</td><td>TEXT</td><td></td><td>—</td><td>CHECK json_valid()</td></tr>
+            <tr><td>status</td><td>TEXT</td><td></td><td>—</td><td>CHECK IN ('PENDING','RECONCILED','FAILED')</td></tr>
+            <tr><td>retry_count</td><td>INTEGER</td><td></td><td>0</td><td>CHECK &gt;= 0</td></tr>
+            <tr><td>last_error</td><td>TEXT</td><td></td><td>NULL</td><td>可為 NULL</td></tr>
+            <tr><td>created_at</td><td>INTEGER</td><td></td><td>—</td><td>epoch UTC</td></tr>
+            <tr><td>updated_at</td><td>INTEGER</td><td></td><td>—</td><td>epoch UTC</td></tr>
+          </tbody>
+        </table>
+      </div>
       <pre><code>CREATE TABLE IF NOT EXISTS pending_delivery_ledger (
-  id INTEGER PRIMARY KEY AUTOINCREMENT,
-  minute_bucket TEXT NOT NULL,
-  payload_json  TEXT NOT NULL CHECK (json_valid(payload_json)),
-  status TEXT NOT NULL CHECK (status IN ('PENDING','RECONCILED','FAILED')),
+  id            INTEGER PRIMARY KEY AUTOINCREMENT,
+  minute_bucket TEXT    NOT NULL,
+  payload_json  TEXT    NOT NULL CHECK (json_valid(payload_json)),
+  status        TEXT    NOT NULL CHECK (status IN ('PENDING','RECONCILED','FAILED')),
   retry_count   INTEGER NOT NULL DEFAULT 0 CHECK (retry_count >= 0),
   last_error    TEXT,
   created_at    INTEGER NOT NULL,
   updated_at    INTEGER NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_pending_delivery_status
+ON pending_delivery_ledger(status, updated_at);</code></pre>
+
+      <!-- ── system_logs ── -->
+      <h3>system_logs</h3>
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th>Column</th><th>Type</th><th>Key</th><th>Default</th><th>Constraint／說明</th></tr></thead>
+          <tbody>
+            <tr><td>id</td><td>INTEGER</td><td>PK</td><td>AUTOINCREMENT</td><td></td></tr>
+            <tr><td>level</td><td>TEXT</td><td></td><td>—</td><td>CHECK IN ('INFO','WARN','ERROR')</td></tr>
+            <tr><td>event</td><td>TEXT</td><td></td><td>—</td><td></td></tr>
+            <tr><td>detail</td><td>TEXT</td><td></td><td>NULL</td><td>可為 NULL</td></tr>
+            <tr><td>created_at</td><td>INTEGER</td><td></td><td>—</td><td>epoch UTC</td></tr>
+          </tbody>
+        </table>
+      </div>
+      <pre><code>CREATE TABLE IF NOT EXISTS system_logs (
+  id         INTEGER PRIMARY KEY AUTOINCREMENT,
+  level      TEXT    NOT NULL CHECK (level IN ('INFO','WARN','ERROR')),
+  event      TEXT    NOT NULL,
+  detail     TEXT,
+  created_at INTEGER NOT NULL
+);</code></pre>
+
+      <!-- ── opening_summary_sent_dates ── -->
+      <h3>opening_summary_sent_dates</h3>
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th>Column</th><th>Type</th><th>Key</th><th>Default</th><th>Constraint／說明</th></tr></thead>
+          <tbody>
+            <tr><td>trade_date</td><td>TEXT</td><td>PK</td><td>—</td><td>YYYY-MM-DD；開盤摘要防重複送出</td></tr>
+          </tbody>
+        </table>
+      </div>
+      <pre><code>CREATE TABLE IF NOT EXISTS opening_summary_sent_dates (
+  trade_date TEXT PRIMARY KEY
 );</code></pre>
 
       <!-- ── 部署 ── -->
