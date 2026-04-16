@@ -20,44 +20,53 @@
 flowchart TD
     START["CompositeMarketDataProvider\n.get_realtime_quotes(stock_nos)"]
 
-    TWSE_CALL["TwseRealtimeMarketDataProvider\n.get_realtime_quotes()"]
-    YF_CALL["YahooFinanceMarketDataProvider\n.get_realtime_quotes()"]
+    subgraph WRAPPER[" "]
+        direction LR
 
-    subgraph TWSE_FLOW["TWSE 內部流程"]
-        A_CHK{"a 欄位有值？\n(委賣五檔)"}
-        A_OK["price = a.split('_')[0]\n更新 _price_cache\ntick_at = tlong // 1000"]
-        A_EMPTY["price = _price_cache[stock_no]"]
-        CACHE_CHK{"cache 有值？"}
-        SEED["以 y（昨收）種子填 cache"]
-        NO_TWSE["twse_quote = None"]
+        subgraph TWSE_FLOW["TWSE 內部流程"]
+            direction TB
+            TWSE_CALL["TwseRealtimeMarketDataProvider\n.get_realtime_quotes()"]
+            A_CHK{"a 欄位有值？\n(委賣五檔)"}
+            A_OK["price = a.split('_')[0]\n更新 _price_cache\ntick_at = tlong // 1000"]
+            A_EMPTY["price = _price_cache[stock_no]"]
+            CACHE_CHK{"cache 有值？"}
+            SEED["以 y（昨收）種子填 cache"]
+            NO_TWSE["twse_quote = None"]
+            TWSE_OUT["→ twse_quote"]
 
-        A_CHK -- Yes --> A_OK
-        A_CHK -- No/'-' --> A_EMPTY
-        A_EMPTY --> CACHE_CHK
-        CACHE_CHK -- Yes --> A_OK
-        CACHE_CHK -- No --> SEED
-        SEED --> A_OK
-        SEED -- y 也無效 --> NO_TWSE
+            TWSE_CALL --> A_CHK
+            A_CHK -- Yes --> A_OK
+            A_CHK -- "No/'-'" --> A_EMPTY
+            A_EMPTY --> CACHE_CHK
+            CACHE_CHK -- Yes --> A_OK
+            CACHE_CHK -- No --> SEED
+            SEED --> A_OK
+            SEED -- "y 也無效" --> NO_TWSE
+            A_OK --> TWSE_OUT
+            NO_TWSE --> TWSE_OUT
+        end
+
+        subgraph YAHOO_FLOW["Yahoo 內部流程"]
+            direction TB
+            YF_CALL["YahooFinanceMarketDataProvider\n.get_realtime_quotes()"]
+            HTTP_CHK{"HTTP 請求\n成功？"}
+            HTML_PARSE["解析 HTML 委賣價區塊\n_RE_ASK 正規表示式"]
+            ASK_CHK{"委賣一可解析？"}
+            ASK_OK["price = 委賣一\ntick_at = regularMarketTime"]
+            FB_PRICE["fallback: price = regularMarketPrice\n（盤後/休市）"]
+            HTTP_FAIL["WARN log\nyahoo_quote = None"]
+            YAHOO_OUT["→ yahoo_quote"]
+
+            YF_CALL --> HTTP_CHK
+            HTTP_CHK -- Yes --> HTML_PARSE --> ASK_CHK
+            ASK_CHK -- Yes --> ASK_OK
+            ASK_CHK -- No --> FB_PRICE
+            HTTP_CHK -- No --> HTTP_FAIL
+            ASK_OK --> YAHOO_OUT
+            FB_PRICE --> YAHOO_OUT
+            HTTP_FAIL --> YAHOO_OUT
+        end
     end
-
-    subgraph YAHOO_FLOW["Yahoo 內部流程"]
-        HTTP_CHK{"HTTP 請求\n成功？"}
-        HTML_PARSE["解析 HTML 委賣價區塊\n_RE_ASK 正規表示式"]
-        ASK_CHK{"委賣一可解析？"}
-        ASK_OK["price = 委賣一\ntick_at = regularMarketTime"]
-        FB_PRICE["fallback: price = regularMarketPrice\n（盤後/休市）"]
-        HTTP_FAIL["WARN log\nyahoo_quote = None"]
-
-        HTTP_CHK -- Yes --> HTML_PARSE --> ASK_CHK
-        ASK_CHK -- Yes --> ASK_OK
-        ASK_CHK -- No --> FB_PRICE
-        HTTP_CHK -- No --> HTTP_FAIL
-    end
-
-    START --> TWSE_CALL
-    TWSE_CALL --> TWSE_FLOW
-    TWSE_FLOW -.->|"（並行呼叫）"| YF_CALL
-    YF_CALL --> YAHOO_FLOW
 
     MERGE["Composite 合併邏輯\n（per stock_no）"]
     BOTH{"兩者皆有值？"}
@@ -66,8 +75,10 @@ flowchart TD
     USE_AVAIL["使用有值的那個"]
     STALE["回傳空\n→ 呼叫端觸發 STALE_QUOTE"]
 
-    TWSE_FLOW --> MERGE
-    YAHOO_FLOW --> MERGE
+    START --> TWSE_CALL
+    START --> YF_CALL
+    TWSE_OUT --> MERGE
+    YAHOO_OUT --> MERGE
     MERGE --> BOTH
     BOTH -- Yes --> COMP_FRESH
     BOTH -- No --> EITHER
