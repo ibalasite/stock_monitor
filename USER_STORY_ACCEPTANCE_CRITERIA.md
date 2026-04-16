@@ -272,11 +272,11 @@
 **Acceptance Criteria**
 1. CLI `scan-market` 成功執行時，從 TWSE/TPEX 取得全體普通股清單（含 stock_no, stock_name, market）。
 2. 對每支股票嘗試三個估值方法；每方法回傳 SUCCESS 或 SKIP（附原因）。
-3. `agg_fair_price` / `agg_cheap_price` 為所有 SUCCESS 方法的算術平均；若無 SUCCESS 方法則標記 uncalculable。
-4. `yesterday_close <= agg_cheap_price` 的股票：upsert watchlist（`enabled=1`，更新 stock_name/fair/cheap）；已存在股票不改變 `enabled` 狀態。
-5. `agg_cheap_price < yesterday_close <= agg_fair_price` 的股票：輸出 `scan_results_above_cheap.csv`。
-6. 無法計算的股票：輸出 `scan_results_uncalculable.csv`，含 skip_reasons。
-7. 所有輸出檔欄位：`stock_no, stock_name, agg_fair_price, agg_cheap_price, yesterday_close, methods_computed, methods_skipped, skip_reasons`。
+3. `agg_fair_price` / `agg_cheap_price` 為所有 SUCCESS 方法的最高值（max）；若無 SUCCESS 方法則標記 uncalculable。
+4. `yesterday_close <= agg_cheap_price` 的股票：upsert watchlist（更新 stock_name/fair/cheap；不強制改 `enabled`）；upsert 後可區分 `watchlist_new`（本次新增）與 `watchlist_updated`（本次更新）兩計數。
+5. `agg_cheap_price < yesterday_close <= agg_fair_price` 的股票：輸出 `scan_YYYYMMDD_near_fair.csv`。
+6. 無法計算的股票：輸出 `scan_YYYYMMDD_uncalculable.csv`；skip 原因內嵌於 `methods_skipped` 欄（格式 `method:reason`），無獨立 `skip_reasons` 欄位。
+7. 所有輸出檔欄位：`stock_no, stock_name, agg_fair_price, agg_cheap_price, yesterday_close, methods_success, methods_skipped`。
 8. 完成後以 stdout 印出摘要統計（不發送 LINE）。
 9. TWSE/TPEX 清單擷取 retry 3 次後失敗：CLI 輸出錯誤訊息並以非 0 exit code 結束。
 10. 個別股票計算例外不中斷整體掃描；寫入 `system_logs`（level=ERROR, event=MARKET_SCAN_STOCK_ERROR）。

@@ -30,7 +30,7 @@
 9. 通知延遲與準確率 KPI。  
 10. 開盤監控設定摘要通知（股票/方法/fair/cheap 與同日去重）。  
 11. LINE 模板載入與渲染失敗處理（`TEMPLATE_NOT_FOUND` / `TEMPLATE_RENDER_FAILED`），涵蓋彙總/摘要/觸發列/測試推播。  
-12. 全市場估值掃描（FR-19）：`AllListedStocksPort`/`TwseAllListedStocksProvider` 清單擷取、三分類邏輯（below_cheap / above_cheap_below_fair / uncalculable）、watchlist upsert、CSV 輸出。  
+12. 全市場估值掃描（FR-19）：`AllListedStocksPort`/`TwseAllListedStocksProvider` 清單擷取、三分類邏輯（below_cheap / near_fair / uncalculable）、watchlist upsert（new/updated 計數分離）、CSV 輸出（`scan_YYYYMMDD_*.csv`）。  
 
 ### Out of Scope
 1. 自動下單。  
@@ -116,10 +116,10 @@
 | TP-VAL-006 | PDD §7 FR-12 / EDD §6.7 | Integration | 主來源失敗時可切換備援並成功估值 |
 | TP-SCAN-001 | EDD §14.2 / PDD FR-19 | Unit | `TwseAllListedStocksProvider.get_all_listed_stocks()` 成功回傳 TSE+OTC 清單（含 stock_no/stock_name/yesterday_close/market）；清單不可為空 |
 | TP-SCAN-002 | EDD §14.2 / PDD FR-19 | Unit | HTTP 失敗 retry 3 次後拋例外；取回清單為空時亦拋例外，不靜默回傳空清單 |
-| TP-SCAN-003 | EDD §14.3 / PDD FR-19 | Integration | `run_market_scan_job` 三分類正確：`below_cheap`、`above_cheap_below_fair`、`uncalculable` 各自分入正確桶 |
-| TP-SCAN-004 | EDD §14.3 / PDD FR-19 | Integration | `below_cheap` 股票 upsert watchlist；已有 `enabled=0` 者 fair/cheap/name 更新但 `enabled` 不被強制改 |
-| TP-SCAN-005 | EDD §14.3 / PDD FR-19 | Integration | `above_cheap_below_fair` 股票輸出至 `scan_results_above_cheap.csv`，含 8 必要欄位 |
-| TP-SCAN-006 | EDD §14.3 / PDD FR-19 | Integration | `uncalculable` 輸出 `scan_results_uncalculable.csv`（含 skip_reasons）；個別例外不中斷掃描，寫 `MARKET_SCAN_STOCK_ERROR` ERROR log |
+| TP-SCAN-003 | EDD §14.3 / PDD FR-19 | Integration | `run_market_scan_job` 三分類正確：below_cheap→`watchlist_upserted`、near_fair→`near_fair_count`、uncalculable→`uncalculable_count`；agg 聚合用 max() 而非算術平均 |
+| TP-SCAN-004 | EDD §14.3 / PDD FR-19 | Integration | below_cheap 股票 upsert watchlist；已有 `enabled=0` 者 fair/cheap/name 更新但 `enabled` 不被強制改；SELECT-before-upsert 正確計數 `watchlist_new` 與 `watchlist_updated` |
+| TP-SCAN-005 | EDD §14.3 / PDD FR-19 | Integration | near_fair 股票輸出至 `scan_YYYYMMDD_near_fair.csv`，含 7 必要欄位（`methods_success`, `methods_skipped`，無 `skip_reasons`） |
+| TP-SCAN-006 | EDD §14.3 / PDD FR-19 | Integration | uncalculable 輸出 `scan_YYYYMMDD_uncalculable.csv`；skip 原因內嵌於 `methods_skipped`（`method:reason` 格式），無獨立 `skip_reasons` 欄位；個別例外不中斷掃描，寫 `MARKET_SCAN_STOCK_ERROR` ERROR log |
 | TP-SCAN-007 | EDD §14.5 / PDD FR-19 | Integration | `scan-market` CLI 必須注入 DB 啟用方法；若 `enabled=1` 方法數為 0 則 fail-fast（非 0 exit code）且不輸出 CSV |
 | TP-UAT-001 | PDD §12 UAT-1 | UAT | 手動門檻觸發 60 秒內通知 |
 | TP-UAT-002 | PDD §12 UAT-2 | UAT | 5 分鐘冷卻不重複推播 |
@@ -242,10 +242,10 @@
 | TP-NAME-003 | DB watchlist "2330" stock_name=""；行情來源對 "2330" 回傳名稱 "台積電" | 在交易日 14:00 觸發 `run_daily_valuation_job`（傳入 watchlist_repo + market_data_provider） | `watchlist.stock_name` 更新為 "台積電"；`run_minute_cycle` 本身不呼叫 `update_stock_names` |
 | TP-SCAN-001 | stub provider 回傳 3 筆（tse 2 筆 + otc 1 筆） | 呼叫 `get_all_listed_stocks()` | 回傳 list，每筆含 stock_no/stock_name/yesterday_close/market，長度=3（不為空） |
 | TP-SCAN-002 | mock HTTP 連續失敗 | 呼叫 `get_all_listed_stocks()` retry 3 次 | 拋例外（不回傳空清單）；若回傳清單為空亦拋例外 |
-| TP-SCAN-003 | stub 3 支股票：A close≤cheap, B cheap<close≤fair, C 全方法 SKIP | 呼叫 `run_market_scan_job` | `below_cheap`=[A], `above_cheap_below_fair`=[B], `uncalculable`=[C] |
-| TP-SCAN-004 | DB watchlist 已存在 2330 `enabled=0`；2330 掃描結果為 below_cheap | 執行 `run_market_scan_job` | 2330 upsert：fair/cheap/name 正確更新；`enabled` 維持 0（不強制覆蓋為 1） |
-| TP-SCAN-005 | 1 支 above_cheap_below_fair 股票 | 執行 `run_market_scan_job`，output_dir 設為臨時目錄 | `scan_results_above_cheap.csv` 存在；欄位含 stock_no/stock_name/agg_fair_price/agg_cheap_price/yesterday_close/methods_computed/methods_skipped/skip_reasons |
-| TP-SCAN-006 | 1 支全方法 SKIP；1 支在計算時 raise exception | 執行 `run_market_scan_job` | `scan_results_uncalculable.csv` 含 SKIP 股票及原因；exception 股票寫入 ERROR log `MARKET_SCAN_STOCK_ERROR`；整體掃描未中斷 |
+| TP-SCAN-003 | stub 3 支股票：A close≤cheap（agg=max），B cheap<close≤fair，C 全方法 SKIP | 呼叫 `run_market_scan_job` | `result.watchlist_upserted`=1(A), `result.near_fair_count`=1(B), `result.uncalculable_count`=1(C)；agg 值為 max() 而非 mean() |
+| TP-SCAN-004 | DB watchlist 已存在 2330 `enabled=0`（pre-SELECT）；2330 掃描結果為 below_cheap；新增股票 6666 亦為 below_cheap | 執行 `run_market_scan_job` | 2330 upsert：fair/cheap/name 正確更新；`enabled` 維持 0；`result.watchlist_updated`=1, `result.watchlist_new`=1, `result.watchlist_upserted`=2 |
+| TP-SCAN-005 | 1 支 near_fair 股票 | 執行 `run_market_scan_job`，output_dir 設為臨時目錄 | `scan_YYYYMMDD_near_fair.csv` 存在；欄位含 stock_no/stock_name/agg_fair_price/agg_cheap_price/yesterday_close/methods_success/methods_skipped；無 skip_reasons 欄 |
+| TP-SCAN-006 | 1 支全方法 SKIP；1 支在計算時 raise exception | 執行 `run_market_scan_job` | `scan_YYYYMMDD_uncalculable.csv` 含 SKIP 股票；`methods_skipped` 欄含 `method:reason` 格式；exception 股票寫入 ERROR log `MARKET_SCAN_STOCK_ERROR`；整體掃描未中斷 |
 | TP-SCAN-007 | DB `valuation_methods` 全部 disabled 或空表 | 執行 `python -m stock_monitor scan-market` | CLI 以非 0 exit code 結束，stderr/stdout 含 `MARKET_SCAN_METHODS_EMPTY`，且 output 目錄不產生掃描 CSV |
 
 ## 8. 失敗模式測試
