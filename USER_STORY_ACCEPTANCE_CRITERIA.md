@@ -1,7 +1,7 @@
 # User Story + 驗收條件（Stock Monitoring）
 
-版本：v0.4  
-日期：2026-04-13  
+版本：v0.5  
+日期：2026-04-17  
 對應文件：`PDD_Stock_Monitoring_System.md`
 
 ## 1. 文件目的
@@ -262,6 +262,25 @@
 4. `watchlist.stock_name` 為空字串時，顯示 fallback 為股票代碼（如 `2330`）。
 5. 名稱更新不引入每分鐘額外 API 呼叫。
 
+### US-020 手動執行全市場估值掃描
+- Priority：`P2`
+- Release：`M3`
+- Dependency：`US-008`, `US-019`
+- FR：`FR-19`
+- As 個人投資者, I want 一次掃描全體上市上櫃股票的三方法估值, So that 可自動找出低估股並更新監控清單。
+
+**Acceptance Criteria**
+1. CLI `scan-market` 成功執行時，從 TWSE/TPEX 取得全體普通股清單（含 stock_no, stock_name, market）。
+2. 對每支股票嘗試三個估值方法；每方法回傳 SUCCESS 或 SKIP（附原因）。
+3. `agg_fair_price` / `agg_cheap_price` 為所有 SUCCESS 方法的算術平均；若無 SUCCESS 方法則標記 uncalculable。
+4. `yesterday_close <= agg_cheap_price` 的股票：upsert watchlist（`enabled=1`，更新 stock_name/fair/cheap）；已存在股票不改變 `enabled` 狀態。
+5. `agg_cheap_price < yesterday_close <= agg_fair_price` 的股票：輸出 `scan_results_above_cheap.csv`。
+6. 無法計算的股票：輸出 `scan_results_uncalculable.csv`，含 skip_reasons。
+7. 所有輸出檔欄位：`stock_no, stock_name, agg_fair_price, agg_cheap_price, yesterday_close, methods_computed, methods_skipped, skip_reasons`。
+8. 完成後以 stdout 印出摘要統計（不發送 LINE）。
+9. TWSE/TPEX 清單擷取 retry 3 次後失敗：CLI 輸出錯誤訊息並以非 0 exit code 結束。
+10. 個別股票計算例外不中斷整體掃描；寫入 `system_logs`（level=ERROR, event=MARKET_SCAN_STOCK_ERROR）。
+
 ## 4. 與 PDD UAT 對照
 1. UAT-1 對應 `US-003/US-004/US-005`。
 2. UAT-2 對應 `US-005`。
@@ -274,8 +293,10 @@
 9. UAT-12 對應 `US-008/US-009/US-014`。
 10. UAT-13 對應 `US-015`。
 11. UAT-14 對應 `US-016`。
+12. UAT-15 對應 `US-017`。
+13. UAT-16 對應 `US-020`。
 
 ## 5. BDD 拆分建議
 1. `P0` 先建 `.feature`：`US-011 -> US-001 -> US-002 -> US-003 -> US-004 -> US-005 -> US-006 -> US-012 -> US-010`。
-2. `P1/P2` 再擴：`US-007`, `US-013`, `US-008`, `US-009`, `US-014`。
+2. `P1/P2` 再擴：`US-007`, `US-013`, `US-008`, `US-009`, `US-014`, `US-020`。
 3. 每個 Acceptance Criteria 至少一個 Scenario。

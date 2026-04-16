@@ -397,6 +397,7 @@ python -m stock_monitor scan-market [--output-dir ./output] [--db-path data/stoc
 13. 每交易日開盤第一個可交易分鐘，系統需先發送 1 封「監控設定摘要」至 LINE，內容含股票、方法、各方法 `fair/cheap`，且同一交易日不得重複發送；該摘要需由模板渲染（非程式硬編碼）。
 14. 所有發送到 LINE 的訊息（彙總、摘要、觸發列、測試推播）皆須透過 `template_key + context` 渲染；程式碼中不得直接硬編碼最終文案。
 15. 盤中行情採雙來源（TWSE 主 + Yahoo Finance 副）：以 `tick_at` 較新者為準（Freshness-First）；Yahoo Finance 呼叫失敗不得中斷主流程；兩者均無法取得時該分鐘 `STALE_QUOTE`。
+16. 執行 `scan-market` 指令後，所有上市上櫃普通股依三方法估值結果正確三分類：低於便宜價者 upsert watchlist（`enabled=1`）；介於便宜價與合理價間者輸出 `scan_results_above_cheap.csv`；無法計算者輸出 `scan_results_uncalculable.csv`（含原因）；全程不發送 LINE 通知。
 
 ## 13. 風險與因應
 - 資料源中斷：加重試、fallback、錯誤告警。

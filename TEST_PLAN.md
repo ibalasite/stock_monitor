@@ -1,7 +1,7 @@
 # TEST_PLAN - Stock Monitor System
 
-版本：v0.9  
-日期：2026-04-14  
+版本：v1.0  
+日期：2026-04-17  
 依據文件：[EDD_Stock_Monitoring_System.md](c:/Projects/stock/EDD_Stock_Monitoring_System.md), [PDD_Stock_Monitoring_System.md](c:/Projects/stock/PDD_Stock_Monitoring_System.md), [USER_STORY_ACCEPTANCE_CRITERIA.md](c:/Projects/stock/USER_STORY_ACCEPTANCE_CRITERIA.md)
 
 ## 1. 測試目標
@@ -14,6 +14,7 @@
 7. 驗證所有出站 LINE 訊息文案由 Template 渲染（非程式硬編碼），且模板變更可在不改主流程下生效。  
 8. 驗證 Code Review 定版的 16 項改善行動（EDD §13）中具可驗證行為的項目均有對應測試案例。
 9. 驗證雙行情來源（TWSE + Yahoo Finance）Composite Adapter 的 Freshness-First 邏輯與 Yahoo 失敗容錯（EDD §13.5 / PDD FR-15，TP-ADP-001~004）。
+10. 驗證全市場估值掃描（FR-19）：清單擷取、三分類邏輯、watchlist upsert、CSV 輸出（TP-SCAN-001~006、TP-UAT-016）。
 
 ## 2. 測試範圍
 ### In Scope
@@ -28,6 +29,7 @@
 9. 通知延遲與準確率 KPI。  
 10. 開盤監控設定摘要通知（股票/方法/fair/cheap 與同日去重）。  
 11. LINE 模板載入與渲染失敗處理（`TEMPLATE_NOT_FOUND` / `TEMPLATE_RENDER_FAILED`），涵蓋彙總/摘要/觸發列/測試推播。  
+12. 全市場估值掃描（FR-19）：`AllListedStocksPort`/`TwseAllListedStocksProvider` 清單擷取、三分類邏輯（below_cheap / above_cheap_below_fair / uncalculable）、watchlist upsert、CSV 輸出。  
 
 ### Out of Scope
 1. 自動下單。  
@@ -111,6 +113,12 @@
 | TP-TPL-005 | EDD §13.3 CR-TPL-01 | Unit | `render_line_template_message` 和 `LineTemplateRenderer.render()` 對相同模板目錄第二次呼叫不再重建 `Environment`（證明 `_env_cache` 正常工作） || TP-VAL-004 | PDD §7 FR-11 / EDD §9.1 | Integration | 三方法同日可同時產生快照 |
 | TP-VAL-005 | PDD §7 FR-12 / EDD §9.2 | Integration | 單方法資料不足僅該方法 skip，不影響其它方法 |
 | TP-VAL-006 | PDD §7 FR-12 / EDD §6.7 | Integration | 主來源失敗時可切換備援並成功估值 |
+| TP-SCAN-001 | EDD §14.2 / PDD FR-19 | Unit | `TwseAllListedStocksProvider.fetch_all_stocks()` 成功回傳 TSE+OTC 清單（含 stock_no/stock_name/market）；清單不可為空 |
+| TP-SCAN-002 | EDD §14.2 / PDD FR-19 | Unit | HTTP 失敗 retry 3 次後拋例外；取回清單為空時亦拋例外，不靜默回傳空清單 |
+| TP-SCAN-003 | EDD §14.3 / PDD FR-19 | Integration | `run_market_scan_job` 三分類正確：`below_cheap`、`above_cheap_below_fair`、`uncalculable` 各自分入正確桶 |
+| TP-SCAN-004 | EDD §14.3 / PDD FR-19 | Integration | `below_cheap` 股票 upsert watchlist；已有 `enabled=0` 者 fair/cheap/name 更新但 `enabled` 不被強制改 |
+| TP-SCAN-005 | EDD §14.3 / PDD FR-19 | Integration | `above_cheap_below_fair` 股票輸出至 `scan_results_above_cheap.csv`，含 8 必要欄位 |
+| TP-SCAN-006 | EDD §14.3 / PDD FR-19 | Integration | `uncalculable` 輸出 `scan_results_uncalculable.csv`（含 skip_reasons）；個別例外不中斷掃描，寫 `MARKET_SCAN_STOCK_ERROR` ERROR log |
 | TP-UAT-001 | PDD §12 UAT-1 | UAT | 手動門檻觸發 60 秒內通知 |
 | TP-UAT-002 | PDD §12 UAT-2 | UAT | 5 分鐘冷卻不重複推播 |
 | TP-UAT-003 | PDD §12 UAT-3 | UAT | message 核心欄位可查 |
@@ -125,6 +133,7 @@
 | TP-UAT-012 | PDD §12 UAT-12 | UAT | 三方法每日皆嘗試估值，資料不足方法 skip 且不覆蓋舊快照 |
 | TP-UAT-013 | PDD §12 UAT-13 | UAT | 開盤第一個可交易分鐘先發監控設定摘要且同日不重複 |
 | TP-UAT-014 | PDD §12 UAT-14 | UAT | 所有 LINE 出站訊息皆透過模板渲染，且程式碼無硬編碼最終文案 |
+| TP-UAT-016 | PDD §12 UAT-16 / FR-19 | UAT | `scan-market` CLI 執行後：watchlist 正確 upsert、兩個 CSV 正確產出、全程無 LINE 推播 |
 | TP-SEC-001 | EDD §13.1 CR-SEC-01 | Unit | `LinePushClient` 的 `repr()` 輸出不得包含 token 明文 |
 | TP-SEC-002 | EDD §13.1 CR-SEC-03 / §13.3 CR-CODE-05 | Unit | 無效時區名稱引發啟動時 `ValueError`，不得靜默 fallback UTC |
 | TP-SEC-003 | EDD §13.1 CR-SEC-04 / EDD §13.5 CR-ADP-04 | Unit | HTTP 回應讀取有大小上限，超大回應不得無限占用記憶體（TWSE adapter + Yahoo adapter 均涵蓋；Yahoo `MAX_RESPONSE_BYTES` 需 ≤ 1 MB，與 TWSE 相同） |
@@ -206,6 +215,7 @@
 | TP-UAT-012 | 系統可運行 | 依 PDD UAT-12 執行並記錄證據 | 通過且具三方法執行/skip與不覆蓋舊值證據 |
 | TP-UAT-013 | 系統可運行 | 依 PDD UAT-13 執行並記錄證據 | 通過且具開盤摘要內容與同日去重證據 |
 | TP-UAT-014 | 系統可運行 | 依 PDD UAT-14 執行並記錄證據 | 通過且具彙總/摘要/觸發列/測試推播模板渲染證據 |
+| TP-UAT-016 | 系統可運行、DB 已初始化、`valuation_methods` 含 3 方法 | 依 PDD UAT-16 執行 `scan-market` 並記錄證據 | 通過且具 watchlist upsert 截圖/log、兩個 CSV 內容、`system_logs` 無 `LINE_SEND` 事件 |
 | TP-SEC-001 | `LinePushClient` 已載入 | 呼叫 `repr(LinePushClient(token="abc", to="xyz"))` | 輸出字串不包含 `abc`；欄位顯示為 `***` 或省略 |
 | TP-SEC-002 | 無 | 以無效時區名稱（如 `"Invalid/Tz"`）初始化 `TimeBucketService` 或呼叫 `_resolve_timezone` | 立即 `raise ValueError`，不繼續執行，不返回 UTC |
 | TP-SEC-003 | Mock HTTP server 回傳超過 1 MB 的 body | 分別呼叫 TWSE adapter 與 Yahoo adapter 的 URL 讀取路徑 | 兩個 adapter 均只讀取至各自的 `MAX_RESPONSE_BYTES`（≤ 1 MB），不引發 `MemoryError`；Yahoo `MAX_RESPONSE_BYTES = 1_048_576` |
@@ -216,6 +226,12 @@
 | TP-NAME-001 | TWSE / Yahoo adapter 啟動 | 呼叫 `get_realtime_quotes(["2330"])`，HTML/API 含名稱 "台積電_API"；再呼叫 `get_stock_names(["2330"])` | `quotes["2330"]` 不含 `"name"` key；`get_stock_names` 從 cache 回傳 `{"2330": "台積電_API"}`；`evaluate_manual_threshold_hits` 從 watchlist_row["stock_name"] 取名稱 |
 | TP-NAME-002 | DB watchlist "2330" stock_name="台積電_DB"；API 報價不含 name；市場價跌破合理價 | 執行一次分鐘輪詢（`run_minute_cycle`） | 觸發通知列 `display_label` 為 `台積電_DB(2330)`；`build_minute_rows` 從 `stock_name_map` 取 DB 名稱，不再從 quote 取 |
 | TP-NAME-003 | DB watchlist "2330" stock_name=""；行情來源對 "2330" 回傳名稱 "台積電" | 在交易日 14:00 觸發 `run_daily_valuation_job`（傳入 watchlist_repo + market_data_provider） | `watchlist.stock_name` 更新為 "台積電"；`run_minute_cycle` 本身不呼叫 `update_stock_names` |
+| TP-SCAN-001 | stub provider 回傳 3 筆（tse 2 筆 + otc 1 筆） | 呼叫 `fetch_all_stocks()` | 回傳 list，每筆含 stock_no/stock_name/market，長度=3（不為空） |
+| TP-SCAN-002 | mock HTTP 連續失敗 | 呼叫 `fetch_all_stocks()` retry 3 次 | 拋例外（不回傳空清單）；若回傳清單為空亦拋例外 |
+| TP-SCAN-003 | stub 3 支股票：A close≤cheap, B cheap<close≤fair, C 全方法 SKIP | 呼叫 `run_market_scan_job` | `below_cheap`=[A], `above_cheap_below_fair`=[B], `uncalculable`=[C] |
+| TP-SCAN-004 | DB watchlist 已存在 2330 `enabled=0`；2330 掃描結果為 below_cheap | 執行 `run_market_scan_job` | 2330 upsert：fair/cheap/name 正確更新；`enabled` 維持 0（不強制覆蓋為 1） |
+| TP-SCAN-005 | 1 支 above_cheap_below_fair 股票 | 執行 `run_market_scan_job`，output_dir 設為臨時目錄 | `scan_results_above_cheap.csv` 存在；欄位含 stock_no/stock_name/agg_fair_price/agg_cheap_price/yesterday_close/methods_computed/methods_skipped/skip_reasons |
+| TP-SCAN-006 | 1 支全方法 SKIP；1 支在計算時 raise exception | 執行 `run_market_scan_job` | `scan_results_uncalculable.csv` 含 SKIP 股票及原因；exception 股票寫入 ERROR log `MARKET_SCAN_STOCK_ERROR`；整體掃描未中斷 |
 
 ## 8. 失敗模式測試
 1. LINE 成功、DB 失敗（最關鍵）。  
