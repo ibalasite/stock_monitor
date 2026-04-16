@@ -19,29 +19,33 @@
 ## 1.2 系統情境圖
 
 ```mermaid
-flowchart LR
-    %% ── 左欄：人員 ──────────────────
+flowchart TD
+    %% ── 使用者 ──────────────────────
     OPER["👤 操作員 / Operator\n設定股票、閾值\n查看日誌"]
-    LINE_USER["👥 LINE 群組成員\n接收價格通知\n與開盤摘要"]
 
-    %% ── 中欄：核心系統 ──────────────
+    %% ── 核心系統 ────────────────────
     SYS["⚙️ Stock Monitor\n台股每分鐘監控\n14:00 估值日結\nLINE 群組彙總通知"]
     DB[("🗄️ SQLite\ndata/stock_monitor.db\nwatchlist / message\nvaluation_snapshots")]
 
-    %% ── 右欄：外部 API ───────────────
-    TWSE["📡 TWSE MIS API\nmis.twse.com.tw\nTSE 即時行情（主）"]
-    OTC["📡 TPEx MIS API\nmis.twse.com.tw\nOTC 即時行情（主）"]
-    YAHOO["🌐 Yahoo Finance TW\ntw.stock.yahoo.com\nHTML 行情（副・備援）"]
+    %% ── 行情 API ─────────────────────
+    subgraph MarketAPI["行情 API（HTTPS）"]
+        direction TB
+        TWSE["📡 TWSE MIS API\nmis.twse.com.tw\nTSE 即時行情（主）"]
+        OTC["📡 TPEx MIS API\nmis.twse.com.tw\nOTC 即時行情（主）"]
+        YAHOO["🌐 Yahoo Finance TW\ntw.stock.yahoo.com\nHTML 行情（副・備援）"]
+        TWSE ~~~ OTC ~~~ YAHOO
+    end
+
+    %% ── 通知輸出 ──────────────────────
     LINE_API["💬 LINE Messaging API\napi.line.me\n官方帳號群組推播"]
+    LINE_USER["👥 LINE 群組成員\n接收價格通知\n與開盤摘要"]
 
     %% ── 連線 ────────────────────────
-    OPER  -- "CLI / PowerShell\ninit-db / run-daemon"      --> SYS
-    SYS   -- "LINE push message\n每分鐘彙總 / 開盤摘要"    --> LINE_USER
-    SYS   -- "GET 委賣一\nHTTPS"                           --> TWSE
-    SYS   -- "GET 委賣一\nHTTPS（上櫃）"                  --> OTC
-    SYS   -- "GET HTML 委賣一\nHTTPS scraping"             --> YAHOO
-    SYS   -- "POST push message\nBearer token"             --> LINE_API
-    SYS   -- "讀寫"                                        --> DB
+    OPER  -- "CLI / PowerShell\ninit-db / run-daemon" --> SYS
+    SYS   -- "讀寫" --> DB
+    SYS   -- "GET 委賣一 / HTML scraping\nHTTPS" --> MarketAPI
+    SYS   -- "POST push message\nBearer token" --> LINE_API
+    LINE_API -- "LINE push message\n每分鐘彙總 / 開盤摘要" --> LINE_USER
 ```
 
 ---

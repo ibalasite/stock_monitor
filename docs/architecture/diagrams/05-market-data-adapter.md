@@ -54,7 +54,9 @@ flowchart TD
         HTTP_CHK -- No --> HTTP_FAIL
     end
 
+    START --> TWSE_CALL
     TWSE_CALL --> TWSE_FLOW
+    TWSE_FLOW -.->|"（並行呼叫）"| YF_CALL
     YF_CALL --> YAHOO_FLOW
 
     MERGE["Composite 合併邏輯\n（per stock_no）"]

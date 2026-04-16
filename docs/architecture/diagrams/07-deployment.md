@@ -15,9 +15,9 @@ flowchart TD
         end
 
         subgraph PS1["PowerShell Scripts (scripts/)"]
+            direction TB
             START_PS1["start_daemon.ps1\nStart-Process -WindowStyle Hidden\n-RedirectStdOut logs/daemon.log\n-RedirectStdErr logs/daemon_err.log"]
             STOP_PS1["stop_daemon.ps1\nGet-WmiObject Win32_Process\nfilter CommandLine *stock_monitor*run-daemon*\nStop-Process -Force"]
-            REG_PS1["register_scheduled_tasks.ps1\n（一次性，需 admin 執行 PowerShell 版）"]
         end
 
         subgraph Process["Python Process (Hidden)"]
@@ -25,22 +25,28 @@ flowchart TD
         end
 
         subgraph Storage["本機儲存"]
+            direction TB
             DB["data/stock_monitor.db\nSQLite WAL mode"]
             LOG_D["logs/daemon.log"]
             LOG_E["logs/daemon_err.log"]
             JSONL["logs/pending_delivery.jsonl\n（補償 fallback）"]
+            DB ~~~ LOG_D ~~~ LOG_E ~~~ JSONL
         end
 
         subgraph Env["環境變數（setx 持久化）"]
+            direction TB
             ENV_TOKEN["LINE_CHANNEL_ACCESS_TOKEN"]
             ENV_GROUP["LINE_TO_GROUP_ID"]
+            ENV_TOKEN ~~~ ENV_GROUP
         end
     end
 
     subgraph External["外部服務"]
+        direction TB
         TWSE_EXT["TWSE MIS API"]
         YAHOO_EXT["Yahoo Finance TW HTML"]
         LINE_EXT["LINE Messaging API"]
+        TWSE_EXT ~~~ YAHOO_EXT ~~~ LINE_EXT
     end
 
     TS_START -- "08:50 觸發" --> START_PS1
