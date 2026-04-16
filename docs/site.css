@@ -113,9 +113,9 @@ img { max-width: 100%; height: auto; display: block; }
   pointer-events: none;
 }
 .doc-pb-container {
-  max-width: 1140px;
+  max-width: calc(1440px - var(--sidebar-w));
   margin: 0 auto;
-  padding: 0 48px;
+  padding: 0 clamp(16px, 4vw, 56px);
   position: relative;
   z-index: 1;
 }
@@ -145,6 +145,10 @@ img { max-width: 100%; height: auto; display: block; }
 .page-wrapper {
   display: flex;
   margin-top: var(--nav-h);
+  margin-left: auto;
+  margin-right: auto;
+  max-width: 1440px;
+  width: 100%;
   min-height: calc(100vh - var(--nav-h));
 }
 
@@ -194,12 +198,11 @@ img { max-width: 100%; height: auto; display: block; }
 .main-content {
   flex: 1;
   min-width: 0;
-  padding: clamp(20px, 4vw, 56px) clamp(16px, 5vw, 64px) 80px;
+  padding: clamp(20px, 4vw, 56px) clamp(16px, 4vw, 56px) 80px;
 }
 .content-inner {
-  max-width: min(var(--content-max), 100%);
-  margin: 0 auto;
   width: 100%;
+  max-width: min(1080px, 100%);
 }
 
 /* ---- Hero card (index page) ---- */
