@@ -159,7 +159,7 @@
 
 ### FR-19 全市場估值掃描（Market-wide Valuation Scan）
 
-**目標**：提供一個手動執行的 CLI 指令，一次掃描全體上市＋上櫃股票，以三種估值方法計算合理價與便宜價，按計算結果自動分流：達便宜價的股票加入監控清單，接近合理價的輸出 CSV，無法計算的輸出原因清單。
+**目標**：提供一個手動執行的 CLI 指令，一次掃描全體上市＋上櫃普通股；每檔股票都必須逐一執行三種估值方法，依真實估值來源計算後分流：達便宜價的股票加入監控清單，接近合理價的輸出 CSV，三方法皆無法計算者輸出原因清單。
 
 **觸發方式**：手動 CLI 指令，不受交易時段限制，隨時可執行。
 
@@ -169,9 +169,9 @@ python -m stock_monitor scan-market [--output-dir ./output] [--db-path data/stoc
 
 **掃描範圍**：
 - 全體上市（TWSE）普通股＋上櫃（TPEx）普通股。
-- 排除特別股、存託憑證（TDR）、ETF、認購（售）權證等非普通股標的（估值方法需財報資料，此類標的通常無法計算）。
+- 來源為 TWSE + TPEx 全市場清單。
 
-**估值方法**：使用資料庫中所有 `enabled=1` 的估值方法（預設：三方法全啟用）。每股票對每方法獨立計算，取**所有 SUCCESS 方法的算術平均值**作為聚合合理價（`agg_fair_price`）與聚合便宜價（`agg_cheap_price`）。
+**估值方法**：使用資料庫中所有 `enabled=1` 的估值方法（預設：三方法全啟用）。每股票對每方法獨立計算，且每方法都必須產生獨立狀態（`SUCCESS` 或 `SKIP_*`）；取**所有 SUCCESS 方法的算術平均值**作為聚合合理價（`agg_fair_price`）與聚合便宜價（`agg_cheap_price`）。若三方法皆非 SUCCESS，則該股票無聚合價。
 
 **方法載入約束**：`scan-market` CLI 必須在執行前從資料庫讀取 `enabled=1` 的估值方法清單並注入掃描流程；禁止以空方法清單執行掃描。若啟用方法數為 0，CLI 需 fail-fast 並回傳錯誤訊息（不可靜默輸出全數 uncalculable）。
 
@@ -183,7 +183,7 @@ python -m stock_monitor scan-market [--output-dir ./output] [--db-path data/stoc
 **分流規則**：
 | 條件 | 動作 |
 |------|------|
-| `yesterday_close <= agg_cheap_price` | Upsert 進 `watchlist`（`enabled=1`，`manual_fair_price = agg_fair_price`，`manual_cheap_price = agg_cheap_price`，`stock_name` 同步寫入） |
+| `yesterday_close <= agg_cheap_price` | Upsert 進 `watchlist`（更新 `manual_fair_price = agg_fair_price`、`manual_cheap_price = agg_cheap_price`、`stock_name`；若已存在不得覆寫既有 `enabled` 狀態） |
 | `agg_cheap_price < yesterday_close <= agg_fair_price` | 寫入 `scan_YYYYMMDD_near_fair.csv` |
 | 所有方法均為 `SKIP_*`（無法計算） | 寫入 `scan_YYYYMMDD_uncalculable.csv`（含每方法 skip 原因） |
 
@@ -220,6 +220,9 @@ python -m stock_monitor scan-market [--output-dir ./output] [--db-path data/stoc
 - 若 `enabled=1` 的估值方法為 0，整個指令 fail-fast，不輸出任何 CSV。
 - 若某支股票計算失敗（exception），記錄至 `system_logs` 並繼續處理其餘股票（不中斷整批）。
 - Upsert watchlist 時，若股票已存在且已在監控清單中，仍以本次計算結果更新 `manual_fair_price`、`manual_cheap_price`、`stock_name`；不更改 `enabled` 狀態。
+- 每支股票都必須可追溯其去向：`watchlist_added`、`near_fair`、`uncalculable`，或明確標示為高於合理價未輸出。
+- 不可使用人造／假公式快速湊值，估值結果必須可對應到真實資料來源與方法理由。
+- 執行行為需反映逐檔逐方法計算，不可出現未實際計算卻快速產生結果的行為。
 
 ### FR-05 通知冷卻（Notification Cooldown）
 - 維度：`stock_no + stock_status`。

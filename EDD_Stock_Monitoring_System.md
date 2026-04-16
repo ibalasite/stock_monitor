@@ -817,6 +817,8 @@ class AllListedStocksPort(ABC):
         """
 ```
 
+      補充：清單來源必須為 TWSE + TPEx 全市場資料，不得退化為僅掃描 `watchlist`。
+
 ### 14.2 新增 Adapter：TwseAllListedStocksProvider
 
 ```
@@ -865,6 +867,7 @@ class MarketScanResult:
 - 收集同股票所有 SUCCESS 方法的 `fair_price` 與 `cheap_price`
 - `agg_fair = mean(success_fairs)`；`agg_cheap = mean(success_cheaps)`
 - 至少 1 個 SUCCESS 才進行分流；否則進 uncalculable
+- 每檔股票三方法都要有獨立結果狀態（`SUCCESS` 或 `SKIP_*`），並可追溯至輸出欄位
 
 **分流邏輯**（依序判斷）：
 1. 無法取得收盤價（`yesterday_close is None`）→ uncalculable（reason: `NO_PRICE`）
@@ -872,6 +875,8 @@ class MarketScanResult:
 3. `yesterday_close <= agg_cheap` → watchlist upsert
 4. `agg_cheap < yesterday_close <= agg_fair` → near_fair CSV
 5. `yesterday_close > agg_fair` → 不輸出（已高於合理價，不需列出）
+
+補充：每支股票都必須有明確去向（`watchlist_added` / `near_fair` / `uncalculable` / `above_fair_not_output`）。
 
 **Watchlist Upsert SQL**：
 ```sql
@@ -882,7 +887,7 @@ ON CONFLICT(stock_no) DO UPDATE SET
     manual_fair_price = excluded.manual_fair_price,
     manual_cheap_price = excluded.manual_cheap_price,
     updated_at = excluded.updated_at;
--- 注意：不更改 enabled 欄位（保留現有停用狀態）
+-- 注意：不更改 enabled 欄位（保留現有狀態）
 ```
 
 **錯誤隔離**：每支股票計算以 try/except 包住，exception 寫 `system_logs`（level=ERROR, event=`MARKET_SCAN_STOCK_ERROR`），繼續下一支。
@@ -938,5 +943,7 @@ CLI 路由行為補充（強制）：
 4. 若 `valuation_methods.enabled=1` 方法數為 0 → fail-fast，不輸出 CSV。
 5. 每支股票計算用同一批估值方法實例（不重建），複用 §9.1 的三方法公式。
 6. 输出 `watchlist_added.csv` 紀錄本次嘗試 upsert 的股票（包含 upsert 前已存在的），不區分「新增」或「更新」（由 stdout 摘要分開計算）。
-7. 本功能不更改 `valuation_snapshots`，僅操作 `watchlist`。
+7. 不可使用假公式或未對應資料來源的捷徑；每一方法結果都需能對應真實估值來源與理由。
+8. 執行時間與過程應反映逐檔逐方法實際計算，不得以未計算結果直接產生分類輸出。
+9. 本功能不更改 `valuation_snapshots`，僅操作 `watchlist`。
 
