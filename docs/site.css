@@ -193,10 +193,14 @@ img { max-width: 100%; height: auto; display: block; }
 /* ---- Main content ---- */
 .main-content {
   flex: 1;
-  padding: 40px 48px 80px;
-  max-width: calc(var(--sidebar-w) + var(--content-max) + 96px);
+  min-width: 0;
+  padding: clamp(20px, 4vw, 56px) clamp(16px, 5vw, 64px) 80px;
 }
-.content-inner { max-width: var(--content-max); margin: 0 auto; }
+.content-inner {
+  max-width: min(var(--content-max), 100%);
+  margin: 0 auto;
+  width: 100%;
+}
 
 /* ---- Hero card (index page) ---- */
 .hero {
