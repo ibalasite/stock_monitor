@@ -517,6 +517,72 @@ CREATE TABLE IF NOT EXISTS system_logs (
 - 財報類資料允許沿用最近一期有效值，但必須記錄 `input_asof_date`。
 - 若來源不可用或回傳空值，該方法當日狀態標記為 `SKIP_*`，且不得覆蓋既有快照。
 
+### 6.8 ER-Model（資料表關聯圖）
+```mermaid
+erDiagram
+  watchlist ||--o{ valuation_snapshots : has
+  valuation_methods ||--o{ valuation_snapshots : defines
+  watchlist ||--o{ message : triggers
+
+  watchlist {
+    TEXT stock_no PK
+    TEXT stock_name
+    NUMERIC manual_fair_price
+    NUMERIC manual_cheap_price
+    INTEGER enabled
+    INTEGER created_at
+    INTEGER updated_at
+  }
+
+  valuation_methods {
+    TEXT method_name PK
+    TEXT method_version PK
+    INTEGER enabled
+    INTEGER created_at
+    INTEGER updated_at
+  }
+
+  valuation_snapshots {
+    INTEGER id PK
+    TEXT stock_no FK
+    TEXT trade_date
+    TEXT method_name FK
+    TEXT method_version FK
+    NUMERIC fair_price
+    NUMERIC cheap_price
+    INTEGER created_at
+  }
+
+  message {
+    INTEGER id PK
+    TEXT stock_no FK
+    TEXT message
+    INTEGER stock_status
+    TEXT methods_hit
+    TEXT minute_bucket
+    INTEGER update_time
+  }
+
+  pending_delivery_ledger {
+    INTEGER id PK
+    TEXT minute_bucket
+    TEXT payload_json
+    TEXT status
+    INTEGER retry_count
+    TEXT last_error
+    INTEGER created_at
+    INTEGER updated_at
+  }
+
+  system_logs {
+    INTEGER id PK
+    TEXT level
+    TEXT event
+    TEXT detail
+    INTEGER created_at
+  }
+```
+
 ## 7. LINE Messaging API 設計
 ### 7.1 環境變數
 - 規範名（Canonical）：
@@ -1111,4 +1177,14 @@ sequenceDiagram
     CLI-->>U: summary to stdout
   end
 ```
+
+### 14.12 FR-19 DB 影響與 Schema 同步要求
+
+- 本次 FR-19 目前僅涉及 `watchlist` 資料寫入行為（upsert），**不新增資料表、不新增欄位、不變更欄位型別/約束**。
+- 若後續 FR-19 實作有任何 DB 結構異動（新增/刪除/變更 table、column、index、constraint），必須在同一變更批次同步更新：
+  - 本文件 §6.x Table Schema
+  - 本文件 §6.8 ER-Model
+  - `stock_monitor/db/schema.py` 的 `SCHEMA_SQL`
+  - 對應 `TP-DB-*` 測試條目（至少包含 schema 與約束驗證）
+- 禁止只改程式碼或只改 SQL 而未同步 EDD 的 ER-Model / Table Schema。
 
