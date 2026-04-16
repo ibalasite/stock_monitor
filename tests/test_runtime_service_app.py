@@ -859,6 +859,69 @@ def test_app_main_scan_market(monkeypatch, tmp_path: Path, capsys):
     assert output["uncalculable_count"] == 85
 
 
+def test_app_main_scan_market_injects_enabled_methods(monkeypatch, tmp_path: Path, capsys):
+    """TP-SCAN-007: scan-market must inject enabled valuation methods from DB."""
+    from stock_monitor.application.market_scan import MarketScanResult
+    from stock_monitor.adapters.sqlite_repo import connect_sqlite, apply_schema
+
+    db_path = tmp_path / "scan_methods.db"
+    output_dir = tmp_path / "scan_output"
+
+    conn = connect_sqlite(str(db_path))
+    apply_schema(conn)
+    conn.execute(
+        "INSERT INTO valuation_methods(method_name, method_version, enabled, created_at, updated_at) VALUES (?, ?, ?, ?, ?)",
+        ("emily_composite", "v1", 1, 1713000000, 1713000000),
+    )
+    conn.execute(
+        "INSERT INTO valuation_methods(method_name, method_version, enabled, created_at, updated_at) VALUES (?, ?, ?, ?, ?)",
+        ("oldbull_dividend_yield", "v1", 1, 1713000000, 1713000000),
+    )
+    conn.commit()
+    conn.close()
+
+    captured: dict = {}
+
+    def _fake_scan(**kwargs):
+        captured.update(kwargs)
+        return MarketScanResult(
+            scan_date="2026-04-18",
+            total_stocks=10,
+            watchlist_upserted=1,
+            near_fair_count=2,
+            uncalculable_count=7,
+            output_dir=str(output_dir),
+        )
+
+    monkeypatch.setattr("stock_monitor.app.run_market_scan_job", _fake_scan)
+
+    exit_code = main(["--db-path", str(db_path), "scan-market", "--output-dir", str(output_dir)])
+    assert exit_code == 0
+    assert len(captured.get("valuation_methods", [])) == 2, (
+        "[TP-SCAN-007] scan-market must inject DB enabled valuation methods, not empty list."
+    )
+    _ = json.loads(capsys.readouterr().out.strip())
+
+
+def test_app_main_scan_market_fails_when_enabled_methods_empty(tmp_path: Path, capsys):
+    """TP-SCAN-007: scan-market must fail-fast when no enabled methods are configured."""
+    from stock_monitor.adapters.sqlite_repo import connect_sqlite, apply_schema
+
+    db_path = tmp_path / "scan_methods_empty.db"
+    output_dir = tmp_path / "scan_output"
+
+    conn = connect_sqlite(str(db_path))
+    apply_schema(conn)
+    conn.close()
+
+    exit_code = main(["--db-path", str(db_path), "scan-market", "--output-dir", str(output_dir)])
+    assert exit_code != 0, "[TP-SCAN-007] Expected non-zero exit when enabled methods count is zero."
+    out = capsys.readouterr().out
+    assert "MARKET_SCAN_METHODS_EMPTY" in out, (
+        "[TP-SCAN-007] Expected MARKET_SCAN_METHODS_EMPTY fail-fast message."
+    )
+
+
 def test_build_runtime_and_timezone_resolution(monkeypatch, tmp_path: Path):
     class _Args:
         db_path = str(tmp_path / "runtime.db")
