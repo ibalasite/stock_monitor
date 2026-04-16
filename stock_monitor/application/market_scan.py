@@ -3,14 +3,15 @@
 Orchestrates:
 1. Fetch all listed stocks via AllListedStocksPort.
 2. For each stock, run all enabled valuation methods.
-3. Aggregate SUCCESS results → agg_fair / agg_cheap (arithmetic mean).
-4. Classify into three buckets:
-   - below_cheap   → upsert watchlist (enabled=1 for NEW stocks only)
-   - near_fair     → write scan_results_above_cheap.csv
-   - uncalculable  → write scan_results_uncalculable.csv
+3. Aggregate SUCCESS results → agg_fair / agg_cheap (max across methods).
+4. Classify into four buckets:
+   - below_cheap   → upsert watchlist; SELECT-before-upsert to count new vs updated
+   - near_fair     → write scan_YYYYMMDD_near_fair.csv
+   - above_fair    → counted only (not written to CSV)
+   - uncalculable  → write scan_YYYYMMDD_uncalculable.csv
 5. Return MarketScanResult summary.
 
-EDD §14.3 / PDD FR-19.
+EDD §14.3 / PDD FR-19 / ADR-016.
 """
 
 from __future__ import annotations
@@ -36,18 +37,21 @@ _CSV_FIELDNAMES = [
 
 @dataclass
 class MarketScanResult:
-    """Summary returned by run_market_scan_job."""
+    """Summary returned by run_market_scan_job.
 
-    scan_date: str          # YYYY-MM-DD
+    Invariant: watchlist_new + watchlist_updated == watchlist_upserted
+    (EDD §14.3 / ADR-016)
+    """
+
+    scan_date: str          # YYYYMMDD format for CSV filenames
     total_stocks: int
     watchlist_upserted: int
+    watchlist_new: int       # stocks inserted (not previously in watchlist)
+    watchlist_updated: int   # stocks updated (already existed in watchlist)
     near_fair_count: int
     uncalculable_count: int
+    above_fair_count: int    # stocks above agg_fair; not written to CSV
     output_dir: str
-
-
-def _mean(values: list[float]) -> float:
-    return sum(values) / len(values)
 
 
 def _write_csv(path: Path, rows: list[dict]) -> None:
@@ -58,14 +62,18 @@ def _write_csv(path: Path, rows: list[dict]) -> None:
         writer.writerows(rows)
 
 
-def _upsert_watchlist(conn, stock_no: str, stock_name: str, fair: float, cheap: float) -> None:
-    """Insert or update watchlist entry.
+def _upsert_watchlist(conn, stock_no: str, stock_name: str, fair: float, cheap: float) -> str:
+    """Insert or update watchlist entry. Returns 'new' or 'updated'.
 
+    SELECT-before-upsert to distinguish new vs pre-existing entries (ADR-016).
     For NEW stocks: enabled defaults to 1.
     For EXISTING stocks: only update stock_name/fair/cheap; do NOT touch enabled.
     EDD §14.3 Watchlist Upsert SQL contract.
     """
     now_epoch = int(time.time())
+    existing = conn.execute(
+        "SELECT 1 FROM watchlist WHERE stock_no = ?", (stock_no,)
+    ).fetchone()
     conn.execute(
         """
         INSERT INTO watchlist
@@ -79,6 +87,7 @@ def _upsert_watchlist(conn, stock_no: str, stock_name: str, fair: float, cheap: 
         """,
         (stock_no, stock_name, fair, cheap, now_epoch, now_epoch),
     )
+    return "updated" if existing else "new"
 
 
 def _write_system_log(conn, level: str, event: str, detail: str) -> None:
@@ -113,7 +122,7 @@ def run_market_scan_job(
     -------
     MarketScanResult
     """
-    scan_date = date.today().isoformat()
+    scan_date = date.today().strftime("%Y%m%d")
     conn = connect_sqlite(db_path)
     apply_schema(conn)
 
@@ -122,6 +131,9 @@ def run_market_scan_job(
     near_fair_rows: list[dict] = []
     uncalculable_rows: list[dict] = []
     watchlist_upserted = 0
+    watchlist_new = 0
+    watchlist_updated = 0
+    above_fair_count = 0
 
     for stock in stocks:
         stock_no: str = stock["stock_no"]
@@ -186,8 +198,8 @@ def run_market_scan_job(
             })
             continue
 
-        agg_fair = _mean(success_fairs)
-        agg_cheap = _mean(success_cheaps)
+        agg_fair = max(success_fairs)
+        agg_cheap = max(success_cheaps)
         row_base = {
             "stock_no": stock_no,
             "stock_name": stock_name,
@@ -199,31 +211,36 @@ def run_market_scan_job(
         }
 
         if close <= agg_cheap:
-            _upsert_watchlist(conn, stock_no, stock_name, agg_fair, agg_cheap)
+            kind = _upsert_watchlist(conn, stock_no, stock_name, agg_fair, agg_cheap)
             conn.commit()
             watchlist_upserted += 1
+            if kind == "new":
+                watchlist_new += 1
+            else:
+                watchlist_updated += 1
         elif close <= agg_fair:
             near_fair_rows.append(row_base)
-        # else: above fair → not reported (EDD §14.3)
+        else:
+            above_fair_count += 1
 
     conn.close()
 
-    # Write CSVs
+    # Write CSVs (scan_YYYYMMDD_*.csv — EDD §14.4 / gap-4 fix)
     out = Path(output_dir)
     if near_fair_rows:
-        _write_csv(out / "scan_results_above_cheap.csv", near_fair_rows)
-    else:
-        # Always write the file (empty header) so consumers can check existence
-        _write_csv(out / "scan_results_above_cheap.csv", [])
+        _write_csv(out / f"scan_{scan_date}_near_fair.csv", near_fair_rows)
 
     if uncalculable_rows:
-        _write_csv(out / "scan_results_uncalculable.csv", uncalculable_rows)
+        _write_csv(out / f"scan_{scan_date}_uncalculable.csv", uncalculable_rows)
 
     return MarketScanResult(
         scan_date=scan_date,
         total_stocks=len(stocks),
         watchlist_upserted=watchlist_upserted,
+        watchlist_new=watchlist_new,
+        watchlist_updated=watchlist_updated,
         near_fair_count=len(near_fair_rows),
         uncalculable_count=len(uncalculable_rows),
+        above_fair_count=above_fair_count,
         output_dir=output_dir,
     )

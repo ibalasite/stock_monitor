@@ -210,21 +210,25 @@ def then_watchlist_contains(scan_ctx: dict, stock_no: str):
 
 @then("scan_results_above_cheap csv should exist in the output directory")
 def then_csv_exists(scan_ctx: dict):
-    csv_path = Path(scan_ctx["output_dir"]) / "scan_results_above_cheap.csv"
+    from datetime import date as _date
+    scan_date = _date.today().strftime("%Y%m%d")
+    csv_path = Path(scan_ctx["output_dir"]) / f"scan_{scan_date}_near_fair.csv"
     assert csv_path.exists(), (
-        f"[TP-UAT-016] scan_results_above_cheap.csv not found at {csv_path}"
+        f"[TP-UAT-016] scan_{scan_date}_near_fair.csv not found at {csv_path}"
     )
     scan_ctx["csv_path"] = csv_path
 
 
 @then(parsers.parse('scan_results_above_cheap csv should contain a row for stock "{stock_no}"'))
 def then_csv_contains_stock(scan_ctx: dict, stock_no: str):
-    csv_path = Path(scan_ctx["output_dir"]) / "scan_results_above_cheap.csv"
+    from datetime import date as _date
+    scan_date = _date.today().strftime("%Y%m%d")
+    csv_path = Path(scan_ctx["output_dir"]) / f"scan_{scan_date}_near_fair.csv"
     with csv_path.open(newline="", encoding="utf-8") as f:
         rows = list(csv.DictReader(f))
     found = any(r.get("stock_no") == stock_no for r in rows)
     assert found, (
-        f"[TP-UAT-016] Stock {stock_no} not found in scan_results_above_cheap.csv. Rows: {rows}"
+        f"[TP-UAT-016] Stock {stock_no} not found in scan_{scan_date}_near_fair.csv. Rows: {rows}"
     )
 
 

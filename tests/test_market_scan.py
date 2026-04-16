@@ -224,9 +224,10 @@ def test_tp_scan_002_http_failure_raises(monkeypatch):
 
 def test_tp_scan_003_three_classification(tmp_path):
     """[TP-SCAN-003] run_market_scan_job routes stocks into three buckets:
-    below_cheap → watchlist upsert,
-    above_cheap/below_fair → near_fair CSV (scan_results_above_cheap.csv),
-    all_skip → uncalculable CSV (scan_results_uncalculable.csv).
+    below_cheap → watchlist_upserted,
+    near_fair → near_fair_count (scan_YYYYMMDD_near_fair.csv),
+    all_skip → uncalculable_count (scan_YYYYMMDD_uncalculable.csv).
+    agg aggregation uses max(), not arithmetic mean.
     (EDD §14.3 / PDD FR-19)
     """
     run_market_scan_job = require_symbol(
@@ -280,6 +281,61 @@ def test_tp_scan_003_three_classification(tmp_path):
     assert result.uncalculable_count == 1, (
         f"[TP-SCAN-003] Expected uncalculable_count=1, got {result.uncalculable_count}"
     )
+    assert result.above_fair_count == 0, (
+        f"[TP-SCAN-003] Expected above_fair_count=0, got {result.above_fair_count}"
+    )
+
+
+# ---------------------------------------------------------------------------
+# TP-SCAN-003b  agg aggregation uses max() not arithmetic mean
+# ---------------------------------------------------------------------------
+
+def test_tp_scan_003b_agg_uses_max(tmp_path):
+    """[TP-SCAN-003b] When multiple methods succeed, agg_fair/cheap = max(), not mean().
+    E.g. method A: fair=150, cheap=100; method B: fair=200, cheap=120
+    → agg_fair=200 (max), agg_cheap=120 (max), not 175/110 (mean).
+    (EDD §14.3 / PDD FR-19 gap-1 fix)
+    """
+    run_market_scan_job = require_symbol(
+        "stock_monitor.application.market_scan",
+        "run_market_scan_job",
+        "TP-SCAN-003b",
+    )
+    db_path = _make_db(tmp_path)
+    output_dir = str(tmp_path / "output")
+
+    # Stock close=80, will be below cheap regardless → triggers watchlist upsert
+    stocks = [{"stock_no": "8888", "stock_name": "聚合股", "yesterday_close": 80.0, "market": "TWSE"}]
+    method_a = _StubMethod("method_a", results_by_stock={"8888": {"fair": 150.0, "cheap": 100.0}})
+    method_b = _StubMethod("method_b", results_by_stock={"8888": {"fair": 200.0, "cheap": 120.0}})
+
+    import sqlite3 as _sqlite3
+    run_market_scan_job(
+        db_path=db_path,
+        output_dir=output_dir,
+        stocks_provider=_StubProvider(stocks),
+        valuation_methods=[method_a, method_b],
+    )
+
+    from stock_monitor.adapters.sqlite_repo import connect_sqlite
+    conn = connect_sqlite(db_path)
+    row = conn.execute(
+        "SELECT manual_fair_price, manual_cheap_price FROM watchlist WHERE stock_no=?",
+        ("8888",),
+    ).fetchone()
+    conn.close()
+
+    assert row is not None, "[TP-SCAN-003b] Stock 8888 must be upserted into watchlist."
+    agg_fair = float(row["manual_fair_price"])
+    agg_cheap = float(row["manual_cheap_price"])
+    assert agg_fair == 200.0, (
+        f"[TP-SCAN-003b] agg_fair must be max(150,200)=200. Got {agg_fair}. "
+        "Aggregation must use max(), not arithmetic mean (175)."
+    )
+    assert agg_cheap == 120.0, (
+        f"[TP-SCAN-003b] agg_cheap must be max(100,120)=120. Got {agg_cheap}. "
+        "Aggregation must use max(), not arithmetic mean (110)."
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -311,11 +367,18 @@ def test_tp_scan_004_watchlist_upsert_preserves_enabled_flag(tmp_path):
     conn.commit()
     conn.close()
 
-    # 2330 close=500.0, cheap=600.0, fair=800.0 → below cheap → upsert should happen
-    stocks = [{"stock_no": "2330", "stock_name": "台積電新名", "yesterday_close": 500.0, "market": "TWSE"}]
-    method = _StubMethod("m_test", results_by_stock={"2330": {"fair": 800.0, "cheap": 600.0}})
+    # 2330: pre-existing, close=500, cheap=600, fair=800 → below cheap → UPDATE
+    # 6666: brand new, close=50, cheap=100, fair=150 → below cheap → INSERT (new)
+    stocks = [
+        {"stock_no": "2330", "stock_name": "台積電新名", "yesterday_close": 500.0, "market": "TWSE"},
+        {"stock_no": "6666", "stock_name": "新股票", "yesterday_close": 50.0, "market": "TWSE"},
+    ]
+    method = _StubMethod("m_test", results_by_stock={
+        "2330": {"fair": 800.0, "cheap": 600.0},
+        "6666": {"fair": 150.0, "cheap": 100.0},
+    })
 
-    run_market_scan_job(
+    result = run_market_scan_job(
         db_path=db_path,
         output_dir=output_dir,
         stocks_provider=_StubProvider(stocks),
@@ -336,6 +399,16 @@ def test_tp_scan_004_watchlist_upsert_preserves_enabled_flag(tmp_path):
     assert int(row["enabled"]) == 0, (
         f"[TP-SCAN-004] enabled=0 must NOT be overwritten to 1. Got: {row['enabled']}"
     )
+    # SELECT-before-upsert: distinguish new vs updated (EDD §14.3 / ADR-016)
+    assert result.watchlist_upserted == 2, (
+        f"[TP-SCAN-004] Expected watchlist_upserted=2. Got: {result.watchlist_upserted}"
+    )
+    assert result.watchlist_updated == 1, (
+        f"[TP-SCAN-004] 2330 was pre-existing → watchlist_updated must be 1. Got: {result.watchlist_updated}"
+    )
+    assert result.watchlist_new == 1, (
+        f"[TP-SCAN-004] 6666 was new → watchlist_new must be 1. Got: {result.watchlist_new}"
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -343,8 +416,9 @@ def test_tp_scan_004_watchlist_upsert_preserves_enabled_flag(tmp_path):
 # ---------------------------------------------------------------------------
 
 def test_tp_scan_005_near_fair_csv_output(tmp_path):
-    """[TP-SCAN-005] near_fair stocks are written to scan_results_above_cheap.csv
-    with at least the 5 PDD-required columns. (PDD FR-19 / EDD §14.4)
+    """[TP-SCAN-005] near_fair stocks are written to scan_YYYYMMDD_near_fair.csv
+    with 7 required columns (methods_success + methods_skipped; no skip_reasons).
+    (PDD FR-19 / EDD §14.4 / gap-3 fix)
     """
     run_market_scan_job = require_symbol(
         "stock_monitor.application.market_scan",
@@ -365,18 +439,31 @@ def test_tp_scan_005_near_fair_csv_output(tmp_path):
         valuation_methods=[method],
     )
 
-    csv_path = Path(output_dir) / "scan_results_above_cheap.csv"
+    from datetime import date as _date
+    scan_date = _date.today().strftime("%Y%m%d")
+    csv_path = Path(output_dir) / f"scan_{scan_date}_near_fair.csv"
     assert csv_path.exists(), (
-        f"[TP-SCAN-005] scan_results_above_cheap.csv not found at {csv_path}"
+        f"[TP-SCAN-005] scan_{scan_date}_near_fair.csv not found at {csv_path}. "
+        "CSV must use YYYYMMDD date prefix (not 'scan_results_above_cheap')."
     )
     with csv_path.open(newline="", encoding="utf-8") as f:
         reader = csv.DictReader(f)
         rows = list(reader)
 
     assert len(rows) == 1, f"[TP-SCAN-005] Expected 1 row in CSV, got {len(rows)}"
-    required_cols = {"stock_no", "stock_name", "agg_fair_price", "agg_cheap_price", "yesterday_close"}
-    assert required_cols.issubset(set(rows[0].keys())), (
-        f"[TP-SCAN-005] CSV missing required columns. Got: {set(rows[0].keys())}"
+    actual_cols = set(rows[0].keys())
+    required_cols = {
+        "stock_no", "stock_name", "agg_fair_price", "agg_cheap_price",
+        "yesterday_close", "methods_success", "methods_skipped",
+    }
+    assert required_cols.issubset(actual_cols), (
+        f"[TP-SCAN-005] CSV missing required columns.\n"
+        f"  Required: {sorted(required_cols)}\n"
+        f"  Got:      {sorted(actual_cols)}"
+    )
+    assert "skip_reasons" not in actual_cols, (
+        "[TP-SCAN-005] CSV must NOT have a 'skip_reasons' column — "
+        "skip reasons are embedded in methods_skipped (method:reason format)."
     )
     assert rows[0]["stock_no"] == "4321", (
         f"[TP-SCAN-005] Expected stock_no='4321'. Got: {rows[0]['stock_no']}"
@@ -438,16 +525,28 @@ def test_tp_scan_006_per_stock_exception_does_not_abort_scan(tmp_path):
         "[TP-SCAN-006] Scan must complete and return MarketScanResult even if some stocks error."
     )
 
-    # 5555 should appear in uncalculable CSV
-    uncalc_path = Path(output_dir) / "scan_results_uncalculable.csv"
+    # 5555 should appear in uncalculable CSV with embedded method:reason format
+    from datetime import date as _date
+    scan_date = _date.today().strftime("%Y%m%d")
+    uncalc_path = Path(output_dir) / f"scan_{scan_date}_uncalculable.csv"
     assert uncalc_path.exists(), (
-        f"[TP-SCAN-006] scan_results_uncalculable.csv not found at {uncalc_path}"
+        f"[TP-SCAN-006] scan_{scan_date}_uncalculable.csv not found at {uncalc_path}. "
+        "Must use YYYYMMDD date prefix (not 'scan_results_uncalculable')."
     )
     with uncalc_path.open(newline="", encoding="utf-8") as f:
         rows = list(csv.DictReader(f))
     skip_stock_nos = {r["stock_no"] for r in rows}
     assert "5555" in skip_stock_nos, (
         f"[TP-SCAN-006] Stock 5555 (all SKIP) must appear in uncalculable CSV. Got: {skip_stock_nos}"
+    )
+    # methods_skipped must contain embedded method:reason (no separate skip_reasons column)
+    stock_5555_row = next(r for r in rows if r["stock_no"] == "5555")
+    assert "skip_reasons" not in stock_5555_row, (
+        "[TP-SCAN-006] CSV must NOT have 'skip_reasons' column."
+    )
+    methods_skipped_val = stock_5555_row.get("methods_skipped", "")
+    assert ":" in methods_skipped_val, (
+        f"[TP-SCAN-006] methods_skipped must use 'method:reason' format. Got: '{methods_skipped_val}'"
     )
 
     # system_logs must contain MARKET_SCAN_STOCK_ERROR for stock 6666
@@ -496,8 +595,12 @@ def test_no_price_stock_goes_to_uncalculable(tmp_path):
     assert result.watchlist_upserted == 0
     assert result.near_fair_count == 0
 
-    uncalc_path = Path(output_dir) / "scan_results_uncalculable.csv"
-    assert uncalc_path.exists()
+    from datetime import date as _date
+    scan_date = _date.today().strftime("%Y%m%d")
+    uncalc_path = Path(output_dir) / f"scan_{scan_date}_uncalculable.csv"
+    assert uncalc_path.exists(), (
+        f"[no_price_test] scan_{scan_date}_uncalculable.csv not found at {uncalc_path}"
+    )
     with uncalc_path.open(newline="", encoding="utf-8") as f:
         rows = list(csv.DictReader(f))
     assert any(r["stock_no"] == "9001" for r in rows)

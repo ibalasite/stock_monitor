@@ -847,11 +847,14 @@ def test_app_main_scan_market(monkeypatch, tmp_path: Path, capsys):
     conn.close()
 
     fake_result = MarketScanResult(
-        scan_date="2026-04-18",
+        scan_date="20260418",
         total_stocks=100,
         watchlist_upserted=5,
+        watchlist_new=3,
+        watchlist_updated=2,
         near_fair_count=10,
         uncalculable_count=85,
+        above_fair_count=0,
         output_dir=str(output_dir),
     )
     monkeypatch.setattr(
@@ -895,11 +898,14 @@ def test_app_main_scan_market_injects_enabled_methods(monkeypatch, tmp_path: Pat
     def _fake_scan(**kwargs):
         captured.update(kwargs)
         return MarketScanResult(
-            scan_date="2026-04-18",
+            scan_date="20260418",
             total_stocks=10,
             watchlist_upserted=1,
+            watchlist_new=1,
+            watchlist_updated=0,
             near_fair_count=2,
             uncalculable_count=7,
+            above_fair_count=0,
             output_dir=str(output_dir),
         )
 
