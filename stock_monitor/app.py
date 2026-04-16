@@ -72,23 +72,28 @@ def main(argv: list[str] | None = None) -> int:
                     "error_code": str(exc),
                 }, ensure_ascii=False))
                 return 1
+
+            # Methods hold a ref to conn — keep conn open through the scan job
+            provider = TwseAllListedStocksProvider()
+            result = run_market_scan_job(
+                db_path=args.db_path,
+                output_dir=args.output_dir,
+                stocks_provider=provider,
+                valuation_methods=valuation_methods,
+            )
         finally:
             conn.close()
 
-        provider = TwseAllListedStocksProvider()
-        result = run_market_scan_job(
-            db_path=args.db_path,
-            output_dir=args.output_dir,
-            stocks_provider=provider,
-            valuation_methods=valuation_methods,
-        )
         print(json.dumps({
             "status": "ok",
             "scan_date": result.scan_date,
             "total_stocks": result.total_stocks,
             "watchlist_upserted": result.watchlist_upserted,
+            "watchlist_new": result.watchlist_new,
+            "watchlist_updated": result.watchlist_updated,
             "near_fair_count": result.near_fair_count,
             "uncalculable_count": result.uncalculable_count,
+            "above_fair_count": result.above_fair_count,
             "output_dir": result.output_dir,
         }, ensure_ascii=False))
         return 0

@@ -131,6 +131,7 @@ def run_market_scan_job(
 
         near_fair_rows: list[dict] = []
         uncalculable_rows: list[dict] = []
+        watchlist_added_rows: list[dict] = []
         watchlist_upserted = 0
         watchlist_new = 0
         watchlist_updated = 0
@@ -219,6 +220,7 @@ def run_market_scan_job(
                     watchlist_new += 1
                 else:  # "updated"
                     watchlist_updated += 1
+                watchlist_added_rows.append(row_base)
             elif close <= agg_fair:
                 near_fair_rows.append(row_base)
             else:
@@ -235,6 +237,9 @@ def run_market_scan_job(
 
     # Write CSVs (scan_YYYYMMDD_*.csv — EDD §14.4 / gap-4 fix)
     out = Path(output_dir)
+    if watchlist_added_rows:
+        _write_csv(out / f"scan_{scan_date}_watchlist_added.csv", watchlist_added_rows)
+
     if near_fair_rows:
         _write_csv(out / f"scan_{scan_date}_near_fair.csv", near_fair_rows)
 
