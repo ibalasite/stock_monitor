@@ -149,21 +149,36 @@ cat logs/daemon.pid | xargs ps -p
 
 ### 11.3 launchd 排程（自動啟停）
 
-1. 編輯 `scripts/com.stock_monitor.daemon.plist`：
-   - 將 `WorkingDirectory` 改為本機實際路徑（如 `/Users/tobala/projects/stock_monitor`）
-   - 填入 `LINE_CHANNEL_ACCESS_TOKEN` 與 `LINE_TO_GROUP_ID`
-2. 安裝：
-   ```bash
-   cp scripts/com.stock_monitor.daemon.plist ~/Library/LaunchAgents/
-   launchctl load ~/Library/LaunchAgents/com.stock_monitor.daemon.plist
-   ```
-3. 驗證：`launchctl list | grep stock_monitor`
-4. 卸載：`launchctl unload ~/Library/LaunchAgents/com.stock_monitor.daemon.plist`
+對應 Windows `register_scheduled_tasks.ps1`，macOS 使用兩個 launchd agent：
+
+| Agent | plist | 時間 | 動作 |
+|-------|-------|------|------|
+| com.stock_monitor.daemon | `com.stock_monitor.daemon.plist` | 週一~五 08:50 | 執行 `start_daemon.sh` |
+| com.stock_monitor.stop | `com.stock_monitor.stop.plist` | 週一~五 14:30 | 執行 `stop_daemon.sh` |
+
+**一鍵安裝（對應 `register_scheduled_tasks.ps1`）**：
+```bash
+# 設定 LINE 憑證後執行（自動寫入 plist 並 load）
+LINE_CHANNEL_ACCESS_TOKEN=xxx LINE_TO_GROUP_ID=yyy \
+  bash scripts/register_launchd_agents.sh
+```
+
+**驗證**：
+```bash
+launchctl list | grep stock_monitor
+# 應看到 com.stock_monitor.daemon 與 com.stock_monitor.stop
+```
+
+**卸載**：
+```bash
+bash scripts/register_launchd_agents.sh --uninstall
+```
 
 ### 11.4 常見問題
 
 | 症狀 | 可能原因 | 處置 |
 |------|---------|------|
-| `start_daemon.sh: Permission denied` | 腳本未賦予執行權 | `chmod +x scripts/start_daemon.sh scripts/stop_daemon.sh` |
+| `start_daemon.sh: Permission denied` | 腳本未賦予執行權 | `chmod +x scripts/start_daemon.sh scripts/stop_daemon.sh scripts/register_launchd_agents.sh` |
 | `No PID file found`（stop 時） | daemon 未啟動或已退出 | 確認 `logs/daemon.pid` 存在，或用 `ps aux | grep stock_monitor` 確認 |
-| launchd 未在排定時間啟動 | plist WorkingDirectory 路徑錯誤 | 用 `launchctl list com.stock_monitor.daemon` 看 exit code，再查 `logs/daemon.log` |
+| launchd 未在排定時間啟動 | plist 路徑或憑證未填 | `launchctl list com.stock_monitor.daemon` 看 exit code，再查 `logs/launchd_start.log` |
+| launchd 未在 14:30 停止 | stop plist 未 load | `launchctl list com.stock_monitor.stop` 確認，必要時重跑 `register_launchd_agents.sh` |

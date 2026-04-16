@@ -166,6 +166,8 @@ def test_tp_plat_003_sigterm_sets_stop_event():
 # ---------------------------------------------------------------------------
 
 PLIST_PATH = SCRIPTS_DIR / "com.stock_monitor.daemon.plist"
+STOP_PLIST_PATH = SCRIPTS_DIR / "com.stock_monitor.stop.plist"
+REGISTER_SH = SCRIPTS_DIR / "register_launchd_agents.sh"
 
 
 def test_tp_plat_004_plist_exists():
@@ -205,6 +207,54 @@ def test_tp_plat_004_plist_content_keys():
         assert key in content, (
             f"[TP-PLAT-004] plist is missing required key: {key}"
         )
+
+
+def test_tp_plat_004_stop_plist_exists():
+    """TP-PLAT-004d: scripts/com.stock_monitor.stop.plist must exist (auto-stop at 14:30)."""
+    assert STOP_PLIST_PATH.exists(), (
+        f"[TP-PLAT-004] Missing: {STOP_PLIST_PATH}. "
+        "Create the stop plist (mirrors StockMonitor-Stop Windows task)."
+    )
+
+
+@pytest.mark.skipif(sys.platform != "darwin", reason="plutil is macOS-only")
+def test_tp_plat_004_stop_plist_plutil_lint():
+    """TP-PLAT-004e: stop plist must pass plutil -lint on macOS."""
+    assert STOP_PLIST_PATH.exists(), pytest.skip("stop plist not yet created")
+    result = subprocess.run(
+        ["plutil", "-lint", str(STOP_PLIST_PATH)],
+        capture_output=True,
+        text=True,
+    )
+    assert result.returncode == 0, (
+        f"[TP-PLAT-004] plutil -lint failed on stop plist:\n{result.stdout}\n{result.stderr}"
+    )
+
+
+def test_tp_plat_004_stop_plist_schedule_1430():
+    """TP-PLAT-004f: stop plist must trigger at 14:30 (mirrors Windows StockMonitor-Stop)."""
+    assert STOP_PLIST_PATH.exists(), pytest.skip("stop plist not yet created")
+    content = STOP_PLIST_PATH.read_text(encoding="utf-8")
+    assert "<integer>14</integer>" in content, "[TP-PLAT-004] stop plist must schedule at hour 14."
+    assert "<integer>30</integer>" in content, "[TP-PLAT-004] stop plist must schedule at minute 30."
+    assert "stop_daemon.sh" in content, "[TP-PLAT-004] stop plist ProgramArguments must call stop_daemon.sh."
+
+
+def test_tp_plat_004_register_script_exists():
+    """TP-PLAT-004g: register_launchd_agents.sh must exist (macOS equivalent of register_scheduled_tasks.ps1)."""
+    assert REGISTER_SH.exists(), (
+        f"[TP-PLAT-004] Missing: {REGISTER_SH}. "
+        "Create register_launchd_agents.sh (equivalent to register_scheduled_tasks.ps1)."
+    )
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="Unix permissions not applicable on Windows")
+def test_tp_plat_004_register_script_executable():
+    """TP-PLAT-004h: register_launchd_agents.sh must have execute permission."""
+    assert REGISTER_SH.exists(), pytest.skip("register script not yet created")
+    assert os.access(REGISTER_SH, os.X_OK), (
+        f"[TP-PLAT-004] {REGISTER_SH} is not executable. Run: chmod +x scripts/register_launchd_agents.sh"
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -291,7 +341,7 @@ def test_tp_uat_017_pytest_collect_no_errors():
 def test_tp_uat_017_fr20_scripts_present_for_uat():
     """TP-UAT-017: Both daemon scripts and plist must exist for macOS UAT smoke test."""
     missing = []
-    for artifact in [START_SH, STOP_SH, PLIST_PATH]:
+    for artifact in [START_SH, STOP_SH, PLIST_PATH, STOP_PLIST_PATH, REGISTER_SH]:
         if not artifact.exists():
             missing.append(str(artifact.relative_to(PROJECT_ROOT)))
 
