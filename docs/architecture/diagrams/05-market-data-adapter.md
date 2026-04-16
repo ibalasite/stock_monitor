@@ -63,10 +63,11 @@ flowchart TD
             HTTP_CHK -- Yes --> HTML_PARSE --> ASK_CHK
             ASK_CHK -- Yes --> ASK_OK
             ASK_CHK -- No --> FB_PRICE
-            HTTP_CHK -- No --> HTTP_FAIL --> HPAD1 --> HPAD2
+            HTTP_CHK -- No --> HTTP_FAIL
+            HTTP_FAIL ~~~ HPAD1 ~~~ HPAD2 ~~~ YAHOO_OUT
+            HTTP_FAIL --> YAHOO_OUT
             ASK_OK --> YAHOO_OUT
             FB_PRICE --> YAHOO_OUT
-            HPAD2 --> YAHOO_OUT
         end
 
         style HPAD1 fill:none,stroke:none,color:none
