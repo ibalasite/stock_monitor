@@ -401,6 +401,9 @@ pre code { background: none; padding: 0; }
   border-radius: var(--radius);
   padding: 8px;
   background: var(--clr-surface);
+  width: 100%;
+  height: auto;
+  display: block;
 }
 
 /* ---- Tag pills ---- */
