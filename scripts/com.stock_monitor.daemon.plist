@@ -1,0 +1,82 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.stock_monitor.daemon</string>
+
+    <key>ProgramArguments</key>
+    <array>
+        <string>/usr/bin/python3</string>
+        <string>-m</string>
+        <string>stock_monitor</string>
+        <string>run-daemon</string>
+    </array>
+
+    <key>WorkingDirectory</key>
+    <string>/Users/tobala/projects/stock_monitor</string>
+
+    <key>EnvironmentVariables</key>
+    <dict>
+        <key>LINE_CHANNEL_ACCESS_TOKEN</key>
+        <string>REPLACE_WITH_YOUR_TOKEN</string>
+        <key>LINE_TO_GROUP_ID</key>
+        <string>REPLACE_WITH_YOUR_GROUP_ID</string>
+        <key>APP_TIMEZONE</key>
+        <string>Asia/Taipei</string>
+    </dict>
+
+    <key>RunAtLoad</key>
+    <false/>
+
+    <key>StartCalendarInterval</key>
+    <array>
+        <dict>
+            <key>Weekday</key>
+            <integer>1</integer>
+            <key>Hour</key>
+            <integer>8</integer>
+            <key>Minute</key>
+            <integer>44</integer>
+        </dict>
+        <dict>
+            <key>Weekday</key>
+            <integer>2</integer>
+            <key>Hour</key>
+            <integer>8</integer>
+            <key>Minute</key>
+            <integer>44</integer>
+        </dict>
+        <dict>
+            <key>Weekday</key>
+            <integer>3</integer>
+            <key>Hour</key>
+            <integer>8</integer>
+            <key>Minute</key>
+            <integer>44</integer>
+        </dict>
+        <dict>
+            <key>Weekday</key>
+            <integer>4</integer>
+            <key>Hour</key>
+            <integer>8</integer>
+            <key>Minute</key>
+            <integer>44</integer>
+        </dict>
+        <dict>
+            <key>Weekday</key>
+            <integer>5</integer>
+            <key>Hour</key>
+            <integer>8</integer>
+            <key>Minute</key>
+            <integer>44</integer>
+        </dict>
+    </array>
+
+    <key>StandardOutPath</key>
+    <string>/Users/tobala/projects/stock_monitor/logs/daemon.log</string>
+
+    <key>StandardErrorPath</key>
+    <string>/Users/tobala/projects/stock_monitor/logs/daemon.log</string>
+</dict>
+</plist>

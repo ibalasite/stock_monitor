@@ -7,6 +7,9 @@ routing.  All business-level runtime logic lives here.
 from __future__ import annotations
 
 import os
+import signal
+import sys
+import threading
 import time
 from datetime import datetime
 from pathlib import Path
@@ -32,6 +35,20 @@ from stock_monitor.application.valuation_calculator import ManualValuationCalcul
 from stock_monitor.application.valuation_scheduler import run_daily_valuation_job
 from stock_monitor.bootstrap.runtime import assert_sqlite_prerequisites, validate_line_runtime_config
 from stock_monitor.domain.time_bucket import TimeBucketService
+
+
+def _install_signal_handlers(stop_event: threading.Event) -> None:
+    """Install SIGTERM handler on Unix platforms only (CR-PLAT-02).
+
+    On Windows, SIGTERM is not available as a signal constant, so the handler
+    is skipped. KeyboardInterrupt (SIGINT) still works on both platforms via
+    the normal Python exception mechanism in the daemon loop.
+    """
+    if sys.platform != "win32":
+        def _handle_sigterm(signum: int, frame) -> None:  # type: ignore[type-arg]
+            stop_event.set()
+
+        signal.signal(signal.SIGTERM, _handle_sigterm)
 
 
 def _resolve_timezone(timezone_name: str):
