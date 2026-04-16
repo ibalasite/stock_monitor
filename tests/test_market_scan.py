@@ -464,3 +464,352 @@ def test_tp_scan_006_per_stock_exception_does_not_abort_scan(tmp_path):
     assert "6666" in details_combined, (
         "[TP-SCAN-006] MARKET_SCAN_STOCK_ERROR detail must reference stock 6666."
     )
+
+
+# ---------------------------------------------------------------------------
+# Coverage gap tests (branch completeness)
+# ---------------------------------------------------------------------------
+
+def test_no_price_stock_goes_to_uncalculable(tmp_path):
+    """Stock with yesterday_close=None → uncalculable (NO_PRICE)."""
+    run_market_scan_job = require_symbol(
+        "stock_monitor.application.market_scan", "run_market_scan_job", "TP-SCAN-003",
+    )
+    MarketScanResult = require_symbol(
+        "stock_monitor.application.market_scan", "MarketScanResult", "TP-SCAN-003",
+    )
+    db_path = _make_db(tmp_path)
+    output_dir = str(tmp_path / "output")
+
+    stocks = [{"stock_no": "9001", "stock_name": "無價格股", "yesterday_close": None, "market": "TWSE"}]
+    method = _StubMethod("m_test", results_by_stock={"9001": {"fair": 100.0, "cheap": 80.0}})
+
+    result = run_market_scan_job(
+        db_path=db_path,
+        output_dir=output_dir,
+        stocks_provider=_StubProvider(stocks),
+        valuation_methods=[method],
+    )
+
+    assert isinstance(result, MarketScanResult)
+    assert result.uncalculable_count == 1
+    assert result.watchlist_upserted == 0
+    assert result.near_fair_count == 0
+
+    uncalc_path = Path(output_dir) / "scan_results_uncalculable.csv"
+    assert uncalc_path.exists()
+    with uncalc_path.open(newline="", encoding="utf-8") as f:
+        rows = list(csv.DictReader(f))
+    assert any(r["stock_no"] == "9001" for r in rows)
+
+
+def test_above_fair_stock_not_reported(tmp_path):
+    """Stock with close > agg_fair → not added to any bucket or CSV."""
+    run_market_scan_job = require_symbol(
+        "stock_monitor.application.market_scan", "run_market_scan_job", "TP-SCAN-003",
+    )
+    MarketScanResult = require_symbol(
+        "stock_monitor.application.market_scan", "MarketScanResult", "TP-SCAN-003",
+    )
+    db_path = _make_db(tmp_path)
+    output_dir = str(tmp_path / "output")
+
+    # close=300, fair=150 → above fair → not reported
+    stocks = [{"stock_no": "9002", "stock_name": "高價股", "yesterday_close": 300.0, "market": "TWSE"}]
+    method = _StubMethod("m_test", results_by_stock={"9002": {"fair": 150.0, "cheap": 100.0}})
+
+    result = run_market_scan_job(
+        db_path=db_path,
+        output_dir=output_dir,
+        stocks_provider=_StubProvider(stocks),
+        valuation_methods=[method],
+    )
+
+    assert isinstance(result, MarketScanResult)
+    assert result.watchlist_upserted == 0
+    assert result.near_fair_count == 0
+    assert result.uncalculable_count == 0
+    assert result.total_stocks == 1
+
+
+def test_success_with_null_prices_treated_as_skip(tmp_path):
+    """SUCCESS result with fair=None or cheap=None → treated as no-data, not counted."""
+    run_market_scan_job = require_symbol(
+        "stock_monitor.application.market_scan", "run_market_scan_job", "TP-SCAN-003",
+    )
+    db_path = _make_db(tmp_path)
+    output_dir = str(tmp_path / "output")
+
+    class _NullPriceMethod:
+        method_name = "null_method"
+        method_version = "v1"
+
+        def compute(self, stock_no, trade_date_local):
+            return {
+                "status": "SUCCESS",
+                "fair_price": None,
+                "cheap_price": None,
+                "method_name": self.method_name,
+                "method_version": self.method_version,
+            }
+
+    stocks = [{"stock_no": "9003", "stock_name": "空值股", "yesterday_close": 100.0, "market": "TWSE"}]
+    result = run_market_scan_job(
+        db_path=db_path,
+        output_dir=output_dir,
+        stocks_provider=_StubProvider(stocks),
+        valuation_methods=[_NullPriceMethod()],
+    )
+
+    # All methods returned null prices -> treated as all-skip → uncalculable
+    assert result.uncalculable_count == 1
+    assert result.watchlist_upserted == 0
+
+
+# ---------------------------------------------------------------------------
+# TwseAllListedStocksProvider adapter branch coverage
+# ---------------------------------------------------------------------------
+
+def _make_urlopen(twse_body: bytes, tpex_body: bytes):
+    """Return a fake urlopen that serves twse_body for TWSE URL and tpex_body for TPEx URL."""
+    import urllib.request
+
+    def _fake(req, timeout=None):
+        url = getattr(req, "full_url", str(req))
+        body = twse_body if "twse.com.tw" in url else tpex_body
+
+        class _R:
+            def read(self, n=-1):
+                return body
+            def __enter__(self):
+                return self
+            def __exit__(self, *_):
+                return False
+
+        return _R()
+
+    return _fake
+
+
+def test_provider_excludes_4digit_code_with_excluded_name(monkeypatch):
+    """Line 39: _is_ordinary_stock returns False for 4-digit code with excluded keyword."""
+    import json as _json
+    import urllib.request
+    TwseAllListedStocksProvider = require_symbol(
+        "stock_monitor.adapters.all_listed_stocks_twse",
+        "TwseAllListedStocksProvider",
+        "TP-SCAN-001",
+    )
+    twse = _json.dumps({
+        "stat": "OK",
+        "fields": ["證券代號", "證券名稱", "收盤價"],
+        "data": [
+            ["2330", "台積電", "1050"],
+            ["1234", "ETF台股", "50.0"],  # excluded keyword "ETF"
+        ],
+    }).encode()
+    monkeypatch.setattr(urllib.request, "urlopen", _make_urlopen(twse, b"[]"))
+    provider = TwseAllListedStocksProvider()
+    result = provider.get_all_listed_stocks()
+    codes = {r["stock_no"] for r in result}
+    assert "1234" not in codes, "Stock with ETF keyword should be excluded"
+    assert "2330" in codes
+
+
+def test_provider_price_edge_cases(monkeypatch):
+    """Lines 46, 49, 52-53: _to_float_price with None, dash, empty, and invalid input."""
+    import json as _json
+    import urllib.request
+    TwseAllListedStocksProvider = require_symbol(
+        "stock_monitor.adapters.all_listed_stocks_twse",
+        "TwseAllListedStocksProvider",
+        "TP-SCAN-001",
+    )
+    twse = _json.dumps({
+        "stat": "OK",
+        "fields": ["證券代號", "證券名稱", "收盤價"],
+        "data": [
+            ["2330", "台積電", "-"],      # dash → None (line 49)
+            ["2317", "鴻海", ""],         # empty → None (line 49)
+            ["2454", "聯發科", "abc"],    # invalid → None (line 52-53)
+            ["2412", "中華電"],           # row too short → close_raw=None → _to_float_price(None) (line 46)
+        ],
+    }).encode()
+    monkeypatch.setattr(urllib.request, "urlopen", _make_urlopen(twse, b"[]"))
+    provider = TwseAllListedStocksProvider()
+    result = provider.get_all_listed_stocks()
+    closes = {r["stock_no"]: r["yesterday_close"] for r in result}
+    assert closes.get("2330") is None
+    assert closes.get("2317") is None
+    assert closes.get("2454") is None
+    assert closes.get("2412") is None
+
+
+def test_provider_twse_non_dict_response_raises(monkeypatch):
+    """Line 84: TWSE returns non-dict payload → RuntimeError propagated → get_all raises."""
+    import urllib.request
+    TwseAllListedStocksProvider = require_symbol(
+        "stock_monitor.adapters.all_listed_stocks_twse",
+        "TwseAllListedStocksProvider",
+        "TP-SCAN-001",
+    )
+    monkeypatch.setattr(urllib.request, "urlopen", _make_urlopen(b"[]", b"[]"))
+    provider = TwseAllListedStocksProvider()
+    with pytest.raises(Exception):
+        provider.get_all_listed_stocks()
+
+
+def test_provider_twse_field_fallback(monkeypatch):
+    """Lines 93-95: TWSE fields missing expected names → fallback to columns 0,1,8."""
+    import json as _json
+    import urllib.request
+    TwseAllListedStocksProvider = require_symbol(
+        "stock_monitor.adapters.all_listed_stocks_twse",
+        "TwseAllListedStocksProvider",
+        "TP-SCAN-001",
+    )
+    # fields don't contain expected column names → fallback: 0=code, 1=name, 8=close
+    row = ["2330", "台積電", "col2", "col3", "col4", "col5", "col6", "col7", "1050"]
+    twse = _json.dumps({
+        "stat": "OK",
+        "fields": ["CodeX", "NameX", "c2", "c3", "c4", "c5", "c6", "c7", "CloseX"],
+        "data": [row],
+    }).encode()
+    monkeypatch.setattr(urllib.request, "urlopen", _make_urlopen(twse, b"[]"))
+    provider = TwseAllListedStocksProvider()
+    result = provider.get_all_listed_stocks()
+    assert any(r["stock_no"] == "2330" for r in result)
+
+
+def test_provider_twse_row_index_error_skips(monkeypatch):
+    """Lines 103-104: TWSE data row too short → IndexError → row skipped."""
+    import json as _json
+    import urllib.request
+    TwseAllListedStocksProvider = require_symbol(
+        "stock_monitor.adapters.all_listed_stocks_twse",
+        "TwseAllListedStocksProvider",
+        "TP-SCAN-001",
+    )
+    twse = _json.dumps({
+        "stat": "OK",
+        "fields": ["證券代號", "證券名稱", "收盤價"],
+        "data": [
+            ["2330", "台積電", "1050"],
+            [],  # too short → IndexError → skip
+        ],
+    }).encode()
+    monkeypatch.setattr(urllib.request, "urlopen", _make_urlopen(twse, b"[]"))
+    provider = TwseAllListedStocksProvider()
+    result = provider.get_all_listed_stocks()
+    assert len(result) == 1
+    assert result[0]["stock_no"] == "2330"
+
+
+def test_provider_tpex_non_list_response_tolerated(monkeypatch):
+    """Lines 123, 174-175: TPEx returns non-list → RuntimeError caught → partial result."""
+    import json as _json
+    import urllib.request
+    TwseAllListedStocksProvider = require_symbol(
+        "stock_monitor.adapters.all_listed_stocks_twse",
+        "TwseAllListedStocksProvider",
+        "TP-SCAN-001",
+    )
+    twse = _json.dumps({
+        "stat": "OK",
+        "fields": ["證券代號", "證券名稱", "收盤價"],
+        "data": [["2330", "台積電", "1050"]],
+    }).encode()
+    tpex_bad = b'{"error": "unexpected"}'  # dict, not list → RuntimeError
+    monkeypatch.setattr(urllib.request, "urlopen", _make_urlopen(twse, tpex_bad))
+    provider = TwseAllListedStocksProvider()
+    result = provider.get_all_listed_stocks()
+    # TPEx failure tolerated: only TWSE stock returned
+    codes = {r["stock_no"] for r in result}
+    assert "2330" in codes
+
+
+def test_provider_tpex_non_empty_ordinary_stocks(monkeypatch):
+    """Lines 127-134: TPEx with ordinary stock dict items → included in result."""
+    import json as _json
+    import urllib.request
+    TwseAllListedStocksProvider = require_symbol(
+        "stock_monitor.adapters.all_listed_stocks_twse",
+        "TwseAllListedStocksProvider",
+        "TP-SCAN-001",
+    )
+    twse = _json.dumps({
+        "stat": "OK",
+        "fields": ["證券代號", "證券名稱", "收盤價"],
+        "data": [["2330", "台積電", "1050"]],
+    }).encode()
+    tpex = _json.dumps([
+        {"SecuritiesCompanyCode": "6488", "CompanyName": "環球晶", "Close": "350.5"},
+        "not_a_dict",                    # non-dict item → skipped (line 127-128)
+        {"SecuritiesCompanyCode": "1234", "CompanyName": "ETF某上櫃", "Close": "25"},  # ETF excluded
+    ]).encode()
+    monkeypatch.setattr(urllib.request, "urlopen", _make_urlopen(twse, tpex))
+    provider = TwseAllListedStocksProvider()
+    result = provider.get_all_listed_stocks()
+    codes = {r["stock_no"] for r in result}
+    assert "2330" in codes
+    assert "6488" in codes
+    assert "1234" not in codes  # ETF excluded
+
+
+def test_provider_twse_all_filtered_raises(monkeypatch):
+    """Line 168: TWSE returns data but all entries filtered → RuntimeError."""
+    import json as _json
+    import urllib.request
+    TwseAllListedStocksProvider = require_symbol(
+        "stock_monitor.adapters.all_listed_stocks_twse",
+        "TwseAllListedStocksProvider",
+        "TP-SCAN-001",
+    )
+    twse = _json.dumps({
+        "stat": "OK",
+        "fields": ["證券代號", "證券名稱", "收盤價"],
+        "data": [
+            ["00878", "ETF國泰", "20"],           # not 4-digit → filtered
+            ["1234", "認購新秀", "30"],            # 認購 keyword → filtered
+        ],
+    }).encode()
+    monkeypatch.setattr(urllib.request, "urlopen", _make_urlopen(twse, b"[]"))
+    provider = TwseAllListedStocksProvider()
+    with pytest.raises(Exception):
+        provider.get_all_listed_stocks()
+
+
+def test_provider_tpex_fetch_exception_tolerated(monkeypatch):
+    """Lines 174-175: TPEx urlopen raises → caught → partial result from TWSE only."""
+    import json as _json
+    import urllib.request
+    TwseAllListedStocksProvider = require_symbol(
+        "stock_monitor.adapters.all_listed_stocks_twse",
+        "TwseAllListedStocksProvider",
+        "TP-SCAN-001",
+    )
+    twse_body = _json.dumps({
+        "stat": "OK",
+        "fields": ["證券代號", "證券名稱", "收盤價"],
+        "data": [["2330", "台積電", "1050"]],
+    }).encode()
+
+    def _fake_urlopen(req, timeout=None):
+        url = getattr(req, "full_url", str(req))
+        if "tpex.org.tw" in url:
+            raise URLError("tpex unreachable")
+
+        class _R:
+            def read(self, n=-1):
+                return twse_body
+            def __enter__(self):
+                return self
+            def __exit__(self, *_):
+                return False
+
+        return _R()
+
+    monkeypatch.setattr(urllib.request, "urlopen", _fake_urlopen)
+    provider = TwseAllListedStocksProvider()
+    result = provider.get_all_listed_stocks()
+    assert any(r["stock_no"] == "2330" for r in result)

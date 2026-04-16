@@ -829,6 +829,36 @@ def test_app_main_init_db_run_once_and_reconcile(monkeypatch, tmp_path: Path, ca
     assert fake_conn4.closed is True
 
 
+def test_app_main_scan_market(monkeypatch, tmp_path: Path, capsys):
+    """TP-SCAN: CLI scan-market subcommand routes correctly and outputs JSON summary."""
+    from stock_monitor.application.market_scan import MarketScanResult
+
+    db_path = tmp_path / "scan_test.db"
+    output_dir = tmp_path / "scan_output"
+
+    fake_result = MarketScanResult(
+        scan_date="2026-04-18",
+        total_stocks=100,
+        watchlist_upserted=5,
+        near_fair_count=10,
+        uncalculable_count=85,
+        output_dir=str(output_dir),
+    )
+    monkeypatch.setattr(
+        "stock_monitor.app.run_market_scan_job",
+        lambda **kwargs: fake_result,
+    )
+
+    exit_code = main(["--db-path", str(db_path), "scan-market", "--output-dir", str(output_dir)])
+    assert exit_code == 0
+    output = json.loads(capsys.readouterr().out.strip())
+    assert output["status"] == "ok"
+    assert output["total_stocks"] == 100
+    assert output["watchlist_upserted"] == 5
+    assert output["near_fair_count"] == 10
+    assert output["uncalculable_count"] == 85
+
+
 def test_build_runtime_and_timezone_resolution(monkeypatch, tmp_path: Path):
     class _Args:
         db_path = str(tmp_path / "runtime.db")

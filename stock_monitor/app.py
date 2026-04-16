@@ -20,6 +20,8 @@ from stock_monitor.application.message_template import render_line_template_mess
 from stock_monitor.application.runtime_service import run_minute_cycle, run_reconcile_cycle
 from stock_monitor.application.valuation_calculator import ManualValuationCalculator
 from stock_monitor.application.valuation_scheduler import run_daily_valuation_job
+from stock_monitor.adapters.all_listed_stocks_twse import TwseAllListedStocksProvider
+from stock_monitor.application.market_scan import run_market_scan_job
 from stock_monitor.bootstrap.runtime import assert_sqlite_prerequisites
 
 
@@ -33,6 +35,8 @@ def _build_parser() -> argparse.ArgumentParser:
     subparsers.add_parser("run-once")
     subparsers.add_parser("reconcile-once")
     subparsers.add_parser("valuation-once")
+    scan = subparsers.add_parser("scan-market")
+    scan.add_argument("--output-dir", default="./output")
     daemon = subparsers.add_parser("run-daemon")
     daemon.add_argument("--poll-interval-sec", type=int, default=int(os.getenv("POLL_INTERVAL_SEC", "60")))
     daemon.add_argument("--valuation-time", default=os.getenv("VALUATION_TIME", "14:00"))
@@ -52,6 +56,25 @@ def main(argv: list[str] | None = None) -> int:
         finally:
             conn.close()
         print(json.dumps({"status": "ok", "command": "init-db"}))
+        return 0
+
+    if args.command == "scan-market":
+        provider = TwseAllListedStocksProvider()
+        result = run_market_scan_job(
+            db_path=args.db_path,
+            output_dir=args.output_dir,
+            stocks_provider=provider,
+            valuation_methods=[],
+        )
+        print(json.dumps({
+            "status": "ok",
+            "scan_date": result.scan_date,
+            "total_stocks": result.total_stocks,
+            "watchlist_upserted": result.watchlist_upserted,
+            "near_fair_count": result.near_fair_count,
+            "uncalculable_count": result.uncalculable_count,
+            "output_dir": result.output_dir,
+        }, ensure_ascii=False))
         return 0
 
     runtime = _build_runtime(args)
