@@ -234,8 +234,11 @@ class FinMindFinancialDataProvider:
     def get_avg_dividend(self, stock_no: str, years: int = 5) -> float | None:
         """Average annual cash dividend per share over the last N fiscal years.
 
-        Sums CashEarningsDistribution + CashStatutorySurplus per fiscal year,
-        then averages across years. Returns None if no dividend data found.
+        Sums CashEarningsDistribution + CashStatutorySurplus per ex-dividend date
+        year (ISO date field), then averages across years.
+        NOTE: The FinMind 'year' field is in ROC calendar format ('98年'); use
+        the 'date' field (ISO YYYY-MM-DD) instead to extract the Western year.
+        Returns None if no dividend data found.
         """
         rows = self._fetch("TaiwanStockDividend", stock_no)
         if not rows:
@@ -244,7 +247,8 @@ class FinMindFinancialDataProvider:
         cutoff_year = datetime.now().year - years
         by_year: dict[str, float] = {}
         for row in rows:
-            year = str(row.get("year") or "")[:4]
+            # Use 'date' (ISO format) — 'year' is ROC calendar (e.g. '98年').
+            year = str(row.get("date") or "")[:4]
             if not year or not year.isdigit() or int(year) < cutoff_year:
                 continue
             cash = float(row.get("CashEarningsDistribution") or 0.0)
@@ -280,12 +284,13 @@ class FinMindFinancialDataProvider:
             return None
         eps_ttm = sum(float(r.get("value") or 0) for r in recent4)
 
-        # Annual avg: latest Q entry per calendar year, take N most recent years
+        # Annual avg: sum all quarterly EPS entries per calendar year,
+        # then average across the N most recent years.
         by_year: dict[str, float] = {}
         for r in eps_rows:
             year = (r.get("date") or "")[:4]
-            if year and year not in by_year:
-                by_year[year] = float(r.get("value") or 0)
+            if year:
+                by_year[year] = by_year.get(year, 0.0) + float(r.get("value") or 0)
 
         annual_vals = list(by_year.values())[:years]
         eps_10y_avg = sum(annual_vals) / len(annual_vals) if annual_vals else None
@@ -296,7 +301,15 @@ class FinMindFinancialDataProvider:
         }
 
     def get_balance_sheet_data(self, stock_no: str) -> dict | None:
-        """Returns current_assets and total_liabilities (NT$ thousands) from latest period."""
+        """Returns current_assets and total_liabilities (NT$ thousands) from latest period.
+
+        FinMind TaiwanStockBalanceSheet reports values in actual NT$ (not thousands).
+        We divide by 1000 before returning so the values match the NT$-thousands unit
+        expected by the NCAV formula:  (current_assets - total_liabilities) * 1000 / shares.
+
+        FinMind type names: 'CurrentAssets' and 'Liabilities' (total liabilities).
+        'TotalLiabilities' does not exist; 'Liabilities' is the correct aggregate key.
+        """
         rows = self._fetch("TaiwanStockBalanceSheet", stock_no)
         if not rows:
             return None
@@ -312,9 +325,10 @@ class FinMindFinancialDataProvider:
                 break
             t = r.get("type", "")
             if t == "CurrentAssets":
-                result["current_assets"] = float(r.get("value") or 0)
-            elif t == "TotalLiabilities":
-                result["total_liabilities"] = float(r.get("value") or 0)
+                # Divide by 1000: FinMind returns NT$ actual; formula expects NT$ thousands.
+                result["current_assets"] = float(r.get("value") or 0) / 1_000
+            elif t == "Liabilities":
+                result["total_liabilities"] = float(r.get("value") or 0) / 1_000
 
         return result if len(result) == 2 else None
 
