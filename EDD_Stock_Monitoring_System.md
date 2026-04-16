@@ -931,15 +931,16 @@ class MarketScanResult:
 
 **聚合公式**：
 - 收集同股票所有 SUCCESS 方法的 `fair_price` 與 `cheap_price`
-- `agg_fair = mean(success_fairs)`；`agg_cheap = mean(success_cheaps)`
+- `agg_fair = mean(success_fairs)`；`agg_cheap = mean(success_cheaps)`（作為 CSV 輸出參考值）
+- **入 DB 觸發判斷使用 `max(success_cheaps)`**：任一方法認為便宜（`close <= max`）即進 watchlist
 - 至少 1 個 SUCCESS 才進行分流；否則進 uncalculable
 - 每檔股票三方法都要有獨立結果狀態（`SUCCESS` 或 `SKIP_*`），並可追溯至輸出欄位
 
 **分流邏輯**（依序判斷）：
 1. 無法取得收盤價（`yesterday_close is None`）→ uncalculable（reason: `NO_PRICE`）
 2. 所有方法 SKIP_* → uncalculable（reason：各方法原因彙整）
-3. `yesterday_close <= agg_cheap` → watchlist upsert
-4. `agg_cheap < yesterday_close <= agg_fair` → near_fair CSV
+3. `yesterday_close <= max(success_cheaps)` → watchlist upsert（任一方法便宜價 ≥ 市價）
+4. `max(success_cheaps) < yesterday_close <= agg_fair` → near_fair CSV
 5. `yesterday_close > agg_fair` → 不輸出（已高於合理價，不需列出）
 
 補充：每支股票都必須有明確去向（`watchlist_added` / `near_fair` / `uncalculable` / `above_fair_not_output`）。
@@ -964,9 +965,9 @@ ON CONFLICT(stock_no) DO UPDATE SET
 
 | 項目 | 說明 |
 |---|---|
-| **觸發條件** | `yesterday_close <= agg_cheap_price`（至少 1 個方法 SUCCESS） |
-| **觸發語意** | 任意一個或多個估值方法算出的聚合便宜價高於市價，即視為符合進入觀察名單的條件 |
-| **處理步驟** | 1. 取 `agg_fair = mean(success_fairs)`、`agg_cheap = mean(success_cheaps)`<br>2. `_upsert_watchlist(conn, stock_no, stock_name, agg_fair, agg_cheap)`<br>3. `conn.commit()` 後計數 `watchlist_upserted += 1` |
+| **觸發條件** | `yesterday_close <= max(success_cheap_prices)`（至少 1 個方法 SUCCESS） |
+| **觸發語意** | 只要有任一啟用方法的便宜價 ≥ 市價，即視為符合進入觀察名單的條件（任一中即進） |
+| **處理步驟** | 1. 取 `cheap_trigger = max(success_cheaps)`<br>2. 取 `agg_fair = mean(success_fairs)`、`agg_cheap = mean(success_cheaps)`（存入 DB 與 CSV 作為參考值）<br>3. `_upsert_watchlist(conn, stock_no, stock_name, agg_fair, agg_cheap)`<br>4. `conn.commit()` 後計數 `watchlist_upserted += 1` |
 | **Upsert 行為** | 新股票：`enabled=1`；已存在股票：只更新 `stock_name / manual_fair_price / manual_cheap_price / updated_at`，**不改 `enabled`** |
 | **輸出** | DB `watchlist` 表 + `scan_{YYYYMMDD}_watchlist_added.csv` 記錄本次 upsert 明細 |
 | **相關模組** | `market_scan._upsert_watchlist()`、`market_scan.run_market_scan_job()` |
@@ -975,9 +976,9 @@ ON CONFLICT(stock_no) DO UPDATE SET
 
 | 項目 | 說明 |
 |---|---|
-| **觸發條件** | `agg_cheap < yesterday_close <= agg_fair_price`（至少 1 個方法 SUCCESS） |
-| **觸發語意** | 市價已超過便宜價門檻但仍在合理價內，列為「接近合理價」觀察清單供參考 |
-| **處理步驟** | 1. 取 `agg_fair`、`agg_cheap`（同規則 A）<br>2. 組 `row_base` dict（含 stock_no / stock_name / agg_fair_price / agg_cheap_price / yesterday_close / methods_success / methods_skipped）<br>3. `near_fair_rows.append(row_base)` |
+| **觸發條件** | `max(success_cheaps) < yesterday_close <= mean(success_fairs)`（至少 1 個方法 SUCCESS） |
+| **觸發語意** | 所有方法的便宜價都低於市價（任一方法都不認為便宜），但市價仍在平均合理價內，列為「接近合理價」觀察清單供參考 |
+| **處理步驟** | 1. 取 `cheap_trigger = max(success_cheaps)`、`agg_fair = mean(success_fairs)`、`agg_cheap = mean(success_cheaps)`<br>2. 組 `row_base` dict（含 stock_no / stock_name / agg_fair_price / agg_cheap_price / yesterday_close / methods_success / methods_skipped）<br>3. `near_fair_rows.append(row_base)` |
 | **輸出** | `scan_{YYYYMMDD}_near_fair.csv`（不寫 DB） |
 | **相關模組** | `market_scan.run_market_scan_job()` 內 `elif close <= agg_fair` 分支 |
 
@@ -996,11 +997,11 @@ ON CONFLICT(stock_no) DO UPDATE SET
 #### 規則分流優先順序（工程實作順序）
 
 ```
-if yesterday_close is None            → 規則 C1（uncalculable / NO_PRICE）
-elif success_count == 0               → 規則 C2（uncalculable / all SKIP）
-elif close <= agg_cheap               → 規則 A（watchlist upsert）
-elif close <= agg_fair                → 規則 B（near_fair CSV）
-else                                  → above_fair_not_output（僅計數，不寫檔）
+if yesterday_close is None               → 規則 C1（uncalculable / NO_PRICE）
+elif success_count == 0                  → 規則 C2（uncalculable / all SKIP）
+elif close <= max(success_cheaps)        → 規則 A（watchlist upsert，任一中即進）
+elif close <= mean(success_fairs)        → 規則 B（near_fair CSV）
+else                                     → above_fair_not_output（僅計數，不寫檔）
 ```
 
 ### 14.4 CSV 輸出規格
