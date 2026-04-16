@@ -832,9 +832,19 @@ def test_app_main_init_db_run_once_and_reconcile(monkeypatch, tmp_path: Path, ca
 def test_app_main_scan_market(monkeypatch, tmp_path: Path, capsys):
     """TP-SCAN: CLI scan-market subcommand routes correctly and outputs JSON summary."""
     from stock_monitor.application.market_scan import MarketScanResult
+    from stock_monitor.adapters.sqlite_repo import connect_sqlite, apply_schema
 
     db_path = tmp_path / "scan_test.db"
     output_dir = tmp_path / "scan_output"
+
+    conn = connect_sqlite(str(db_path))
+    apply_schema(conn)
+    conn.execute(
+        "INSERT INTO valuation_methods(method_name, method_version, enabled, created_at, updated_at) VALUES (?, ?, ?, ?, ?)",
+        ("emily_composite", "v1", 1, 1713000000, 1713000000),
+    )
+    conn.commit()
+    conn.close()
 
     fake_result = MarketScanResult(
         scan_date="2026-04-18",

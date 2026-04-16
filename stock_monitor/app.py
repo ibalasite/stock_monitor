@@ -22,6 +22,7 @@ from stock_monitor.application.valuation_calculator import ManualValuationCalcul
 from stock_monitor.application.valuation_scheduler import run_daily_valuation_job
 from stock_monitor.adapters.all_listed_stocks_twse import TwseAllListedStocksProvider
 from stock_monitor.application.market_scan import run_market_scan_job
+from stock_monitor.application.market_scan_methods import load_enabled_scan_methods
 from stock_monitor.bootstrap.runtime import assert_sqlite_prerequisites
 
 
@@ -59,12 +60,26 @@ def main(argv: list[str] | None = None) -> int:
         return 0
 
     if args.command == "scan-market":
+        conn = connect_sqlite(args.db_path)
+        try:
+            apply_schema(conn)
+            try:
+                valuation_methods = load_enabled_scan_methods(conn)
+            except RuntimeError as exc:
+                print(json.dumps({
+                    "status": "error",
+                    "error_code": str(exc),
+                }, ensure_ascii=False))
+                return 1
+        finally:
+            conn.close()
+
         provider = TwseAllListedStocksProvider()
         result = run_market_scan_job(
             db_path=args.db_path,
             output_dir=args.output_dir,
             stocks_provider=provider,
-            valuation_methods=[],
+            valuation_methods=valuation_methods,
         )
         print(json.dumps({
             "status": "ok",
