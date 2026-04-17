@@ -378,6 +378,8 @@ flowchart TD
     L --> END
 ```
 
+> **實作備注（EDD §4.2）**：14:00 日結估值流程由 `RealValuationCalculator`（`stock_monitor/application/valuation_calculator.py`）實現。此計算器從 `valuation_methods` 表載入 `enabled=1` 方法，對每支 watchlist 股票逐方法呼叫 `compute(stock_no, trade_date)`，底層透過 `ParallelFinancialDataProvider` 同時觸發三源財務資料（P1 FinMind / P2 MOPS / P3 Goodinfo）。僅保留 `status == "OK"` 且 `fair_price is not None` 的結果寫入 `valuation_snapshots`；SKIP 或錯誤結果僅記錄 log，不覆蓋舊快照。禁止在 `daemon_runner` 或任何生產路徑中使用 `ManualValuationCalculator`（公式近似，不呼叫任何財務資料 provider）。
+
 ### 4.3 全市場估值掃描流程（FR-19）
 ```mermaid
 flowchart TD
@@ -1006,7 +1008,7 @@ class SWRCacheBase:
 - **HIT 但過期（stale）** → 立即回傳舊值 + 背景執行緒刷新（去重：同 stock_no 同 dataset 最多一個刷新執行緒）。
 - **HIT 且新鮮** → 直接回傳，無任何背景動作。
 
-> 注意：Goodinfo 有 15 秒限速，首次全市場掃描時多數股票 MISS，各 scraping 執行緒會被 `ParallelFinancialDataProvider._call` 的 `future.result(timeout=60)` 在 60 秒後截斷並視為 `ProviderUnavailableError`。這是預期行為：P3 資料在第一次掃描後會逐漸建立快取供後續使用；當前掃描仍依賴 P1/P2 結果。
+> 注意：Goodinfo 有 15 秒限速，首次全市場掃描時多數股票 MISS，各 scraping 執行緒會被 `ParallelFinancialDataProvider._call_parallel` 的 `future.result(timeout=60)` 在 60 秒後截斷並視為 `ProviderUnavailableError`。這是預期行為：P3 資料在第一次掃描後會逐漸建立快取供後續使用；當前掃描仍依賴 P1/P2 結果。
 
 **HTTP 行為**：
 - User-Agent：`Mozilla/5.0` 仿瀏覽器（Goodinfo 對 bot UA 有封鎖）。
@@ -1024,30 +1026,48 @@ class SWRCacheBase:
 
 ```python
 def get_eps_data(self, stock_no: str, years: int = 10) -> dict | None:
-    return self._call("get_eps_data", stock_no, years=years)
+    return self._call_parallel("get_eps_data", stock_no, years=years)
 
-def _call(self, method: str, stock_no: str, **kwargs):
+def _call_parallel(self, method: str, stock_no: str, **kwargs):
     # 同時觸發三個 provider
-    with ThreadPoolExecutor(max_workers=3) as pool:
-        futures = {
-            pool.submit(getattr(p, method), stock_no, **kwargs): p
-            for p in self._providers
-        }
-    
-    # 收集結果（含 fetched_at 比較）
-    best_result, best_fetched_at = None, 0
-    for future, provider in futures.items():
+    executor = ThreadPoolExecutor(max_workers=len(self._providers))
+    futures_map = {}
+    try:
+        for p in self._providers:
+            f = executor.submit(getattr(p, method), stock_no, **kwargs)
+            futures_map[f] = p
+        done, _ = wait(list(futures_map.keys()), timeout=self.TIMEOUT_SEC)
+    finally:
+        executor.shutdown(wait=False)
+
+    # 收集結果，分三類：
+    #   valid_hits — 回傳非 None 的有效值（參與 fetched_at 比較）
+    #   any_no_data — 至少一源明確回傳 None（確認無此股票資料，不覆蓋其他源的有效值）
+    #   ProviderUnavailableError — 暫時不可用，跳過
+    valid_hits = []
+    any_no_data = False
+    for f in done:
+        p = futures_map[f]
         try:
-            result = future.result()
+            result = f.result()
             if result is None:
-                continue  # 確實無資料
-            fa = provider._latest_fetched_at(stock_no)  # DB 最新快取時間
-            if fa > best_fetched_at:
-                best_result, best_fetched_at = result, fa
+                any_no_data = True  # 此源確認無資料，但不覆蓋其他源的有效值
+            else:
+                ts = self._provider_fetched_at(p, stock_no)
+                valid_hits.append((ts, result))
         except ProviderUnavailableError:
-            continue  # 此源暫時失敗，跳過
-    
-    return best_result  # 三源均 None/失敗 → 回傳 None
+            pass  # 此源暫時失敗，跳過
+
+    if valid_hits:
+        valid_hits.sort(key=lambda x: x[0], reverse=True)
+        return valid_hits[0][1]  # fetched_at 最大的有效結果
+
+    if any_no_data:
+        return None  # 所有可用源均確認無此股票資料 → SKIP_INSUFFICIENT_DATA
+
+    raise ProviderUnavailableError(
+        f"all providers unavailable for {method}/{stock_no}"
+    )
 ```
 
 **`fetched_at` 比較語意**：
@@ -1899,25 +1919,35 @@ flowchart TD
 ### 17.2 並行執行設計
 
 ```
-_call(method, stock_no, **kwargs):
-  ThreadPoolExecutor(max_workers=3):
-    f1 = submit(finmind.method, stock_no, **kwargs)
-    f2 = submit(mops.method, stock_no, **kwargs)
-    f3 = submit(goodinfo.method, stock_no, **kwargs)
-  
-  results = []
-  for future, provider in [(f1,finmind),(f2,mops),(f3,goodinfo)]:
-    try:
-      val = future.result(timeout=60)  # 最多等 60 秒
-      if val is not None:
-        fa = provider._latest_fetched_at(stock_no)
-        results.append((fa, val))
-    except (ProviderUnavailableError, TimeoutError):
-      pass  # 此源跳過
+_call_parallel(method, stock_no, **kwargs):
+  executor = ThreadPoolExecutor(max_workers=3)
+  futures_map = {executor.submit(p.method, stock_no, **kwargs): p
+                 for p in [finmind, mops, goodinfo]}
+  done, _ = wait(futures_map.keys(), timeout=TIMEOUT_SEC=60)
+  executor.shutdown(wait=False)
 
-  if not results:
-    return None   # → SKIP_INSUFFICIENT_DATA
-  return max(results, key=lambda x: x[0])[1]  # fetched_at 最大
+  valid_hits = []
+  any_no_data = False
+  for f in done:
+    p = futures_map[f]
+    try:
+      val = f.result()
+      if val is None:
+        any_no_data = True       # 此源確認無此股票資料，不覆蓋其他源有效值
+      else:
+        ts = _provider_fetched_at(p, stock_no)
+        valid_hits.append((ts, val))
+    except ProviderUnavailableError:
+      pass  # 此源暫時不可用，跳過
+
+  if valid_hits:
+    valid_hits.sort(key=lambda x: x[0], reverse=True)
+    return valid_hits[0][1]      # fetched_at 最大的有效結果
+
+  if any_no_data:
+    return None                  # 所有可用源均確認無資料 → SKIP_INSUFFICIENT_DATA
+
+  raise ProviderUnavailableError(...)  # 全源均暫時不可用
 ```
 
 ### 17.3 Provider 角色對比
@@ -1926,7 +1956,8 @@ _call(method, stock_no, **kwargs):
 |------|-------------|----------------|---------------|
 | 資料存取 | 個股 API | Bulk（全市場） | 個股 HTML scraping |
 | 速率限制 | 300/h（免費）、600/h（付費） | 無明確上限但有 DDOS 保護 | 每 15 秒 1 req（自律限速） |
-| Cache miss 行為 | 同步 fetch（或 background stale） | 觸發 bulk fetch 背景執行緒；當次 raise | 背景 scrape；當次 raise |
+| Cache miss 行為 | 同步 fetch（或 background stale） | 觸發 bulk fetch 背景執行緒；當次 raise | **同步** scrape（SWR miss = blocking） |
+| Cache stale 行為 | 立即回傳舊值 + 背景刷新 | 立即回傳舊值 + 背景刷新 | 立即回傳舊值 + 背景刷新 |
 | 首次全市場掃描 | ~1,700 req → 觸發 rate limit | 1 次 bulk → 全市場入庫 | 太慢，僅補漏 |
 | `fetched_at` 比較優先 | 依實際快取時間 | 依 bulk fetch 完成時間 | 依 scrape 完成時間 |
 | 歷史深度 | 10 年（含） | 10 年（含） | 10 年（含） |
@@ -1969,7 +2000,7 @@ provider = ParallelFinancialDataProvider.default(db_path=db_path)
 | ID | 禁止事項 |
 |----|---------|
 | CR-FIN-01 | 禁止在 `SWRCacheBase._fetch` 中將 `None` 結果（API 失敗）寫入 DB 快取；`None` 只能觸發 `ProviderUnavailableError` |
-| CR-FIN-02 | 禁止在 `ParallelFinancialDataProvider._call` 中以 `try/except ProviderUnavailableError` 直接返回前一個 provider 的結果（sequential fallback）；必須三源全部執行後比較 `fetched_at` |
+| CR-FIN-02 | 禁止在 `ParallelFinancialDataProvider._call_parallel` 中以 `try/except ProviderUnavailableError` 直接返回前一個 provider 的結果（sequential fallback）；必須三源全部執行後比較 `fetched_at`；三源全部失敗須 raise `ProviderUnavailableError`，禁止 return None |
 | CR-FIN-03 | 禁止三個 Adapter 使用相同的 `provider_name`；`provider` 欄位值必須為 `'finmind'`、`'mops'`、`'goodinfo'` 其中之一 |
 | CR-FIN-04 | `GoodinfoAdapter` 的 **stale**（HIT 但過期）必須背景刷新並立即回傳舊值，不得阻塞等待新 scraping；**MISS**（DB 無資料）則必須同步 scraping（標準 SWR），禁止顛倒兩者行為 |
 | CR-FIN-05 | 估值方法（`EmilyCompositeV1` 等）禁止直接 import `FinMindFinancialDataProvider`；一律使用 `ParallelFinancialDataProvider`（透過依賴注入）|

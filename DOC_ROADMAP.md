@@ -138,6 +138,7 @@ PDD > EDD > USER_STORY_ACCEPTANCE_CRITERIA > TEST_PLAN > features + tests
 | `tests/test_market_scan.py` | AI 全自動 | → PDD FR-19 + EDD §14 + TEST_PLAN TP-SCAN-* | 全市場估值掃描 unit / integration |
 | `tests/test_market_scan_methods.py` | AI 全自動 | → EDD §9.1/§9.3 + TEST_PLAN TP-MVAL-* | 三方法公式 + load_enabled_scan_methods |
 | `tests/test_finmind_swr_cache.py` | AI 全自動 | → EDD §9.3/§16 + TEST_PLAN TP-FIN-* | FinMind SWR cache 三層策略 |
+| `tests/test_real_valuation_calculator.py` | AI 全自動 | → EDD §4.2 + TEST_PLAN TP-VAL-010~013 | `RealValuationCalculator` 單元測試 + daemon 14:00 wiring 合約測試 |
 | `tests/test_platform_fr20.py` | AI 全自動 | → EDD §15 + TEST_PLAN TP-PLAT-* | pathlib + SIGTERM 跨平台驗證 |
 | `tests/bdd/` | AI 全自動 | → features/*.feature（全 8 個） | pytest-bdd glue steps |
 | `tests/_contract.py` | AI 全自動 | → CLAUDE/CODEX §7 symbol contract | symbol 存在性契約基線 |

@@ -3,7 +3,7 @@
 ## 1. 測試摘要
 - 執行時間: 2026-04-17 +08:00
 - 測試命令: `python -m pytest -q tests`
-- 測試結果: `335 passed`
+- 測試結果: `339 passed`
 - Coverage Gate: `100%` (statement + branch)
 - Gate 結論: `PASS`
 
@@ -40,6 +40,7 @@
 - 新增文件對齊案例：`TP-UAT-014`（所有 LINE 出站訊息模板化）
 - 新增全市場掃描案例：`TP-SCAN-001~006`、`TP-UAT-016`（`scan-market` CLI、watchlist upsert、CSV 輸出、無 LINE 推播）
 - 新增掃描注入案例：`TP-SCAN-007`（CLI 必須注入 DB 啟用方法；空方法 fail-fast）
+- 新增 RealValuationCalculator 案例：`TP-VAL-010~013`（`RealValuationCalculator` 使用真實方法；daemon 14:00 wiring 合約；SKIP/PROVIDER_ERROR 不寫 snapshot；m×n 呼叫完整性）
 
 ## 5. 風險與備註
 - 本次執行維持 `335 passed` 與 `100%` coverage gate，非阻斷 warning 不影響 gate 結果。

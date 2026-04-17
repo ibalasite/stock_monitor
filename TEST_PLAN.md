@@ -1,6 +1,6 @@
 # TEST_PLAN - Stock Monitor System
 
-版本：v1.4  
+版本：v1.5  
 日期：2026-04-17  
 依據文件：[EDD_Stock_Monitoring_System.md](c:/Projects/stock/EDD_Stock_Monitoring_System.md), [PDD_Stock_Monitoring_System.md](c:/Projects/stock/PDD_Stock_Monitoring_System.md), [USER_STORY_ACCEPTANCE_CRITERIA.md](c:/Projects/stock/USER_STORY_ACCEPTANCE_CRITERIA.md)
 
@@ -20,6 +20,7 @@
 13. 驗證 FR-21 三源平行財務資料備援：三源同時觸發（非序列）；`fetched_at` 最新者獲勝；三源全失敗→SKIP_INSUFFICIENT_DATA；provider_name 唯一性；GoodinfoAdapter miss/stale 語意正確（TP-FIN-005~007、TP-FIN-009~011）。
 14. 驗證三個實際估值方法（`OldbullDividendYieldV1`、`EmilyCompositeV1`、`RayskyBlendedMarginV1`）公式正確性與缺資料降級行為（TP-MVAL-001~003）。
 15. 驗證排程 token 安全規範：macOS launchd plist 不含 token 明文（CR-SEC-06）；Windows 不以 `setx` 寫入 registry（CR-SEC-07）（TP-SEC-006~007）。
+16. 驗證 `RealValuationCalculator` 正確載入 DB 估值方法並串接真實 provider，daemon 14:00 job 禁止硬編碼 `ManualValuationCalculator`（TP-VAL-010~013）。
 
 ## 2. 測試範圍
 ### In Scope
@@ -121,6 +122,10 @@
 | TP-TPL-005 | EDD §13.3 CR-TPL-01 | Unit | `render_line_template_message` 和 `LineTemplateRenderer.render()` 對相同模板目錄第二次呼叫不再重建 `Environment`（證明 `_env_cache` 正常工作） || TP-VAL-004 | PDD §7 FR-11 / EDD §9.1 | Integration | 三方法同日可同時產生快照 |
 | TP-VAL-005 | PDD §7 FR-12 / EDD §9.2 | Integration | 單方法資料不足僅該方法 skip，不影響其它方法 |
 | TP-VAL-006 | PDD §7 FR-12 / EDD §6.7 | Integration | 主來源失敗時可切換備援並成功估值 |
+| TP-VAL-010 | EDD §4.2 / PDD FR-14~16 | Unit | `RealValuationCalculator.calculate()` 必須呼叫 DB 方法實例 `compute()`，不使用手動公式；`stock_no` 正確 forwarding |
+| TP-VAL-011 | EDD §4.2 daemon wiring | Contract | `daemon_runner._run_daemon_loop` 使用 `RealValuationCalculator`；原始碼不含 `ManualValuationCalculator(` 呼叫 |
+| TP-VAL-012 | EDD §4.2 SKIP 語意 | Unit | `status != "OK"` 或 `fair_price=None` 的結果不寫入 snapshots，僅 OK 結果保留 |
+| TP-VAL-013 | EDD §4.2 m×n 呼叫 | Unit | 全部啟用方法對每支 watchlist 股票各呼叫一次（m 方法 × n 股票 = m×n 次），snapshots 數等於 OK 結果數 |
 | TP-SCAN-001 | EDD §14.2 / PDD FR-19 | Unit | `TwseAllListedStocksProvider.get_all_listed_stocks()` 成功回傳 TSE+OTC 清單（含 stock_no/stock_name/yesterday_close/market）；清單不可為空 |
 | TP-SCAN-002 | EDD §14.2 / PDD FR-19 | Unit | HTTP 失敗 retry 3 次後拋例外；取回清單為空時亦拋例外，不靜默回傳空清單 |
 | TP-SCAN-003 | EDD §14.3 / PDD FR-19 | Integration | `run_market_scan_job` 三分類正確：below_cheap→`watchlist_upserted`、near_fair→`near_fair_count`、uncalculable→`uncalculable_count`；agg 聚合用 max() 而非算術平均 |
@@ -218,6 +223,10 @@
 | TP-VAL-004 | 三方法所需資料皆可用 | 觸發日結 job | `emily/oldbull/raysky` 各新增一筆快照 |
 | TP-VAL-005 | raysky 缺 `current_assets` | 觸發日結 job | raysky 記錄 `SKIP_INSUFFICIENT_DATA`，其餘方法成功 |
 | TP-VAL-006 | 主來源逾時、備援可用 | 觸發日結 job | 該方法可成功計算，且有來源切換 log |
+| TP-VAL-010 | spy method 注入 `load_enabled_scan_methods`，watchlist 2 支股票（2330、0056） | 建立 `RealValuationCalculator` 並呼叫 `calculate()` | spy `compute()` 被呼叫 2 次（各股票一次）；snapshots 含 `stock_no` 與 `trade_date`；無 `manual_fair_price` 公式路徑 |
+| TP-VAL-011 | 讀取 `stock_monitor/application/daemon_runner.py` 原始碼文字 | `pathlib.Path.read_text()` 搜尋關鍵字 | 含 `"RealValuationCalculator"`；不含 `"ManualValuationCalculator("` |
+| TP-VAL-012 | spy method：2330 回 `status=OK`，0056 回 `status=SKIP_PROVIDER_ERROR` | 建立 `RealValuationCalculator` 並呼叫 `calculate()` | snapshots 長度 = 1；唯一條目 `stock_no=="2330"`；SKIP 結果不出現 |
+| TP-VAL-013 | 2 支股票 × 2 個方法（emily_composite + oldbull_dividend_yield），全部 OK | 建立 `RealValuationCalculator` 並呼叫 `calculate()` | `compute()` 共被呼叫 4 次；snapshots 長度 = 4；`stocks_seen == {2330, 0056}`；`methods_seen == {emily_composite, oldbull_dividend_yield}` |
 | TP-UAT-001 | 系統可運行 | 依 PDD UAT-1 執行並記錄證據 | 通過且具通知時間證據 |
 | TP-UAT-002 | 系統可運行 | 依 PDD UAT-2 執行並記錄證據 | 通過且具冷卻抑制證據 |
 | TP-UAT-003 | 系統可運行 | 依 PDD UAT-3 執行並記錄證據 | 通過且具資料查詢證據 |

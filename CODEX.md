@@ -119,7 +119,7 @@ Alias（等效）：
 | `stock_monitor.application.monitoring_workflow` | `aggregate_minute_notifications`, `merge_minute_message`, `dispatch_and_persist_minute`, `reconcile_pending_once`, `guard_minute_execution`, `persist_message_rows_transactional`, `fetch_market_with_retry` |
 | `stock_monitor.application.trading_session` | `evaluate_market_open_status`, `is_in_trading_session` |
 | `stock_monitor.application.valuation_scheduler` | `run_daily_valuation_job` |
-| `stock_monitor.application.valuation_calculator` | `ManualValuationCalculator` |
+| `stock_monitor.application.valuation_calculator` | `ManualValuationCalculator`, `RealValuationCalculator` |
 | `stock_monitor.application.runtime_service` | `MinuteCycleConfig` |
 | `stock_monitor.uat.scenarios` | `UAT_SCENARIOS` |
 | `stock_monitor.adapters.sqlite_repo` | `SqliteWatchlistRepository`（含 `update_stock_names(names: dict[str, str])`，FR-18） |
@@ -194,7 +194,7 @@ python -m pytest -q tests/test_integration_workflow.py -k TP-INT-010
 - **禁止** macOS launchd plist 的 `EnvironmentVariables` 區塊存放 `LINE_CHANNEL_ACCESS_TOKEN` 或任何 token 明文；token 必須在 `start_daemon.sh` 執行時從 macOS Keychain 取出（CR-SEC-06）
 - **禁止** Windows 以 `setx` 或任何方式將 `LINE_CHANNEL_ACCESS_TOKEN` 寫入 registry 或持久化檔案；token 必須存於 Windows Credential Manager，由 `start_daemon.ps1` 在執行時以 `Get-StoredCredential` 取出（CR-SEC-07）
 - **禁止** 在 `SWRCacheBase._fetch` 中將 API 失敗（`_fetch_raw` 回傳 `None`）寫入 DB 快取；`None` 只能觸發 `ProviderUnavailableError`（CR-FIN-01）
-- **禁止** `ParallelFinancialDataProvider._call` 以 sequential fallback 模式（P1 失敗才試 P2）執行；必須三源全部同時執行後比較 `fetched_at`（CR-FIN-02）
+- **禁止** `ParallelFinancialDataProvider._call_parallel` 以 sequential fallback 模式（P1 失敗才試 P2）執行；必須三源全部同時執行後比較 `fetched_at`；三源全部失敗須 raise `ProviderUnavailableError`，禁止 return None（CR-FIN-02）
 - **禁止** 三個財務資料 Adapter 使用相同 `provider_name`；允許值為 `'finmind'`、`'mops'`、`'goodinfo'`（CR-FIN-03）
 - **禁止** `GoodinfoAdapter` cache stale 時同步阻塞等待 scraping 完成；stale 必須背景執行，miss 必須同步，兩者不可對調（CR-FIN-04）
 - **禁止** 估值方法（`EmilyCompositeV1` 等）直接 import `FinMindFinancialDataProvider`；一律使用 `ParallelFinancialDataProvider`（CR-FIN-05）
