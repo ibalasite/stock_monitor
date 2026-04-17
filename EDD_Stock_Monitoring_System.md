@@ -1,8 +1,20 @@
 # EDD - 台股監控與 LINE 通知系統
 
-版本：v1.5  
+版本：v1.6  
 日期：2026-04-17  
 對齊文件：[PDD_Stock_Monitoring_System.md](PDD_Stock_Monitoring_System.md)
+
+變更摘要（v1.6）：
+- 新增 §9.4 三源平行財務資料備援架構（PDD FR-21）：FinMind（P1）、MOPS+TWSE（P2）、Goodinfo（P3）三源同時執行，`fetched_at` 最新者勝。
+- 新增 `ProviderUnavailableError` 例外與 `FinancialDataPort` Protocol（`stock_monitor/adapters/financial_data_port.py`）。
+- 新增 `SWRCacheBase` 抽象基底類別（`stock_monitor/adapters/financial_data_cache.py`），三個 Adapter 共用。
+- 新增 `MopsTwseAdapter` 規格（P2 bulk-fetch，`stock_monitor/adapters/financial_data_mops.py`）。
+- 新增 `GoodinfoAdapter` 規格（P3 per-stock scraping，`stock_monitor/adapters/financial_data_goodinfo.py`）。
+- 新增 `ParallelFinancialDataProvider` 規格（`stock_monitor/adapters/financial_data_fallback.py`）：三源並行 + `fetched_at` 最新優先。
+- **更新 `financial_data_cache` Schema**：加入 `provider TEXT NOT NULL` 欄位；PRIMARY KEY 從 `(stock_no, dataset)` 改為 `(provider, stock_no, dataset)`；舊資料以 Migration 補 `provider='finmind'`。
+- 更新 §16 為 FinMind SWR Cache + 三源架構完整規格（§16.1 Schema、§16.7 Symbol Contract）。
+- 新增 §17 三源平行財務資料 — 完整工程規格。
+- 更新 Symbol Contract 新增 `FinancialDataPort`、`ProviderUnavailableError`、`SWRCacheBase`、`MopsTwseAdapter`、`GoodinfoAdapter`、`ParallelFinancialDataProvider`。
 
 變更摘要（v1.5）：
 - 新增 CR-SEC-06：macOS launchd plist 禁止明文存放 LINE token；改由 `start_daemon.sh` 在執行時從 macOS Keychain 取出。
@@ -72,6 +84,7 @@
 | v1.0 | 2026-04-14 | no schema break | 行情 price 改為**委賣一**（最佳委賣價）：TWSE 採 `a` 欄位第一值；Yahoo 採 HTML 委賣價區塊委賣一，盤後 fallback `regularMarketPrice` |
 | v1.1 | 2026-04-17 | no schema break | 新增 FR-19 全市場估值掃描：新 CLI `scan-market`、`AllListedStocksPort`、`TwseAllListedStocksProvider`、`run_market_scan_job`、CSV 輸出規格 |
 | v1.5 | 2026-04-17 | no schema break | Security Review：CR-SEC-06/07 排程 token 明文禁止；macOS 改 Keychain、Windows 改 Credential Manager |
+| v1.6 | 2026-04-17 | requires migration: financial_data_cache 新增 provider 欄位 + PK 變更 | 三源平行財務資料備援架構（PDD FR-21）：FinMind P1 + MOPS P2 + Goodinfo P3 三源並行，各自獨立 SWR Cache，以 fetched_at 最新為準；新 Adapter：MopsTwseAdapter、GoodinfoAdapter、ParallelFinancialDataProvider |
 ## 1. 目的與範圍
 本文件定義工程實作細節，交付目標：
 1. 盤中每分鐘監控台股價格。
@@ -83,7 +96,9 @@
 7. 每日 14:00 對三方法逐股估值，資料不足時跳過且不覆蓋舊值。
 8. 每交易日開盤第一個可交易分鐘先推送「監控設定摘要」（股票/方法/fair/cheap），同日僅一次。
 9. LINE 訊息文本採模板渲染，不將完整文案硬寫於業務流程程式。
-10. 盤中行情採雙來源（TWSE MIS 主 + Yahoo Finance TW HTML 副），以 `tick_at` 較新者為準（Freshness-First，PDD FR-15）。行情 `price` 代表**委賣一**（最佳委賣價），反映當下可立即成交之買入價格。11. 上市上櫃全市場估値揃描（PDD FR-19）：手動執行 CLI 命令 `scan-market`，一次計算全體普通股三方法估値，依是否低於便宜價自動 upsert 監控清單或輸出 CSV，不發送 LINE 。
+10. 盤中行情採雙來源（TWSE MIS 主 + Yahoo Finance TW HTML 副），以 `tick_at` 較新者為準（Freshness-First，PDD FR-15）。行情 `price` 代表**委賣一**（最佳委賣價），反映當下可立即成交之買入價格。
+11. 上市上櫃全市場估值掃描（PDD FR-19）：手動執行 CLI 命令 `scan-market`，一次計算全體普通股三方法估值，依是否低於便宜價自動 upsert 監控清單或輸出 CSV，不發送 LINE。
+12. 財務資料三源平行備援（PDD FR-21）：估值計算的財務資料輸入採 FinMind（P1）、MOPS+TWSE（P2）、Goodinfo（P3）三源同時執行，各源有獨立 SWR Cache，以 `fetched_at` 最新者為準；任一源失敗不阻斷估值流程。
 ## 2. 關鍵業務規則（定版）
 ### 2.1 訊號狀態
 - `stock_status=1`：低於合理價（below fair）
@@ -779,66 +794,308 @@ LINE_TEMPLATE_OPENING_SUMMARY=line_opening_summary_mobile_compact_v1
 - `SKIP_PROVIDER_ERROR`：來源逾時/錯誤，不覆蓋舊快照。
 - 日結任務成功條件：至少有一個 `stock x method` 成功即可視為 job completed（含部分 skip）。
 
-### 9.3 FinMindFinancialDataProvider 設計
+### 9.3 FinMindFinancialDataProvider 設計（P1 主來源）
 
 **模組**：`stock_monitor.adapters.financial_data_finmind.FinMindFinancialDataProvider`
+
+> v1.6 起，本 Adapter 繼承 `SWRCacheBase`（見 §9.4.3），並以 `provider_name = "finmind"` 區分 cache 鍵。
+> 估值方法的資料存取入口改為 `ParallelFinancialDataProvider`（見 §9.4.6）。
 
 #### 資料集對映
 
 | 估值輸入 | FinMind Dataset | type 過濾 |
 |---|---|---|
-| 平均股利（10 年） | `TaiwanStockDividend` | — |
+| 平均股利（5 年） | `TaiwanStockDividend` | — |
 | EPS TTM / 10 年平均 | `TaiwanStockFinancialStatements` | `EPS` |
 | 流動資產 / 總負債 | `TaiwanStockBalanceSheet` | `CurrentAssets` / `Liabilities` |
-| 流通股數 | `TaiwanStockBalanceSheet` | `CommonStockSharesOutstanding` |
+| 流通股數 | `TaiwanStockDividend` | `ParticipateDistributionOfTotalShares` |
 | PE 低 / 中均 / BPS | `TaiwanStockPER` | — |
 | 歷年股價年均 / 年低（10 年） | `TaiwanStockPrice` | — |
 
-#### SWR Cache 架構（三層）
+#### SWR Cache 架構（四層）
 
 ```
 請求 get_*(stock_no)
-  ├─ L1：_mem[stock_no][dataset]（同進程記憶體）
-  ├─ L2：DB financial_data_cache fetched_at ≤ 15 天（新鮮）→ 直接回傳 + 升入 L1
+  ├─ L1：_mem[(provider, stock_no, dataset)]（同進程記憶體）
+  ├─ L2：DB financial_data_cache WHERE provider='finmind' AND fetched_at ≤ 15 天 → 直接回傳 + 升入 L1
   ├─ L3：DB 已有但 > 15 天（陳舊）→ 立即回傳 + 背景 daemon thread 刷新（去重 _refreshing set）
-  └─ L4：DB 沒有 → API 擷取 → 存 DB → 升入 L1
+  └─ L4：DB 沒有 → API 擷取 → 存 DB（provider='finmind'）→ 升入 L1
+       DB 沒有且 API 失敗 → raise ProviderUnavailableError（不存快取）
 ```
 
 - **SWR TTL**：15 天（`SWR_TTL_SECONDS = 86400 * 15`）
 - **背景刷新去重**：`_refreshing: set` + `threading.Lock()` 保護，同 dataset 最多一個刷新執行緒
 - **DB 不可用降級**：db_path 為 None 時跳過 DB 層，直接呼叫 API
+- **快取毒化防護**：API 回傳非 2xx（rate limit 402 等）時，`_fetch_finmind` 回傳 `None`；`SWRCacheBase._fetch` 見 `None` 時不寫快取、改 raise `ProviderUnavailableError`
 
-#### 關鍵實作約束（已修正的解析 bug）
+#### 關鍵實作約束
 
 1. **ROC 年份問題**：FinMind `TaiwanStockDividend` 的 `year` 欄位為 ROC 格式（`'98年'`、`'114年第3季'`）；必須改用 `date` 欄位的 ISO 日期前 4 碼（`str(row["date"])[:4]`）取西曆年份。
 2. **EPS 年度加總**：FinMind 回傳季度 EPS；`eps_10y_avg` 計算必須將同年度所有季度加總再取年均（不可只取最後一季）。
 3. **資產負債表型別名稱**：FinMind `TaiwanStockBalanceSheet` 負債欄位 `type = 'Liabilities'`（非 `'TotalLiabilities'`）；讀取時必須以 `'Liabilities'` 過濾。
-4. **NT$ 單位正規化**：FinMind 資產負債表值為實際 NT$（如 `3,817,130,817,000`）；NCAV 公式期望 NT$ 千元為單位（`(ca - tl) * 1000 / shares`），因此讀取後需除以 1,000 再儲存。
+4. **NT$ 單位正規化**：FinMind 資產負債表值為實際 NT$（如 `3,817,130,817,000`）；NCAV 公式期望 NT$ 千元為單位，因此讀取後需除以 1,000 再儲存。
 
 #### ETF 降級行為
 
 ETF（如 0050）無 EPS / PE / PB / 負債表資料；`FinMindFinancialDataProvider` 對這些方法回傳 `None`，對應方法的 `emily_composite_v1` 子法跳過，不阻斷股利法與歷年股價法子法執行。
-
-#### `financial_data_cache` Table
-
-```sql
-CREATE TABLE IF NOT EXISTS financial_data_cache (
-  stock_no   TEXT NOT NULL,
-  dataset    TEXT NOT NULL,
-  data_json  TEXT NOT NULL CHECK (json_valid(data_json)),
-  fetched_at INTEGER NOT NULL,
-  PRIMARY KEY (stock_no, dataset)
-);
-CREATE INDEX IF NOT EXISTS idx_fdc_fetched_at ON financial_data_cache(fetched_at);
-```
 
 #### `db_path` 傳遞路徑
 
 ```
 app.py scan-market / valuation 路由
   → load_enabled_scan_methods(conn, as_of_date, db_path=args.db_path)
-    → FinMindFinancialDataProvider(db_path=db_path)
+    → ParallelFinancialDataProvider.default(db_path=db_path)
+      → FinMindFinancialDataProvider(db_path=db_path)
 ```
+
+### 9.4 三源平行財務資料備援架構（PDD FR-21）
+
+#### 9.4.1 設計總覽
+
+```
+估值方法 (EmilyCompositeV1 / OldbullDividendYieldV1 / RayskyBlendedMarginV1)
+         │
+         │  get_avg_dividend / get_eps_data / ...
+         ▼
+ ┌──────────────────────────────────────────────────┐
+ │         ParallelFinancialDataProvider             │
+ │   同時觸發三個 provider，取 fetched_at 最新者     │
+ └────┬─────────────┬─────────────────┬─────────────┘
+      │             │                 │
+      ▼             ▼                 ▼
+ FinMind P1    MopsTwse P2      Goodinfo P3
+ per-stock     bulk-fetch       per-stock
+ API           MOPS+TWSE        scraping
+      │             │                 │
+      ▼             ▼                 ▼
+ financial_data_cache (provider='finmind')
+                     (provider='mops')
+                                      (provider='goodinfo')
+```
+
+**核心原則**：
+- 三源同時執行（`concurrent.futures.ThreadPoolExecutor`），互不等待。
+- 每源有獨立快取（`financial_data_cache` 以 `provider` 區分）。
+- 每次請求後比較三源各自的 `fetched_at`，取最新的非 `None` 值返回。
+- 某源 `ProviderUnavailableError` 或未命中快取時，該源靜默跳過，不影響其他源。
+- 三源全失敗（均回傳 `None`） → 回傳 `None` → 估值方法記 `SKIP_INSUFFICIENT_DATA`。
+
+#### 9.4.2 `ProviderUnavailableError` 與 `FinancialDataPort`
+
+**模組**：`stock_monitor/adapters/financial_data_port.py`
+
+```python
+class ProviderUnavailableError(Exception):
+    """Rate limit、網路逾時、或其他暫時性失敗。
+    
+    語意：來源目前無法提供資料（transient），不代表股票真的沒有資料。
+    與 None 回傳的語意差異：
+      - None  → API 正常回應，股票確實無此資料（如 ETF 無 EPS）
+      - raise → 來源不可用，不知道股票是否有資料
+    """
+
+class FinancialDataPort(Protocol):
+    """六個財務資料方法的共用 Protocol。"""
+    provider_name: str  # class attribute, e.g. "finmind", "mops", "goodinfo"
+
+    def get_avg_dividend(self, stock_no: str, years: int = 5) -> float | None: ...
+    def get_eps_data(self, stock_no: str, years: int = 10) -> dict | None: ...
+    def get_balance_sheet_data(self, stock_no: str) -> dict | None: ...
+    def get_pe_pb_stats(self, stock_no: str, years: int = 10) -> dict | None: ...
+    def get_price_annual_stats(self, stock_no: str, years: int = 10) -> dict | None: ...
+    def get_shares_outstanding(self, stock_no: str) -> float | None: ...
+```
+
+**回傳語意規則**（三個 Adapter 均須遵守）：
+
+| 狀況 | 回傳 |
+|------|------|
+| 正常資料 | `float / dict`（非 None） |
+| 股票確實無此資料（如 ETF 無 EPS） | `None` |
+| 來源暫時失敗（rate limit、timeout、HTTP 錯誤） | `raise ProviderUnavailableError` |
+
+#### 9.4.3 `SWRCacheBase` 共用抽象基底
+
+**模組**：`stock_monitor/adapters/financial_data_cache.py`
+
+```python
+class SWRCacheBase:
+    """三個 Adapter 共用的 SWR Cache 基底。
+    
+    Subclass 需實作：
+      provider_name: str          — cache 鍵中的 provider 識別
+      _fetch_raw(dataset, stock_no) -> list[dict] | None
+                                  — 呼叫真實資料來源；None = 暫時失敗（不寫 cache）
+    """
+```
+
+快取讀取流程（`_fetch(dataset, stock_no)`）：
+
+```
+1. _mem 命中（同進程同次 scan）→ 直接回傳 list
+2. DB fresh（fetched_at 在 stale_days 內）→ 回傳 + 升入 _mem
+3. DB stale（fetched_at 超期）→ 立即回傳舊值 + 背景刷新執行緒（去重 _refreshing set）
+4. DB miss → 同步呼叫 _fetch_raw（阻塞直到完成）：
+     - 回傳 list（含空 []）→ 寫 DB（provider=self.provider_name）→ 升入 _mem → 回傳
+     - 回傳 None（暫時失敗）→ 不寫 cache → raise ProviderUnavailableError
+```
+
+> SWR 語意要點：**stale 才背景**，**miss 是同步**。兩者不可對調。
+> Goodinfo 在 miss 時同步 scraping 可能耗時，由上層 `ParallelFinancialDataProvider` 的 `future.result(timeout=60)` 控制最長等待時間。
+
+**關鍵約束**：
+- `None` 從 `_fetch_raw` 回傳時，`_fetch` 絕不寫快取、必須 raise `ProviderUnavailableError`。
+- `[]`（空 list）代表股票確實無資料，視為有效回應，**可寫快取**。
+- 快取 key 為 `(provider, stock_no, dataset)`，三個 Adapter 之間快取不互相覆蓋。
+- `stale_days` 預設 15 天，全三個 Adapter 使用相同預設值。
+
+#### 9.4.4 `MopsTwseAdapter`（P2 — MOPS + TWSE 批量來源）
+
+**模組**：`stock_monitor/adapters/financial_data_mops.py`  
+**識別**：`provider_name = "mops"`
+
+**核心設計**：MOPS/TWSE 公開 API 支援「一次取全市場所有公司」的批量資料，大幅降低呼叫次數。
+
+| 資料方法 | 來源 API | 批量策略 |
+|---|---|---|
+| `get_eps_data` | MOPS `ajax_t163sb04`（每季一次呼叫，回傳全市場） | 首次 miss 觸發 bulk fetch：40 次呼叫（10 年 × 4 季） |
+| `get_balance_sheet_data` | MOPS `ajax_t164sb03`（每季一次呼叫） | 首次 miss 觸發 bulk fetch：40 次呼叫（10 年 × 4 季） |
+| `get_pe_pb_stats` | TWSE `BWIBBU_d`（每日全市場 PE/PB） | 首次 miss 觸發 bulk fetch：120 次呼叫（10 年 × 12 月） |
+| `get_price_annual_stats` | TWSE `STOCK_DAY_ALL`（每月全市場股價） | 首次 miss 觸發 bulk fetch：120 次呼叫（10 年 × 12 月） |
+| `get_avg_dividend` | MOPS `ajax_t05st09`（個股股利） | 個股 per-request（無全市場批量 API） |
+| `get_shares_outstanding` | 同 `get_avg_dividend` | 個股 per-request |
+
+**Bulk Fetch 協調機制**：
+- 每個 dataset 維護一個 `_bulk_done: set` + `threading.Lock()`。
+- 第一次 miss 時：取 lock → 啟動 bulk fetch 背景執行緒 → 將所有資料寫入 DB（provider='mops'）→ 標記 `_bulk_done`。
+- 後續同 dataset miss：若 bulk 尚未完成則直接 raise `ProviderUnavailableError`（不等待）；若已完成則從 DB 取值（此時應命中）。
+- Bulk fetch 執行緒失敗時：記 WARN log，清除 `_bulk_done` 標記，下次 miss 重試。
+
+**MOPS API 端點**：
+- EPS：`https://mops.twse.com.tw/mops/web/ajax_t163sb04` (POST)，參數：`year`, `season`, `TYPEK=all`
+- Balance Sheet：`https://mops.twse.com.tw/mops/web/ajax_t164sb03` (POST)，參數：`year`, `season`, `TYPEK=all`  
+- Dividend（個股）：`https://mops.twse.com.tw/mops/web/ajax_t05st09` (POST)，參數：`co_id={stock_no}`
+
+**TWSE API 端點**：
+- PE/PB（每日）：`https://www.twse.com.tw/rwd/zh/BWIBBU/BWIBBU_d?response=json&date={YYYYMMDD}`
+- 股價（每月）：`https://www.twse.com.tw/rwd/zh/afterTrading/STOCK_DAY_ALL?response=json&date={YYYYMMDD}`
+
+#### 9.4.5 `GoodinfoAdapter`（P3 — Goodinfo 個股 Scraping）
+
+**模組**：`stock_monitor/adapters/financial_data_goodinfo.py`  
+**識別**：`provider_name = "goodinfo"`
+
+**核心設計**：Goodinfo 為個股 HTML scraping，需嚴格限速。
+
+| 資料方法 | Goodinfo 頁面 |
+|---|---|
+| `get_avg_dividend` | `StockDividendPolicy.asp?StockID={no}` |
+| `get_eps_data` | `StockFinDetail.asp?StockID={no}&RPT_CAT=M_QUAR_ACC&ISIN=1` |
+| `get_pe_pb_stats` | `StockBW.asp?StockID={no}` |
+| `get_price_annual_stats` | `StockBW.asp?StockID={no}` |
+| `get_balance_sheet_data` | `StockFinDetail.asp?StockID={no}&RPT_CAT=BS_M_YEAR` |
+| `get_shares_outstanding` | `StockDividendPolicy.asp?StockID={no}` |
+
+**限速規則**：
+- 全進程（跨所有 stock_no）維護一個全域 `_last_request_time` + `threading.Lock()`。
+- 每次請求前強制等待至少 15 秒（`GOODINFO_THROTTLE_SEC = 15`）。
+- 快取命中時不發請求，不受限速影響。
+
+**快取策略（標準 SWR）**：
+- **MISS（DB 無資料）** → 在當前執行緒同步執行 scraping → 成功則寫 DB + 回傳；失敗（逾時/HTTP 錯誤）則 `_fetch_raw` 回傳 `None` → `SWRCacheBase._fetch` raise `ProviderUnavailableError`（不寫快取）。
+- **HIT 但過期（stale）** → 立即回傳舊值 + 背景執行緒刷新（去重：同 stock_no 同 dataset 最多一個刷新執行緒）。
+- **HIT 且新鮮** → 直接回傳，無任何背景動作。
+
+> 注意：Goodinfo 有 15 秒限速，首次全市場掃描時多數股票 MISS，各 scraping 執行緒會被 `ParallelFinancialDataProvider._call` 的 `future.result(timeout=60)` 在 60 秒後截斷並視為 `ProviderUnavailableError`。這是預期行為：P3 資料在第一次掃描後會逐漸建立快取供後續使用；當前掃描仍依賴 P1/P2 結果。
+
+**HTTP 行為**：
+- User-Agent：`Mozilla/5.0` 仿瀏覽器（Goodinfo 對 bot UA 有封鎖）。
+- timeout：30 秒。
+- 請求失敗（逾時、HTTP 錯誤）：`_fetch_raw` 回傳 `None`（SWRCacheBase 轉為 raise `ProviderUnavailableError`）。
+
+#### 9.4.6 `ParallelFinancialDataProvider`（三源並行聚合）
+
+**模組**：`stock_monitor/adapters/financial_data_fallback.py`  
+**注意**：本類別雖檔名含 fallback，實際為並行執行模式（保留檔名以維持 import 相容性）。
+
+**公開介面**：與 `FinancialDataPort` Protocol 完全一致（六個方法）。
+
+**並行執行流程（以 `get_eps_data` 為例）**：
+
+```python
+def get_eps_data(self, stock_no: str, years: int = 10) -> dict | None:
+    return self._call("get_eps_data", stock_no, years=years)
+
+def _call(self, method: str, stock_no: str, **kwargs):
+    # 同時觸發三個 provider
+    with ThreadPoolExecutor(max_workers=3) as pool:
+        futures = {
+            pool.submit(getattr(p, method), stock_no, **kwargs): p
+            for p in self._providers
+        }
+    
+    # 收集結果（含 fetched_at 比較）
+    best_result, best_fetched_at = None, 0
+    for future, provider in futures.items():
+        try:
+            result = future.result()
+            if result is None:
+                continue  # 確實無資料
+            fa = provider._latest_fetched_at(stock_no)  # DB 最新快取時間
+            if fa > best_fetched_at:
+                best_result, best_fetched_at = result, fa
+        except ProviderUnavailableError:
+            continue  # 此源暫時失敗，跳過
+    
+    return best_result  # 三源均 None/失敗 → 回傳 None
+```
+
+**`fetched_at` 比較語意**：
+- 各 provider 執行完後，查詢 `financial_data_cache WHERE provider=? AND stock_no=? AND dataset=?` 取最新 `fetched_at`。
+- `fetched_at` 為 Unix timestamp（秒）。
+- 有效資料中 `fetched_at` 最大者獲選。
+- 若某 provider 回傳 `None`（確實無資料），其 `fetched_at` 不參與比較。
+
+**工廠方法**：
+```python
+@classmethod
+def default(cls, db_path=None, stale_days=15):
+    return cls([
+        FinMindFinancialDataProvider(db_path=db_path, stale_days=stale_days),
+        MopsTwseAdapter(db_path=db_path, stale_days=stale_days),
+        GoodinfoAdapter(db_path=db_path, stale_days=stale_days),
+    ])
+```
+
+#### 9.4.7 `financial_data_cache` Schema（v1.6 更新）
+
+> **DB Migration 要求**：v1.6 前已有 `(stock_no, dataset)` PK 的現存資料，需執行 migration：
+> 1. `ALTER TABLE financial_data_cache ADD COLUMN provider TEXT NOT NULL DEFAULT 'finmind'`
+> 2. 重建 PRIMARY KEY：SQLite 不支援直接改 PK；需建新表、遷移、改名。
+>
+> `SWRCacheBase._migrate_cache_table()` 需在首次連線時自動執行此 migration。
+
+```sql
+CREATE TABLE IF NOT EXISTS financial_data_cache (
+  provider   TEXT    NOT NULL,              -- 'finmind' | 'mops' | 'goodinfo'
+  stock_no   TEXT    NOT NULL,
+  dataset    TEXT    NOT NULL,              -- e.g. 'TaiwanStockDividend', 'eps', 'balance_sheet'
+  data_json  TEXT    NOT NULL CHECK (json_valid(data_json)),
+  fetched_at INTEGER NOT NULL,              -- Unix timestamp（seconds）
+  PRIMARY KEY (provider, stock_no, dataset)
+);
+CREATE INDEX IF NOT EXISTS idx_fdc_fetched_at
+  ON financial_data_cache(fetched_at);
+CREATE INDEX IF NOT EXISTS idx_fdc_stock_no
+  ON financial_data_cache(stock_no, dataset, fetched_at DESC);
+```
+
+**新增輔助查詢（`SWRCacheBase._latest_fetched_at`）**：
+```sql
+SELECT MAX(fetched_at) FROM financial_data_cache
+WHERE provider = ? AND stock_no = ?
+```
+供 `ParallelFinancialDataProvider` 比較三源 `fetched_at`。
 
 ## 10. 測試計畫（補強版）
 ### 10.1 單元測試
@@ -1133,7 +1390,12 @@ CLI 路由行為補充（強制）：
 |---|---|
 | `stock_monitor.application.market_scan` | `run_market_scan_job`, `MarketScanResult` |
 | `stock_monitor.adapters.all_listed_stocks_twse` | `TwseAllListedStocksProvider` |
-| `stock_monitor.adapters.financial_data_finmind` | `FinMindFinancialDataProvider`（含 `_fetch_finmind`、`_mem`、`SWR_TTL_SECONDS`） |
+| `stock_monitor.adapters.financial_data_port` | `ProviderUnavailableError`, `FinancialDataPort` |
+| `stock_monitor.adapters.financial_data_cache` | `SWRCacheBase`（含 `SWR_TTL_SECONDS`） |
+| `stock_monitor.adapters.financial_data_finmind` | `FinMindFinancialDataProvider`（含 `_fetch_finmind`、`_mem`） |
+| `stock_monitor.adapters.financial_data_mops` | `MopsTwseAdapter` |
+| `stock_monitor.adapters.financial_data_goodinfo` | `GoodinfoAdapter` |
+| `stock_monitor.adapters.financial_data_fallback` | `ParallelFinancialDataProvider`（含 `.default(db_path)` 工廠方法） |
 | `stock_monitor.application.valuation_methods_real` | `EmilyCompositeV1`, `OldbullDividendYieldV1`, `RayskyBlendedMarginV1` |
 | `stock_monitor.application.market_scan_methods` | `load_enabled_scan_methods`（含 `db_path` 參數） |
 
@@ -1528,36 +1790,43 @@ $env:LINE_TO_GROUP_ID          = $groupId
 
 ---
 
-## 16. FinMind 財務資料 SWR Cache 實作
+## 16. FinMind 財務資料 SWR Cache 實作（v1.6 已更新）
 
-本節補充 §9.3 設計規格的工程細節，含 DB schema 同步要求與測試追蹤。
+本節補充 §9.3 設計規格的工程細節。**v1.6 起 `financial_data_cache` Schema 加入 `provider` 欄位**，詳見下方。
 
-### 16.1 `financial_data_cache` Schema
+### 16.1 `financial_data_cache` Schema（v1.6）
 
 （已納入 `stock_monitor/db/schema.py` 的 `SCHEMA_SQL`）
 
 ```sql
 CREATE TABLE IF NOT EXISTS financial_data_cache (
-  stock_no   TEXT NOT NULL,
-  dataset    TEXT NOT NULL,
-  data_json  TEXT NOT NULL CHECK (json_valid(data_json)),
-  fetched_at INTEGER NOT NULL,          -- Unix timestamp（seconds）
-  PRIMARY KEY (stock_no, dataset)
+  provider   TEXT    NOT NULL,              -- 'finmind' | 'mops' | 'goodinfo'
+  stock_no   TEXT    NOT NULL,
+  dataset    TEXT    NOT NULL,
+  data_json  TEXT    NOT NULL CHECK (json_valid(data_json)),
+  fetched_at INTEGER NOT NULL,              -- Unix timestamp（seconds）
+  PRIMARY KEY (provider, stock_no, dataset)
 );
-CREATE INDEX IF NOT EXISTS idx_fdc_fetched_at ON financial_data_cache(fetched_at);
+CREATE INDEX IF NOT EXISTS idx_fdc_fetched_at
+  ON financial_data_cache(fetched_at);
+CREATE INDEX IF NOT EXISTS idx_fdc_stock_no
+  ON financial_data_cache(stock_no, dataset, fetched_at DESC);
 ```
+
+**Migration 路徑（v1.5 → v1.6）**：既有 `(stock_no, dataset)` PK 的舊表需重建，舊資料補 `provider='finmind'`。`SWRCacheBase._migrate_cache_table()` 在首次連線自動執行。
 
 ### 16.2 SWR TTL 常數
 
 | 常數 | 值 | 用途 |
 |---|---|---|
-| `SWR_TTL_SECONDS` | `86400 * 15` | DB 快取有效期（15 天）|
+| `SWR_TTL_SECONDS` | `86400 * 15` | DB 快取有效期（15 天，三個 Adapter 共用）|
 
 ### 16.3 `_fetch_finmind(dataset, stock_no, token)` 規格
 
 - FinMind API endpoint：`https://api.finmindtrade.com/api/v4/data`
-- 回傳：`list[dict]`（原始 record 列表），空清單視為「無資料」但不 raise
-- 錯誤：HTTP 非 2xx 或 JSON parse 失敗 → raise exception（由 SWR 外層處理）
+- 成功（HTTP 200）：回傳 `list[dict]`；空清單 `[]` = 股票確實無資料
+- 失敗（HTTP 非 200、逾時、JSON 解析失敗）：回傳 `None`（不寫快取）
+- `SWRCacheBase._fetch` 見 `None` 時 raise `ProviderUnavailableError`
 
 ### 16.4 `valuation_methods_real.py` 三方法類別規格
 
@@ -1566,6 +1835,8 @@ CREATE INDEX IF NOT EXISTS idx_fdc_fetched_at ON financial_data_cache(fetched_at
 | `EmilyCompositeV1` | `emily_composite_v1` | 4 子法（股利、歷年股價、PE、PB） | `fair = mean(子法 fair) * 0.9`（安全邊際） |
 | `OldbullDividendYieldV1` | `oldbull_dividend_yield_v1` | `avg_dividend` | `fair = avg_dividend / 0.05`, `cheap = avg_dividend / 0.06` |
 | `RayskyBlendedMarginV1` | `raysky_blended_margin_v1` | 4 子法（PE、股利、PB、NCAV） | `fair = median(子法 fair)`, `cheap = fair * 0.9` |
+
+> v1.6 起，三個方法的 `provider` 參數從 `FinMindFinancialDataProvider` 改為 `ParallelFinancialDataProvider`。
 
 ### 16.5 方法缺資料行為
 
@@ -1578,17 +1849,135 @@ CREATE INDEX IF NOT EXISTS idx_fdc_fetched_at ON financial_data_cache(fetched_at
 
 | TP ID | 描述 |
 |---|---|
-| TP-FIN-001 | SWR cache miss → API fetch + DB store + mem promote |
+| TP-FIN-001 | SWR cache miss（FinMind）→ API fetch + DB store (provider='finmind') + mem promote |
 | TP-FIN-002 | SWR cache fresh（≤ 15 天）→ no API call，直接回傳 |
 | TP-FIN-003 | SWR cache stale（> 15 天）→ 立即回傳舊值 + 背景刷新，max 1 刷新執行緒 |
 | TP-FIN-004 | DB 不可用（db_path=None）→ 直接呼叫 API，不 raise |
+| TP-FIN-005 | FinMind HTTP 402 rate limit → `_fetch_finmind` 回傳 None → ProviderUnavailableError → 不寫快取 |
+| TP-FIN-006 | ProviderUnavailableError → ParallelFinancialDataProvider 繼續嘗試其他 provider |
+| TP-FIN-007 | 三源均 ProviderUnavailableError → 回傳 None → 估值方法 SKIP_INSUFFICIENT_DATA |
+| TP-FIN-008 | P1 miss + P2 命中舊快取 + P3 命中新快取 → 回傳 P3 結果（fetched_at 最新） |
+| TP-FIN-009 | P2 bulk fetch 首次觸發 → 一次寫入全市場資料（provider='mops'） |
+| TP-FIN-010 | Goodinfo cache miss → 同步 scraping → 成功則寫 DB 並回傳；scraping 失敗（逾時等）→ raise ProviderUnavailableError，不寫快取 |
+| TP-FIN-011 | Goodinfo cache stale → 立即回傳舊值 + 背景刷新執行緒（同 dataset 最多一個執行緒） |
 | TP-MVAL-001 | `OldbullDividendYieldV1` 公式驗證 |
 | TP-MVAL-002 | `EmilyCompositeV1` 子法完整 + 子法部分缺失行為 |
 | TP-MVAL-003 | `RayskyBlendedMarginV1` NCAV 計算 + 子法全缺 fallback |
 
 ### 16.7 DB 影響與 Schema 同步要求
 
-- 本節新增 `financial_data_cache` 資料表（`SCHEMA_SQL` 已更新）。
-- 若後續變更此表結構（新增欄位、變更型別），必須同步更新：本文件 §16.1、`stock_monitor/db/schema.py`、對應 `TP-FIN-*` 測試條目。
+- v1.6 更新 `financial_data_cache`：加入 `provider` 欄位；PRIMARY KEY 改為 `(provider, stock_no, dataset)`。
+- 若後續變更此表結構，必須同步更新：本文件 §16.1 + §9.4.7、`stock_monitor/db/schema.py`、對應 `TP-FIN-*` 測試條目。
 - 禁止只改程式碼或只改 SQL 而未同步 EDD 的 Schema 定義。
+
+---
+
+## 17. 三源平行財務資料備援 — 完整工程規格（PDD FR-21）
+
+### 17.1 架構圖
+
+```mermaid
+flowchart TD
+    VM[ValuationMethods\nEmilyV1 / OldbullV1 / RayskyV1] --> PAR[ParallelFinancialDataProvider\nfinancial_data_fallback.py]
+
+    PAR --> FM[FinMindFinancialDataProvider\nP1 per-stock API]
+    PAR --> MT[MopsTwseAdapter\nP2 bulk fetch]
+    PAR --> GI[GoodinfoAdapter\nP3 scraping]
+
+    FM --> |provider='finmind'| CACHE[(financial_data_cache)]
+    MT --> |provider='mops'| CACHE
+    GI --> |provider='goodinfo'| CACHE
+
+    FM --> API_FM[FinMind API\napi.finmindtrade.com]
+    MT --> API_MOPS[MOPS\nmops.twse.com.tw]
+    MT --> API_TWSE[TWSE\nwww.twse.com.tw]
+    GI --> GI_HTML[Goodinfo HTML\ngoodinfo.tw]
+
+    PAR --> |fetched_at 最新者| RESULT[回傳給估值方法]
+```
+
+### 17.2 並行執行設計
+
+```
+_call(method, stock_no, **kwargs):
+  ThreadPoolExecutor(max_workers=3):
+    f1 = submit(finmind.method, stock_no, **kwargs)
+    f2 = submit(mops.method, stock_no, **kwargs)
+    f3 = submit(goodinfo.method, stock_no, **kwargs)
+  
+  results = []
+  for future, provider in [(f1,finmind),(f2,mops),(f3,goodinfo)]:
+    try:
+      val = future.result(timeout=60)  # 最多等 60 秒
+      if val is not None:
+        fa = provider._latest_fetched_at(stock_no)
+        results.append((fa, val))
+    except (ProviderUnavailableError, TimeoutError):
+      pass  # 此源跳過
+
+  if not results:
+    return None   # → SKIP_INSUFFICIENT_DATA
+  return max(results, key=lambda x: x[0])[1]  # fetched_at 最大
+```
+
+### 17.3 Provider 角色對比
+
+| 特性 | FinMind (P1) | MOPS+TWSE (P2) | Goodinfo (P3) |
+|------|-------------|----------------|---------------|
+| 資料存取 | 個股 API | Bulk（全市場） | 個股 HTML scraping |
+| 速率限制 | 300/h（免費）、600/h（付費） | 無明確上限但有 DDOS 保護 | 每 15 秒 1 req（自律限速） |
+| Cache miss 行為 | 同步 fetch（或 background stale） | 觸發 bulk fetch 背景執行緒；當次 raise | 背景 scrape；當次 raise |
+| 首次全市場掃描 | ~1,700 req → 觸發 rate limit | 1 次 bulk → 全市場入庫 | 太慢，僅補漏 |
+| `fetched_at` 比較優先 | 依實際快取時間 | 依 bulk fetch 完成時間 | 依 scrape 完成時間 |
+| 歷史深度 | 10 年（含） | 10 年（含） | 10 年（含） |
+
+### 17.4 Cache 鍵設計
+
+```
+(provider, stock_no, dataset)
+
+範例：
+('finmind', '2330', 'TaiwanStockDividend')
+('mops',    '2330', 'eps')
+('goodinfo','2330', 'dividend')
+```
+
+各 provider 的 `dataset` 名稱可與 FinMind 不同（各自命名），不需跨 provider 對齊。
+
+### 17.5 新增 Symbol Contract（v1.6）
+
+| 模組 | Symbol | 說明 |
+|---|---|---|
+| `stock_monitor.adapters.financial_data_port` | `ProviderUnavailableError` | 暫時性來源失敗例外 |
+| `stock_monitor.adapters.financial_data_port` | `FinancialDataPort` | 六方法 Protocol |
+| `stock_monitor.adapters.financial_data_cache` | `SWRCacheBase` | 三 Adapter 共用快取基底（含 `SWR_TTL_SECONDS`） |
+| `stock_monitor.adapters.financial_data_finmind` | `FinMindFinancialDataProvider` | P1，`provider_name='finmind'` |
+| `stock_monitor.adapters.financial_data_mops` | `MopsTwseAdapter` | P2，`provider_name='mops'` |
+| `stock_monitor.adapters.financial_data_goodinfo` | `GoodinfoAdapter` | P3，`provider_name='goodinfo'` |
+| `stock_monitor.adapters.financial_data_fallback` | `ParallelFinancialDataProvider` | 三源並行聚合，`.default(db_path)` 工廠方法 |
+
+### 17.6 `load_enabled_scan_methods` 更新
+
+```python
+# stock_monitor/application/market_scan_methods.py
+provider = ParallelFinancialDataProvider.default(db_path=db_path)
+# （已從 FinMindFinancialDataProvider 更新為 ParallelFinancialDataProvider）
+```
+
+### 17.7 CR 禁止清單（v1.6 新增）
+
+| ID | 禁止事項 |
+|----|---------|
+| CR-FIN-01 | 禁止在 `SWRCacheBase._fetch` 中將 `None` 結果（API 失敗）寫入 DB 快取；`None` 只能觸發 `ProviderUnavailableError` |
+| CR-FIN-02 | 禁止在 `ParallelFinancialDataProvider._call` 中以 `try/except ProviderUnavailableError` 直接返回前一個 provider 的結果（sequential fallback）；必須三源全部執行後比較 `fetched_at` |
+| CR-FIN-03 | 禁止三個 Adapter 使用相同的 `provider_name`；`provider` 欄位值必須為 `'finmind'`、`'mops'`、`'goodinfo'` 其中之一 |
+| CR-FIN-04 | `GoodinfoAdapter` 的 **stale**（HIT 但過期）必須背景刷新並立即回傳舊值，不得阻塞等待新 scraping；**MISS**（DB 無資料）則必須同步 scraping（標準 SWR），禁止顛倒兩者行為 |
+| CR-FIN-05 | 估值方法（`EmilyCompositeV1` 等）禁止直接 import `FinMindFinancialDataProvider`；一律使用 `ParallelFinancialDataProvider`（透過依賴注入）|
+
+### 17.8 DB 影響與 Schema 同步要求
+
+- v1.6 更新 `financial_data_cache`（見 §16.1 + §9.4.7）：加入 `provider` 欄位，PK 改為 `(provider, stock_no, dataset)`。
+- `stock_monitor/db/schema.py` 的 `SCHEMA_SQL` 需同步更新（已涵蓋新 schema）。
+- `SWRCacheBase.__init__` 需在建立連線後執行 `_migrate_cache_table()`（加入 provider 欄位的 migration）。
+- 禁止只改程式碼或只改 EDD 而未同步 `schema.py`。
 
