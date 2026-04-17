@@ -1,8 +1,8 @@
 # User Story + 驗收條件（Stock Monitoring）
 
-版本：v0.6  
+版本：v0.7  
 日期：2026-04-17  
-對應文件：`PDD_Stock_Monitoring_System.md`
+對應文件：`PDD_Stock_Monitoring_System.md`（v1.5）
 
 ## 1. 文件目的
 將 PDD 轉成可排程、可實作、可驗收的 User Story，作為 PM/工程/QA 共用基線。
@@ -285,7 +285,25 @@
 10. 個別股票計算例外不中斷整體掃描；寫入 `system_logs`（level=ERROR, event=MARKET_SCAN_STOCK_ERROR）。
 11. `scan-market` 執行前必須從 DB 載入 `valuation_methods.enabled=1` 方法清單並注入掃描，不可硬編碼空方法清單。
 12. 若啟用方法數為 0，CLI 必須 fail-fast（非 0 exit code），不得以「全數 uncalculable」視為成功。
-13. 估值計算資料來源為 `FinMindFinancialDataProvider`（`db_path` 透過 `load_enabled_scan_methods` 傳入），財務資料優先從 SQLite SWR Cache 取得，cache miss 時呼叫 FinMind API。
+13. 估值計算資料來源為 `ParallelFinancialDataProvider`（`db_path` 透過 `load_enabled_scan_methods` 傳入），三源（FinMind P1、MOPS P2、Goodinfo P3）同時觸發；各源獨立 SWR Cache，回傳 `fetched_at` 最新者的值。
+
+### US-022 財務資料三源平行備援
+- Priority：`P2`
+- Release：`M3`
+- Dependency：`US-020`
+- FR：`FR-21`
+- As 個人投資者, I want 財務資料從三個來源同時取得, So that 任一來源失效時不影響估值結果。
+
+**Acceptance Criteria**
+1. 系統必須同時（非序列）觸發 FinMind（P1）、MOPS/TWSE（P2）、Goodinfo（P3）三個財務資料來源。
+2. 各源有獨立的 SQLite SWR Cache（`financial_data_cache.provider` 欄位區分 `'finmind'`/`'mops'`/`'goodinfo'`）；任一源的快取不干擾其他源。
+3. 三源全部完成後，以 `fetched_at` 最新者的值提供給估值方法；若多源 `fetched_at` 相同則任一可用。
+4. 任一源回傳 `ProviderUnavailableError`（API 失敗、scraping timeout、rate limit），其他源不受影響，估值仍可進行。
+5. 三源全部 `ProviderUnavailableError` 時，估值方法記錄 `SKIP_INSUFFICIENT_DATA`，不中斷整體掃描。
+6. SWR Cache miss（DB 無記錄）時，**同步**取資料並寫 DB 後回傳；不得以背景非阻塞替代。
+7. SWR Cache stale（有記錄但已過 `SWR_TTL_SECONDS`）時，立即回傳舊值並同時觸發**背景**刷新；不得阻塞等待刷新完成。
+8. `_fetch_raw` 回傳 `None`（確認無此股票任何資料）時，不寫入快取，raise `ProviderUnavailableError`。
+9. 三個 Adapter 的 `provider_name` 分別固定為 `'finmind'`、`'mops'`、`'goodinfo'`，不得重複。
 
 ### US-021 macOS / Windows 雙平台相容
 - Priority：`P1`
@@ -317,8 +335,9 @@
 12. UAT-15 對應 `US-017`。
 13. UAT-16 對應 `US-020`。
 14. UAT-17 對應 `US-021`。
+15. UAT-18（新）對應 `US-022`（三源平行財務資料備援）。
 
 ## 5. BDD 拆分建議
 1. `P0` 先建 `.feature`：`US-011 -> US-001 -> US-002 -> US-003 -> US-004 -> US-005 -> US-006 -> US-012 -> US-010`。
-2. `P1/P2` 再擴：`US-007`, `US-013`, `US-008`, `US-009`, `US-014`, `US-020`。
+2. `P1/P2` 再擴：`US-007`, `US-013`, `US-008`, `US-009`, `US-014`, `US-020`, `US-022`。
 3. 每個 Acceptance Criteria 至少一個 Scenario。
