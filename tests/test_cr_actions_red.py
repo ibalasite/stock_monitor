@@ -468,3 +468,110 @@ def test_tp_arch_004_opening_summary_idempotency_must_not_query_system_logs():
         "[TP-ARCH-004] CR-ARCH-06: opening_summary_sent_for_date still queries system_logs. "
         "Use a dedicated table (e.g. opening_summary_sent_dates) instead."
     )
+
+
+# ---------------------------------------------------------------------------
+# TP-SEC-006  CR-SEC-06: macOS launchd plist must not contain token plaintext
+# ---------------------------------------------------------------------------
+
+_SCRIPTS_DIR = Path(__file__).parent.parent / "scripts"
+
+
+def test_tp_sec_006_plist_has_no_environment_variables_section():
+    """
+    [TP-SEC-006] EDD §13.1 CR-SEC-06
+
+    scripts/com.stock_monitor.daemon.plist must NOT contain an
+    <key>EnvironmentVariables</key> block.  Any such block will be populated
+    with the LINE token by register_launchd_agents.sh, writing the secret to
+    a plaintext file readable by any process with home-directory access.
+
+    The correct design (EDD §15.5) is to remove EnvironmentVariables from the
+    plist entirely and have start_daemon.sh retrieve the token from Keychain at
+    runtime via `security find-generic-password`.
+    """
+    plist_path = _SCRIPTS_DIR / "com.stock_monitor.daemon.plist"
+    assert plist_path.exists(), f"[TP-SEC-006] plist not found: {plist_path}"
+
+    content = plist_path.read_text(encoding="utf-8")
+    assert "<key>EnvironmentVariables</key>" not in content, (
+        "[TP-SEC-006] CR-SEC-06: com.stock_monitor.daemon.plist contains an "
+        "EnvironmentVariables section. This will cause register_launchd_agents.sh "
+        "to inject LINE_CHANNEL_ACCESS_TOKEN in plaintext. "
+        "Remove the EnvironmentVariables block; retrieve the token from macOS "
+        "Keychain in start_daemon.sh instead."
+    )
+
+
+def test_tp_sec_006_register_script_has_no_token_sed_injection():
+    """
+    [TP-SEC-006] EDD §13.1 CR-SEC-06
+
+    scripts/register_launchd_agents.sh must NOT contain a `sed` command that
+    substitutes REPLACE_WITH_YOUR_TOKEN with the actual token value.  Such a
+    substitution writes the secret to the installed plist file in plaintext.
+
+    The correct design is to have start_daemon.sh read the token from Keychain
+    at launch time, so the token never touches any file on disk.
+    """
+    register_sh = _SCRIPTS_DIR / "register_launchd_agents.sh"
+    assert register_sh.exists(), f"[TP-SEC-006] register script not found: {register_sh}"
+
+    content = register_sh.read_text(encoding="utf-8")
+    assert "REPLACE_WITH_YOUR_TOKEN" not in content, (
+        "[TP-SEC-006] CR-SEC-06: register_launchd_agents.sh still contains "
+        "REPLACE_WITH_YOUR_TOKEN placeholder substitution via sed. "
+        "Remove the token injection logic; retrieve the token from macOS "
+        "Keychain in start_daemon.sh instead."
+    )
+
+
+# ---------------------------------------------------------------------------
+# TP-SEC-007  CR-SEC-07: Windows scripts must not use setx for token storage
+# ---------------------------------------------------------------------------
+
+
+def test_tp_sec_007_start_daemon_ps1_has_no_setx_instruction():
+    """
+    [TP-SEC-007] EDD §13.1 CR-SEC-07
+
+    scripts/start_daemon.ps1 must NOT contain any reference to `setx` —
+    neither as an executed command nor as an instruction to the operator.
+    `setx` writes environment variables to HKEY_CURRENT_USER\\Environment in
+    plaintext; any process with registry read access can retrieve the token.
+
+    The correct design (EDD §15.9) is to store the token in Windows Credential
+    Manager (cmdkey) and retrieve it at runtime via Get-StoredCredential.
+    """
+    ps1_path = _SCRIPTS_DIR / "start_daemon.ps1"
+    assert ps1_path.exists(), f"[TP-SEC-007] start_daemon.ps1 not found: {ps1_path}"
+
+    content = ps1_path.read_text(encoding="utf-8")
+    assert "setx" not in content.lower(), (
+        "[TP-SEC-007] CR-SEC-07: start_daemon.ps1 contains 'setx' (command or comment). "
+        "Remove all setx references for LINE_CHANNEL_ACCESS_TOKEN. "
+        "Use Windows Credential Manager (cmdkey / Get-StoredCredential) instead."
+    )
+
+
+def test_tp_sec_007_register_tasks_ps1_has_no_setx_for_token():
+    """
+    [TP-SEC-007] EDD §13.1 CR-SEC-07
+
+    scripts/register_scheduled_tasks.ps1 must NOT contain any `setx` command
+    that stores LINE_CHANNEL_ACCESS_TOKEN or LINE_TO_GROUP_ID in the registry.
+    """
+    ps1_path = _SCRIPTS_DIR / "register_scheduled_tasks.ps1"
+    assert ps1_path.exists(), f"[TP-SEC-007] register_scheduled_tasks.ps1 not found: {ps1_path}"
+
+    content = ps1_path.read_text(encoding="utf-8")
+    # Check for setx combined with the token variable name (case-insensitive)
+    lines_with_setx = [
+        line for line in content.splitlines()
+        if "setx" in line.lower() and "LINE_CHANNEL_ACCESS_TOKEN" in line
+    ]
+    assert not lines_with_setx, (
+        "[TP-SEC-007] CR-SEC-07: register_scheduled_tasks.ps1 contains setx "
+        f"for LINE_CHANNEL_ACCESS_TOKEN:\n" + "\n".join(lines_with_setx) + "\n"
+        "Use Windows Credential Manager instead."
+    )
