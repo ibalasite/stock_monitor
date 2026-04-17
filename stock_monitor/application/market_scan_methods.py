@@ -1,13 +1,17 @@
 """FR-19 scan-market valuation method injection helpers.
 
-Methods use real financial data fetched live from FinMind API.
-No DB snapshot lookup — every call recomputes from upstream data.
+Methods use real financial data fetched via the fallback chain:
+  P1 FinMind → P2 MOPS+TWSE → P3 Goodinfo
+Each provider has its own SWR cache. When P1 is rate-limited, P2 serves
+from its own cache (or bulk-fetches from MOPS). Only when all three fail
+does a stock become uncalculable (SKIP_INSUFFICIENT_DATA).
+
 EDD §14.7.7/8: actual computation, not pre-computed results.
 """
 
 from __future__ import annotations
 
-from stock_monitor.adapters.financial_data_finmind import FinMindFinancialDataProvider
+from stock_monitor.adapters.financial_data_fallback import FallbackFinancialDataProvider
 from stock_monitor.application.valuation_methods_real import (
     EmilyCompositeV1,
     OldbullDividendYieldV1,
@@ -53,7 +57,7 @@ def load_enabled_scan_methods(
     if not rows:
         raise RuntimeError("MARKET_SCAN_METHODS_EMPTY")
 
-    provider = FinMindFinancialDataProvider(db_path=db_path)
+    provider = FallbackFinancialDataProvider.default(db_path=db_path)
     methods: list = []
 
     for row in rows:
