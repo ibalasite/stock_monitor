@@ -121,6 +121,9 @@ Alias（等效）：
 | `stock_monitor.application.market_scan` | `run_market_scan_job`, `MarketScanResult` |
 | `stock_monitor.adapters.all_listed_stocks_twse` | `TwseAllListedStocksProvider` |
 | `stock_monitor.application.daemon_runner` | `_install_signal_handlers`（FR-20，SIGTERM 跨平台處理） |
+| `stock_monitor.adapters.financial_data_finmind` | `FinMindFinancialDataProvider`（含 `_fetch_finmind`、`_mem`、`SWR_TTL_SECONDS`） |
+| `stock_monitor.application.valuation_methods_real` | `EmilyCompositeV1`, `OldbullDividendYieldV1`, `RayskyBlendedMarginV1` |
+| `stock_monitor.application.market_scan_methods` | `load_enabled_scan_methods`（含 `db_path` 參數） |
 
 ## 8. TDD 執行規範
 1. 先跑對應測試確認紅燈

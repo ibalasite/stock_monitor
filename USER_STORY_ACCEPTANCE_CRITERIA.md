@@ -147,6 +147,9 @@
 3. 單方法 `SKIP` 不得阻斷其他方法執行。
 4. 單方法 `SKIP` 不得覆蓋舊快照。
 5. 主來源失敗時若備援可用，應切換並完成該方法估值，且記錄來源切換 log。
+6. 財務估值資料實作來源：`FinMindFinancialDataProvider`（FinMind API + SQLite SWR Cache，TTL 15 天）；快取 miss 時呼叫 API，快取 fresh 時不呼叫 API，快取 stale 時立即回傳並背景刷新。
+7. `FinMindFinancialDataProvider` 在 `db_path=None`（無 DB）時不 raise，直接呼叫 API 降級運作。
+8. ETF 類股（無財報資料）：子法缺資料時跳過對應子法，不阻斷其他子法計算。
 
 ### US-015 開盤監控設定摘要通知
 - Priority：`P1`
@@ -282,6 +285,7 @@
 10. 個別股票計算例外不中斷整體掃描；寫入 `system_logs`（level=ERROR, event=MARKET_SCAN_STOCK_ERROR）。
 11. `scan-market` 執行前必須從 DB 載入 `valuation_methods.enabled=1` 方法清單並注入掃描，不可硬編碼空方法清單。
 12. 若啟用方法數為 0，CLI 必須 fail-fast（非 0 exit code），不得以「全數 uncalculable」視為成功。
+13. 估值計算資料來源為 `FinMindFinancialDataProvider`（`db_path` 透過 `load_enabled_scan_methods` 傳入），財務資料優先從 SQLite SWR Cache 取得，cache miss 時呼叫 FinMind API。
 
 ### US-021 macOS / Windows 雙平台相容
 - Priority：`P1`

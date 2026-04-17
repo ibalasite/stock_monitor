@@ -1,10 +1,18 @@
 # EDD - 台股監控與 LINE 通知系統
 
-版本：v1.3  
+版本：v1.4  
 日期：2026-04-17  
 對齊文件：[PDD_Stock_Monitoring_System.md](PDD_Stock_Monitoring_System.md)
 
 變更摘要（v1.2）：
+- 新增 §15 FR-20 macOS / Windows 雙平台相容工程設計。
+
+變更摘要（v1.4）：
+- 新增 §9.3 `FinMindFinancialDataProvider` 完整設計規格（SWR cache、dataset 對映、ROC 年份/EPS 加總/Liabilities/NT$ 四項實作約束、ETF 降級、db_path 傳遞路徑）。
+- 更新 §14.6 Symbol Contract 新增 `FinMindFinancialDataProvider`、`EmilyCompositeV1`、`OldbullDividendYieldV1`、`RayskyBlendedMarginV1`。
+- 新增 §16 FinMind 財務資料 SWR Cache 實作。
+
+變更摘要（v1.3）：
 - 新增 §15 FR-20 macOS / Windows 雙平台相容工程設計。
 
 變更摘要（v1.1）：
@@ -763,6 +771,67 @@ LINE_TEMPLATE_OPENING_SUMMARY=line_opening_summary_mobile_compact_v1
 - `SKIP_PROVIDER_ERROR`：來源逾時/錯誤，不覆蓋舊快照。
 - 日結任務成功條件：至少有一個 `stock x method` 成功即可視為 job completed（含部分 skip）。
 
+### 9.3 FinMindFinancialDataProvider 設計
+
+**模組**：`stock_monitor.adapters.financial_data_finmind.FinMindFinancialDataProvider`
+
+#### 資料集對映
+
+| 估值輸入 | FinMind Dataset | type 過濾 |
+|---|---|---|
+| 平均股利（10 年） | `TaiwanStockDividend` | — |
+| EPS TTM / 10 年平均 | `TaiwanStockFinancialStatements` | `EPS` |
+| 流動資產 / 總負債 | `TaiwanStockBalanceSheet` | `CurrentAssets` / `Liabilities` |
+| 流通股數 | `TaiwanStockBalanceSheet` | `CommonStockSharesOutstanding` |
+| PE 低 / 中均 / BPS | `TaiwanStockPER` | — |
+| 歷年股價年均 / 年低（10 年） | `TaiwanStockPrice` | — |
+
+#### SWR Cache 架構（三層）
+
+```
+請求 get_*(stock_no)
+  ├─ L1：_mem[stock_no][dataset]（同進程記憶體）
+  ├─ L2：DB financial_data_cache fetched_at ≤ 15 天（新鮮）→ 直接回傳 + 升入 L1
+  ├─ L3：DB 已有但 > 15 天（陳舊）→ 立即回傳 + 背景 daemon thread 刷新（去重 _refreshing set）
+  └─ L4：DB 沒有 → API 擷取 → 存 DB → 升入 L1
+```
+
+- **SWR TTL**：15 天（`SWR_TTL_SECONDS = 86400 * 15`）
+- **背景刷新去重**：`_refreshing: set` + `threading.Lock()` 保護，同 dataset 最多一個刷新執行緒
+- **DB 不可用降級**：db_path 為 None 時跳過 DB 層，直接呼叫 API
+
+#### 關鍵實作約束（已修正的解析 bug）
+
+1. **ROC 年份問題**：FinMind `TaiwanStockDividend` 的 `year` 欄位為 ROC 格式（`'98年'`、`'114年第3季'`）；必須改用 `date` 欄位的 ISO 日期前 4 碼（`str(row["date"])[:4]`）取西曆年份。
+2. **EPS 年度加總**：FinMind 回傳季度 EPS；`eps_10y_avg` 計算必須將同年度所有季度加總再取年均（不可只取最後一季）。
+3. **資產負債表型別名稱**：FinMind `TaiwanStockBalanceSheet` 負債欄位 `type = 'Liabilities'`（非 `'TotalLiabilities'`）；讀取時必須以 `'Liabilities'` 過濾。
+4. **NT$ 單位正規化**：FinMind 資產負債表值為實際 NT$（如 `3,817,130,817,000`）；NCAV 公式期望 NT$ 千元為單位（`(ca - tl) * 1000 / shares`），因此讀取後需除以 1,000 再儲存。
+
+#### ETF 降級行為
+
+ETF（如 0050）無 EPS / PE / PB / 負債表資料；`FinMindFinancialDataProvider` 對這些方法回傳 `None`，對應方法的 `emily_composite_v1` 子法跳過，不阻斷股利法與歷年股價法子法執行。
+
+#### `financial_data_cache` Table
+
+```sql
+CREATE TABLE IF NOT EXISTS financial_data_cache (
+  stock_no   TEXT NOT NULL,
+  dataset    TEXT NOT NULL,
+  data_json  TEXT NOT NULL CHECK (json_valid(data_json)),
+  fetched_at INTEGER NOT NULL,
+  PRIMARY KEY (stock_no, dataset)
+);
+CREATE INDEX IF NOT EXISTS idx_fdc_fetched_at ON financial_data_cache(fetched_at);
+```
+
+#### `db_path` 傳遞路徑
+
+```
+app.py scan-market / valuation 路由
+  → load_enabled_scan_methods(conn, as_of_date, db_path=args.db_path)
+    → FinMindFinancialDataProvider(db_path=db_path)
+```
+
 ## 10. 測試計畫（補強版）
 ### 10.1 單元測試
 - `PriorityPolicy`：同時命中 1/2 時只保留 2。
@@ -1054,6 +1123,9 @@ CLI 路由行為補充（強制）：
 |---|---|
 | `stock_monitor.application.market_scan` | `run_market_scan_job`, `MarketScanResult` |
 | `stock_monitor.adapters.all_listed_stocks_twse` | `TwseAllListedStocksProvider` |
+| `stock_monitor.adapters.financial_data_finmind` | `FinMindFinancialDataProvider`（含 `_fetch_finmind`、`_mem`、`SWR_TTL_SECONDS`） |
+| `stock_monitor.application.valuation_methods_real` | `EmilyCompositeV1`, `OldbullDividendYieldV1`, `RayskyBlendedMarginV1` |
+| `stock_monitor.application.market_scan_methods` | `load_enabled_scan_methods`（含 `db_path` 參數） |
 
 ### 14.7 設計約束
 
@@ -1416,4 +1488,70 @@ launchctl load ~/Library/LaunchAgents/com.stock_monitor.daemon.plist
 ### 15.8 DB 影響
 
 FR-20 不新增資料表、不變更 Schema。
+
+---
+
+## 16. FinMind 財務資料 SWR Cache 實作
+
+本節補充 §9.3 設計規格的工程細節，含 DB schema 同步要求與測試追蹤。
+
+### 16.1 `financial_data_cache` Schema
+
+（已納入 `stock_monitor/db/schema.py` 的 `SCHEMA_SQL`）
+
+```sql
+CREATE TABLE IF NOT EXISTS financial_data_cache (
+  stock_no   TEXT NOT NULL,
+  dataset    TEXT NOT NULL,
+  data_json  TEXT NOT NULL CHECK (json_valid(data_json)),
+  fetched_at INTEGER NOT NULL,          -- Unix timestamp（seconds）
+  PRIMARY KEY (stock_no, dataset)
+);
+CREATE INDEX IF NOT EXISTS idx_fdc_fetched_at ON financial_data_cache(fetched_at);
+```
+
+### 16.2 SWR TTL 常數
+
+| 常數 | 值 | 用途 |
+|---|---|---|
+| `SWR_TTL_SECONDS` | `86400 * 15` | DB 快取有效期（15 天）|
+
+### 16.3 `_fetch_finmind(dataset, stock_no, token)` 規格
+
+- FinMind API endpoint：`https://api.finmindtrade.com/api/v4/data`
+- 回傳：`list[dict]`（原始 record 列表），空清單視為「無資料」但不 raise
+- 錯誤：HTTP 非 2xx 或 JSON parse 失敗 → raise exception（由 SWR 外層處理）
+
+### 16.4 `valuation_methods_real.py` 三方法類別規格
+
+| 類別 | `method_name` | 核心輸入 | 核心輸出 |
+|---|---|---|---|
+| `EmilyCompositeV1` | `emily_composite_v1` | 4 子法（股利、歷年股價、PE、PB） | `fair = mean(子法 fair) * 0.9`（安全邊際） |
+| `OldbullDividendYieldV1` | `oldbull_dividend_yield_v1` | `avg_dividend` | `fair = avg_dividend / 0.05`, `cheap = avg_dividend / 0.06` |
+| `RayskyBlendedMarginV1` | `raysky_blended_margin_v1` | 4 子法（PE、股利、PB、NCAV） | `fair = median(子法 fair)`, `cheap = fair * 0.9` |
+
+### 16.5 方法缺資料行為
+
+- `avg_dividend` 為 `None` 或 `0`：股利法子法跳過，不計入 mean/median
+- `eps_data` 為 `None`：PE 法子法跳過
+- `balance_sheet_data` 為 `None` 或 `current_assets ≤ total_liabilities`：NCAV 法跳過
+- 所有子法均跳過 → 方法輸出 `None, None`（呼叫端記錄 `SKIP_INSUFFICIENT_DATA`）
+
+### 16.6 測試追蹤 ID
+
+| TP ID | 描述 |
+|---|---|
+| TP-FIN-001 | SWR cache miss → API fetch + DB store + mem promote |
+| TP-FIN-002 | SWR cache fresh（≤ 15 天）→ no API call，直接回傳 |
+| TP-FIN-003 | SWR cache stale（> 15 天）→ 立即回傳舊值 + 背景刷新，max 1 刷新執行緒 |
+| TP-FIN-004 | DB 不可用（db_path=None）→ 直接呼叫 API，不 raise |
+| TP-MVAL-001 | `OldbullDividendYieldV1` 公式驗證 |
+| TP-MVAL-002 | `EmilyCompositeV1` 子法完整 + 子法部分缺失行為 |
+| TP-MVAL-003 | `RayskyBlendedMarginV1` NCAV 計算 + 子法全缺 fallback |
+
+### 16.7 DB 影響與 Schema 同步要求
+
+- 本節新增 `financial_data_cache` 資料表（`SCHEMA_SQL` 已更新）。
+- 若後續變更此表結構（新增欄位、變更型別），必須同步更新：本文件 §16.1、`stock_monitor/db/schema.py`、對應 `TP-FIN-*` 測試條目。
+- 禁止只改程式碼或只改 SQL 而未同步 EDD 的 Schema 定義。
 

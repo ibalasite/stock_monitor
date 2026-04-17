@@ -1,6 +1,6 @@
 # PDD - 台股價格監控與 LINE 通知系統（V0/V1）
 
-版本：v1.3  
+版本：v1.4  
 日期：2026-04-17  
 狀態：Draft（可進入 review）
 
@@ -366,14 +366,21 @@ python -m stock_monitor scan-market [--output-dir ./output] [--db-path data/stoc
 | 資料類型 | 主來源 | 備援來源 | 用途 |
 |---|---|---|---|
 | 盤中/收盤價格、歷史價格 | TWSE / TPEx 公開行情 | Yahoo Finance 台股代碼 | 歷年股價法、PE/PB 區間、監控觸發 |
-| 股利（年/季） | 公開資訊觀測站（MOPS） | TWSE 公開彙整資料 | 股利法、殖利率法 |
-| EPS（近一年、長期） | MOPS 財報 | TWSE 財報彙整頁 | PE 法 |
-| 每股淨值 / 股東權益 | MOPS 財報 | TWSE 財報彙整頁 | PB 法 |
-| 流動資產、總負債、股數 | MOPS 資產負債表/基本資料 | TWSE 公開欄位 | NCAV 法 |
+| 股利（年/季） | FinMind API（`TaiwanStockDividend`） | 公開資訊觀測站（MOPS） | 股利法、殖利率法 |
+| EPS（近一年、長期） | FinMind API（`TaiwanStockFinancialStatements`，`type=EPS`） | MOPS 財報 | PE 法 |
+| PE / PB 歷史統計 | FinMind API（`TaiwanStockPER`） | TWSE 財報彙整頁 | PE 區間法、PB 區間法 |
+| 每股淨值 / 股東權益 | FinMind API（`TaiwanStockPER`，`PBR_per` 換算） | MOPS 財報 | PB 法 |
+| 流動資產、總負債 | FinMind API（`TaiwanStockBalanceSheet`，`type=CurrentAssets/Liabilities`） | TWSE 公開欄位 | NCAV 法 |
+| 歷年股價（年均/年低） | FinMind API（`TaiwanStockPrice`，日 OHLC） | Yahoo Finance 台股代碼 | 歷年股價法 |
+| 流通股數 | FinMind API（`TaiwanStockBalanceSheet`，`type=CommonStockSharesOutstanding`） | TWSE 基本資料 | NCAV 法、每股計算 |
+
+**實作資料來源**：`FinMindFinancialDataProvider`（`stock_monitor.adapters.financial_data_finmind`），採 **SQLite SWR Cache**（Stale-While-Revalidate，TTL 15 天）：
+- 記憶體快取 → DB 新鮮資料（≤ 15 天）→ DB 陳舊資料（立即回傳 + 背景刷新）→ API 擷取並存 DB
 
 資料充分性原則：
 - 若當日無新財報，允許沿用最近一期有效財報值（有時間戳）。
 - 需在估值結果中保留 `input_asof_date`，避免誤判資料新鮮度。
+- FinMind API 資料年份欄位為 ISO 日期格式（`date`），不使用 ROC 年（`year` 欄位）以避免年份解析錯誤。
 
 ## 10. 資料結構（摘要）
 - `watchlist`
@@ -381,6 +388,7 @@ python -m stock_monitor scan-market [--output-dir ./output] [--db-path data/stoc
 - `message`（`stock_no`, `message`, `stock_status`, `update_time`）
 - `pending_delivery_ledger`（補償佇列）
 - `system_logs`
+- `financial_data_cache`（FinMind SWR 快取；PK：`stock_no + dataset`；含 `data_json TEXT`、`fetched_at INTEGER`）
 
 ## 11. Clean Architecture 建議設計
 ### Domain Layer
@@ -406,6 +414,7 @@ python -m stock_monitor scan-market [--output-dir ./output] [--db-path data/stoc
   - `TwseRealtimeMarketDataProvider`（主行情，含 `_price_cache` 與 `ex` 欄位記憶）
   - `YahooFinanceMarketDataProvider`（副行情，Yahoo Finance TW HTML scraping）
   - `CompositeMarketDataProvider`（Freshness-First 聚合，依 `tick_at` 取較新值）
+  - `FinMindFinancialDataProvider`（財務估值資料，SWR cache 策略，db_path 可設定）
   - `TaiwanHolidayCalendarAdapter`
   - `LineMessagingApiAdapter`
   - `SqliteMessageRepository`

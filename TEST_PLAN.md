@@ -1,6 +1,6 @@
 # TEST_PLAN - Stock Monitor System
 
-版本：v1.1  
+版本：v1.2  
 日期：2026-04-17  
 依據文件：[EDD_Stock_Monitoring_System.md](c:/Projects/stock/EDD_Stock_Monitoring_System.md), [PDD_Stock_Monitoring_System.md](c:/Projects/stock/PDD_Stock_Monitoring_System.md), [USER_STORY_ACCEPTANCE_CRITERIA.md](c:/Projects/stock/USER_STORY_ACCEPTANCE_CRITERIA.md)
 
@@ -16,6 +16,8 @@
 9. 驗證雙行情來源（TWSE + Yahoo Finance）Composite Adapter 的 Freshness-First 邏輯與 Yahoo 失敗容錯（EDD §13.5 / PDD FR-15，TP-ADP-001~004）。
 10. 驗證全市場估值掃描（FR-19）：清單擷取、三分類邏輯、watchlist upsert、CSV 輸出（TP-SCAN-001~006、TP-UAT-016）。
 11. 驗證 macOS / Windows 跨平台相容（FR-20）：pathlib 路徑、SIGTERM 優雅關閉、bash 腳本、launchd plist 格式（TP-PLAT-001~005、TP-UAT-017）。
+12. 驗證 FinMind SWR cache 三層策略（miss→fetch+store、fresh→no API、stale→立即回傳+背景刷新、DB 不可用降級）（TP-FIN-001~004）。
+13. 驗證三個實際估值方法（`OldbullDividendYieldV1`、`EmilyCompositeV1`、`RayskyBlendedMarginV1`）公式正確性與缺資料降級行為（TP-MVAL-001~003）。
 
 ## 2. 測試範圍
 ### In Scope
@@ -30,7 +32,9 @@
 9. 通知延遲與準確率 KPI。  
 10. 開盤監控設定摘要通知（股票/方法/fair/cheap 與同日去重）。  
 11. LINE 模板載入與渲染失敗處理（`TEMPLATE_NOT_FOUND` / `TEMPLATE_RENDER_FAILED`），涵蓋彙總/摘要/觸發列/測試推播。  
-12. 全市場估值掃描（FR-19）：`AllListedStocksPort`/`TwseAllListedStocksProvider` 清單擷取、三分類邏輯（below_cheap / near_fair / uncalculable）、watchlist upsert（new/updated 計數分離）、CSV 輸出（`scan_YYYYMMDD_*.csv`）。  
+12. 全市場估值掃描（FR-19）：`AllListedStocksPort`/`TwseAllListedStocksProvider` 清單擷取、三分類邏輯（below_cheap / near_fair / uncalculable）、watchlist upsert（new/updated 計數分離）、CSV 輸出（`scan_YYYYMMDD_*.csv`）。
+13. FinMind SWR cache（TP-FIN-001~004）：`financial_data_cache` 三層取值策略、背景刷新去重、DB 降級。
+14. 三方法估值單元測試（TP-MVAL-001~003）：`OldbullDividendYieldV1`、`EmilyCompositeV1`、`RayskyBlendedMarginV1` 公式正確性與缺資料行為。
 
 ### Out of Scope
 1. 自動下單。  
@@ -247,6 +251,13 @@
 | TP-SCAN-005 | 1 支 near_fair 股票 | 執行 `run_market_scan_job`，output_dir 設為臨時目錄 | `scan_YYYYMMDD_near_fair.csv` 存在；欄位含 stock_no/stock_name/agg_fair_price/agg_cheap_price/yesterday_close/methods_success/methods_skipped；無 skip_reasons 欄 |
 | TP-SCAN-006 | 1 支全方法 SKIP；1 支在計算時 raise exception | 執行 `run_market_scan_job` | `scan_YYYYMMDD_uncalculable.csv` 含 SKIP 股票；`methods_skipped` 欄含 `method:reason` 格式；exception 股票寫入 ERROR log `MARKET_SCAN_STOCK_ERROR`；整體掃描未中斷 |
 | TP-SCAN-007 | DB `valuation_methods` 全部 disabled 或空表 | 執行 `python -m stock_monitor scan-market` | CLI 以非 0 exit code 結束，stderr/stdout 含 `MARKET_SCAN_METHODS_EMPTY`，且 output 目錄不產生掃描 CSV |
+| TP-FIN-001 | DB 無快取（cache miss） | 呼叫 `provider.get_avg_dividend("2330")`（mock `_fetch_finmind` 回傳假資料） | API 被呼叫 1 次；回傳值非 None；DB `financial_data_cache` 新增 1 筆；下次呼叫從 L1 mem 取，不再呼叫 API |
+| TP-FIN-002 | DB 快取 fetched_at ≤ 15 天前（新鮮） | 呼叫任一 `get_*` 方法 | `_fetch_finmind` 呼叫次數 = 0；回傳值從 DB 取出並升至 L1 |
+| TP-FIN-003 | DB 快取 fetched_at > 15 天前（陳舊） | 呼叫任一 `get_*` 方法 | 立即回傳舊值（不阻塞）；背景執行緒觸發刷新並寫入 DB；相同 dataset 最多 1 個刷新執行緒（去重） |
+| TP-FIN-004 | `db_path=None`（DB 不可用） | 建立 provider 並呼叫 `get_avg_dividend` | `_fetch_finmind` 被呼叫；回傳有效值；不 raise；無 DB 讀寫動作 |
+| TP-MVAL-001 | `avg_dividend=38.2` | 建立 `OldbullDividendYieldV1` 並呼叫 `compute(stock_no, trade_date, provider)` | `fair ≈ 764.0`（38.2/0.05）；`cheap ≈ 636.67`（38.2/0.06）；`avg_dividend=None` 時回傳 `(None, None)` |
+| TP-MVAL-002 | stub provider 提供完整 4 子法輸入（股利、歷年股價、PE、PB） | `EmilyCompositeV1.compute(stock_no, trade_date, provider)` | `fair = mean([子法 fairs]) * 0.9`（安全邊際）；partial 缺失時跳過缺失子法仍回傳值；全子法缺失時回傳 `(None, None)` |
+| TP-MVAL-003 | stub provider 提供 PE + 股利 + PB（NCAV current_assets ≤ total_liabilities） | `RayskyBlendedMarginV1.compute(stock_no, trade_date, provider)` | `fair = median(PE_fair, div_fair, PB_fair)`；NCAV 子法跳過；`cheap = fair * 0.9`；全子法缺失回傳 `(None, None)` |
 
 ## 8. 失敗模式測試
 1. LINE 成功、DB 失敗（最關鍵）。  
