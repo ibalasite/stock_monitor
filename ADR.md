@@ -1,8 +1,8 @@
 # ADR - Architecture Decision Records
 
-版本：v0.4  
+版本：v0.5  
 日期：2026-04-17  
-來源基準：`PDD_Stock_Monitoring_System.md`（v1.2）、`EDD_Stock_Monitoring_System.md`（v1.2）
+來源基準：`PDD_Stock_Monitoring_System.md`（v1.4）、`EDD_Stock_Monitoring_System.md`（v1.4）
 
 ## ADR-001 使用 Clean Architecture 分層
 1. 狀態：Accepted
@@ -196,3 +196,29 @@
    - `TwseRealtimeMarketDataProvider` 新增 `_price_cache`（現儲存最後已知委賣一）、`_exchange_cache`，並在 `get_realtime_quotes` 回傳欄位中加入 `exchange`。
    - `daemon_runner.py` 的 `_build_runtime` 改為注入 `CompositeMarketDataProvider`。
    - CLAUDE.md §11 禁止清單登錄 CR-ADP-01、CR-ADP-02。
+
+## ADR-017 財務估值資料採 FinMind API + SQLite SWR Cache（三層策略）
+1. 狀態：Accepted
+2. 決策：
+   - 財務估值資料（股利、EPS、資產負債表、PE/PB 統計、歷年股價）統一由 `FinMindFinancialDataProvider` 提供，API 來源為 FinMind（`https://api.finmindtrade.com/api/v4/data`）。
+   - 採 **Stale-While-Revalidate（SWR）** 三層快取策略：
+     1. L1 記憶體（`_mem`，同進程，永不過期）
+     2. L2 DB 新鮮（`financial_data_cache`，`fetched_at ≤ 15 天`）→ 直接回傳 + 升入 L1
+     3. L3 DB 陳舊（`> 15 天`）→ 立即回傳舊值 + 背景執行緒刷新（去重 `_refreshing` set + `threading.Lock()`）
+     4. L4 DB miss → API 擷取 → 寫 DB → 升入 L1
+   - `db_path` 透過 `load_enabled_scan_methods(db_path=...)` → `FinMindFinancialDataProvider(db_path=...)` 傳遞；`db_path=None` 時跳過 DB 層，直接呼叫 API（降級不 raise）。
+3. 原因：
+   - FinMind 提供台股完整財務資料且免費可用；MOPS 原始頁面爬取結構不穩定，FinMind 結構化 JSON 更可靠。
+   - 財務資料變動頻率低（季度/年度），15 天 TTL 在保持資料足夠新鮮與減少 API 呼叫之間取得平衡。
+   - SWR 策略避免阻塞：陳舊資料立即可用，背景刷新不影響 scan-market 回應時間。
+   - 背景執行緒去重（`_refreshing` set）確保同一 dataset 最多一個刷新執行緒在飛，不重複呼叫 API。
+4. 影響：
+   - 新增 `financial_data_cache` SQLite 資料表（`schema.py`、`EDD §9.3/§16`）。
+   - 新增 `FinMindFinancialDataProvider`（`stock_monitor/adapters/financial_data_finmind.py`）。
+   - 四項已知解析約束需在實作中特別處理（EDD §9.3 關鍵實作約束）：
+     - ROC 年份：使用 `date` 欄位而非 `year` 欄位
+     - EPS 加總：同年所有季度加總後再取年均
+     - Liabilities 型別名稱：FinMind 使用 `Liabilities`（非 `TotalLiabilities`）
+     - NT$ 單位正規化：資產負債表值需除以 1,000 轉換為 NT$ 千元單位
+   - `API_CONTRACT.md` 同步新增 `FinancialDataPort` 介面定義。
+   - CLAUDE.md §7 symbol contract 新增三個條目。

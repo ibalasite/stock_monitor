@@ -88,6 +88,8 @@ feature 若與 PDD 衝突 → 修 feature。tests 若與 EDD 衝突 → 修 test
 | `features/line_template_fr17.feature` | AI 草稿，人類補充 | → PDD FR-17 | FR-17 細化場景 |
 | `features/market_data_composite.feature` | AI 草稿，人類補充 | → EDD adapter 設計 + CR-ADP-02 | Composite 行情 Freshness-First 行為 |
 | `features/opening_summary_runtime.feature` | AI 草稿，人類補充 | → PDD + EDD 開盤摘要流程 | 開盤摘要 runtime 行為 |
+| `features/market_scan.feature` | AI 草稿，人類補充 | → PDD FR-19 + EDD §14 + TEST_PLAN TP-SCAN-* | 全市場估值掃描三分類行為 |
+| `features/financial_data_finmind_swr.feature` | AI 草稿，人類補充 | → EDD §9.3/§16 + TEST_PLAN TP-FIN-*/TP-MVAL-* | FinMind SWR cache 三層策略 + 三方法公式 |
 
 ---
 
@@ -133,7 +135,11 @@ PDD > EDD > USER_STORY_ACCEPTANCE_CRITERIA > TEST_PLAN > features + tests
 | `tests/test_valuation_phase2_red.py` | AI 全自動 | → PDD FR-14~16 + EDD 估值設計 | TDD red phase — 估值 Phase 2 |
 | `tests/test_cr_actions_red.py` | AI 全自動 | → EDD CR 禁止清單 | CR 改善項目驗證 |
 | `tests/test_cr_phase2_red.py` | AI 全自動 | → EDD CR 禁止清單 Phase 2 | CR Phase 2 改善項目驗證 |
-| `tests/bdd/` | AI 全自動 | → features/*.feature（全 6 個） | pytest-bdd glue steps |
+| `tests/test_market_scan.py` | AI 全自動 | → PDD FR-19 + EDD §14 + TEST_PLAN TP-SCAN-* | 全市場估值掃描 unit / integration |
+| `tests/test_market_scan_methods.py` | AI 全自動 | → EDD §9.1/§9.3 + TEST_PLAN TP-MVAL-* | 三方法公式 + load_enabled_scan_methods |
+| `tests/test_finmind_swr_cache.py` | AI 全自動 | → EDD §9.3/§16 + TEST_PLAN TP-FIN-* | FinMind SWR cache 三層策略 |
+| `tests/test_platform_fr20.py` | AI 全自動 | → EDD §15 + TEST_PLAN TP-PLAT-* | pathlib + SIGTERM 跨平台驗證 |
+| `tests/bdd/` | AI 全自動 | → features/*.feature（全 8 個） | pytest-bdd glue steps |
 | `tests/_contract.py` | AI 全自動 | → CLAUDE/CODEX §7 symbol contract | symbol 存在性契約基線 |
 
 ---
@@ -180,7 +186,7 @@ PDD > EDD > USER_STORY_ACCEPTANCE_CRITERIA > TEST_PLAN > features + tests
 | `docs/pdd.html` | AI 全自動 | → `PDD_Stock_Monitoring_System.md` |
 | `docs/edd.html` | AI 全自動 | → `EDD_Stock_Monitoring_System.md` + `docs/architecture/images/*.png` |
 | `docs/testplan.html` | AI 全自動 | → `TEST_PLAN.md` |
-| `docs/bdd.html` | AI 全自動 | → `features/*.feature`（全 6 個） |
+| `docs/bdd.html` | AI 全自動 | → `features/*.feature`（全 8 個） |
 | `docs/index.html` | AI 全自動 | → 彙整所有 Tier 的入口導覽，需與 README §2 保持同步 |
 | `docs/site.css` | AI 全自動 | → 共用樣式，與文件內容無關 |
 
@@ -216,4 +222,4 @@ PDD > EDD > USER_STORY_ACCEPTANCE_CRITERIA > TEST_PLAN > features + tests
 | 2 | `docs/pdd.html` banner | ✅ 已修正：PDD 為根源（Tier 1），衝突以 PDD 為準。subtitle 更新為 FR-01～FR-18，補入 FR-18。 |
 | 3 | `docs/edd.html` banner | ✅ 已修正：`PDD → EDD → USER_STORY → TEST_PLAN → features + tests`，下游對齊上游。 |
 | 4 | `images/06-data-model-2.png`、`07-deployment-2.png` | ✅ 已確認：非孤立。由 `06-data-model.md` §6.3、`07-deployment.md` §7.3 第二個 Mermaid 區塊自動產生，`generate_arch_diagrams.mjs` 依序輸出 `-2.png`。不需另建獨立原始檔。 |
-| 5 | `docs/bdd.html` | ✅ 已修正：補入 `line_template_fr17.feature` card，現共 6 個 feature。 |
+| 5 | `docs/bdd.html` | ✅ 已修正：補入 `line_template_fr17.feature` card，現共 8 個 feature（另補入 `market_scan.feature`、`financial_data_finmind_swr.feature`）。 |

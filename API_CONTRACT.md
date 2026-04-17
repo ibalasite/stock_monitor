@@ -1,8 +1,8 @@
 # API_CONTRACT - Stock Monitoring System
 
-版本：v0.4  
+版本：v0.5  
 日期：2026-04-17  
-來源基準：`PDD_Stock_Monitoring_System.md`（v1.3）、`EDD_Stock_Monitoring_System.md`（v1.3）
+來源基準：`PDD_Stock_Monitoring_System.md`（v1.4）、`EDD_Stock_Monitoring_System.md`（v1.4）
 
 ## 1. 文件目的
 定義應用層與基礎設施層的介面契約，讓 BDD 與 TDD 可直接依契約落地測試與實作。
@@ -168,6 +168,35 @@ CSV 共用欄位（三份 CSV 均適用）：`stock_no`, `stock_name`, `agg_fair
 2. 禁止傳入空清單 `valuation_methods=[]` 作為正常掃描路徑。
 3. 若啟用方法數為 0，CLI 應 fail-fast 並回傳錯誤，不輸出 CSV。
 
+### 5.10 `FinancialDataPort` 介面契約（FR-11/FR-12）
+
+**模組**：`stock_monitor.adapters.financial_data_finmind.FinMindFinancialDataProvider`
+
+#### 方法簽名
+
+| 方法 | 回傳型別 | 說明 |
+|---|---|---|
+| `get_avg_dividend(stock_no: str) -> float \| None` | `float \| None` | 10 年平均股利（NT$）；無資料回 `None` |
+| `get_eps_data(stock_no: str) -> dict \| None` | `{"eps_ttm": float, "eps_10y_avg": float} \| None` | TTM EPS 與 10 年均 EPS；無資料回 `None` |
+| `get_balance_sheet_data(stock_no: str) -> dict \| None` | `{"current_assets": float, "total_liabilities": float} \| None` | 單位：NT$ 千元；無資料回 `None` |
+| `get_pe_pb_stats(stock_no: str) -> dict \| None` | `{"pe_low_avg": float, "pe_mid_avg": float, "pb_low_avg": float, "pb_mid_avg": float, "bps_latest": float} \| None` | PE/PB 歷史均值與最新 BPS；無資料回 `None` |
+| `get_price_annual_stats(stock_no: str) -> dict \| None` | `{"year_low_10y": float, "year_avg_10y": float} \| None` | 10 年年低均 / 年均均；無資料回 `None` |
+| `get_shares_outstanding(stock_no: str) -> float \| None` | `float \| None` | 流通股數（股）；無資料回 `None` |
+
+#### SWR Cache 契約
+
+- `db_path=None` → 跳過 DB 層，直接呼叫 API，不 raise
+- cache miss → 呼叫 API，結果寫 DB，升入 `_mem`
+- cache fresh（fetched_at ≤ SWR_TTL_SECONDS 前）→ 回傳 DB 值，不呼叫 API
+- cache stale（fetched_at > SWR_TTL_SECONDS 前）→ 立即回傳舊值 + 非同步背景刷新（同 dataset 最多 1 刷新執行緒）
+
+#### 資料缺失契約
+
+所有 `get_*` 方法在以下情況回傳 `None`（不 raise）：
+- FinMind API 回傳空列表
+- FinMind API HTTP 失敗（呼叫端由估值方法記錄 `SKIP_PROVIDER_ERROR`）
+- DB 快取無資料且 API 失敗
+
 ## 6. 錯誤語意契約
 | Error Code | 行為 |
 |---|---|
@@ -182,6 +211,7 @@ CSV 共用欄位（三份 CSV 均適用）：`stock_no`, `stock_name`, `agg_fair
 | `MARKET_SCAN_STOCK_ERROR` | 寫 ERROR（level），繼續下一支股票，不中斷整體掃描 |
 | `MARKET_SCAN_LIST_FETCH_FAILED` | scan-market fail-fast，印出錯誤後退出 |
 | `MARKET_SCAN_METHODS_EMPTY` | 無 `enabled=1` 估值方法時 fail-fast 退出，不輸出 CSV |
+| `FINMIND_FETCH_ERROR` | FinMind API 呼叫失敗；估值方法記錄 `SKIP_PROVIDER_ERROR`，不中斷掃描 |
 
 ## 7. BDD 對應
 1. `features/stock_monitoring_system.feature` 的 `TP-ENV-*`、`TP-POL-*`、`TP-INT-*` 全部應可對應到本契約至少一個 Port 行為。
