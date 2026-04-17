@@ -15,15 +15,14 @@
     <key>WorkingDirectory</key>
     <string>/Users/tobala/projects/stock_monitor</string>
 
-    <key>EnvironmentVariables</key>
-    <dict>
-        <key>LINE_CHANNEL_ACCESS_TOKEN</key>
-        <string>REPLACE_WITH_YOUR_TOKEN</string>
-        <key>LINE_TO_GROUP_ID</key>
-        <string>REPLACE_WITH_YOUR_GROUP_ID</string>
-        <key>APP_TIMEZONE</key>
-        <string>Asia/Taipei</string>
-    </dict>
+    <!-- CR-SEC-06: EnvironmentVariables block removed.
+         LINE_CHANNEL_ACCESS_TOKEN is retrieved from macOS Keychain
+         by start_daemon.sh at runtime via:
+           security find-generic-password -s stock_monitor -a LINE_TOKEN -w
+         One-time setup:
+           security add-generic-password -s stock_monitor -a LINE_TOKEN    -w "<token>"
+           security add-generic-password -s stock_monitor -a LINE_GROUP_ID -w "<group_id>"
+    -->
 
     <key>RunAtLoad</key>
     <false/>

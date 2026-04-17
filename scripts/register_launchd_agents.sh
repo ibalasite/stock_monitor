@@ -10,9 +10,10 @@
 #   bash scripts/register_launchd_agents.sh              # install + load
 #   bash scripts/register_launchd_agents.sh --uninstall  # unload + remove
 #
-# Prerequisites:
-#   LINE_CHANNEL_ACCESS_TOKEN and LINE_TO_GROUP_ID must be set in environment,
-#   or edit ~/Library/LaunchAgents/com.stock_monitor.daemon.plist manually.
+# Prerequisites (one-time Keychain setup — CR-SEC-06):
+#   security add-generic-password -s stock_monitor -a LINE_TOKEN    -w "<your_token>"
+#   security add-generic-password -s stock_monitor -a LINE_GROUP_ID -w "<your_group_id>"
+#   Token is retrieved at runtime by start_daemon.sh; never stored in the plist.
 
 set -euo pipefail
 
@@ -47,17 +48,11 @@ sed "s|/Users/tobala/projects/stock_monitor|${PROJECT_ROOT}|g" \
 sed "s|/Users/tobala/projects/stock_monitor|${PROJECT_ROOT}|g" \
     "${STOP_SRC}" > "${STOP_DST}"
 
-# Inject LINE credentials from environment into start plist
-if [ -n "${LINE_CHANNEL_ACCESS_TOKEN:-}" ]; then
-    sed -i '' "s|REPLACE_WITH_YOUR_TOKEN|${LINE_CHANNEL_ACCESS_TOKEN}|g" "${START_DST}"
-else
-    echo "WARNING: LINE_CHANNEL_ACCESS_TOKEN not set — edit ${START_DST} manually."
-fi
-if [ -n "${LINE_TO_GROUP_ID:-}" ]; then
-    sed -i '' "s|REPLACE_WITH_YOUR_GROUP_ID|${LINE_TO_GROUP_ID}|g" "${START_DST}"
-else
-    echo "WARNING: LINE_TO_GROUP_ID not set — edit ${START_DST} manually."
-fi
+# CR-SEC-06: Token injection removed.
+# Credentials are stored in macOS Keychain and retrieved by start_daemon.sh at runtime.
+# Run one-time setup if not done yet:
+#   security add-generic-password -s stock_monitor -a LINE_TOKEN    -w "<your_token>"
+#   security add-generic-password -s stock_monitor -a LINE_GROUP_ID -w "<your_group_id>"
 
 # Load agents (unload first to handle re-registration)
 for dst in "${START_DST}" "${STOP_DST}"; do

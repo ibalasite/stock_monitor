@@ -1,7 +1,15 @@
 # Stock Monitor Daemon - Start Script
 # Triggered by Windows Task Scheduler on weekdays at 08:50
-# Environment variables (LINE_CHANNEL_ACCESS_TOKEN, LINE_TO_GROUP_ID) must be set
-# via "setx" so they are available in the system environment.
+#
+# CR-SEC-07: Credentials are stored in Windows Credential Manager.
+# One-time setup (run once as the same user that runs this script):
+#   cmdkey /add:stock_monitor_LINE_TOKEN    /user:LINE_TOKEN    /pass:"<your_token>"
+#   cmdkey /add:stock_monitor_LINE_GROUP_ID /user:LINE_GROUP_ID /pass:"<your_group_id>"
+
+# Retrieve credentials from Windows Credential Manager at runtime (CR-SEC-07).
+# Requires: Install-Module -Name CredentialManager -Scope CurrentUser  (one-time)
+$env:LINE_CHANNEL_ACCESS_TOKEN = (Get-StoredCredential -Target stock_monitor_LINE_TOKEN).Password
+$env:LINE_TO_GROUP_ID          = (Get-StoredCredential -Target stock_monitor_LINE_GROUP_ID).Password
 
 $python  = "C:\Users\ibala\AppData\Local\Microsoft\WindowsApps\PythonSoftwareFoundation.Python.3.13_qbz5n2kfra8p0\python.exe"
 $workDir = "C:\Projects\stock"
