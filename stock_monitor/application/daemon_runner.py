@@ -31,7 +31,7 @@ from stock_monitor.adapters.sqlite_repo import (
 )
 from stock_monitor.application.runtime_service import run_minute_cycle, run_reconcile_cycle
 from stock_monitor.application.trading_session import is_in_trading_session
-from stock_monitor.application.valuation_calculator import ManualValuationCalculator
+from stock_monitor.application.valuation_calculator import RealValuationCalculator
 from stock_monitor.application.valuation_scheduler import run_daily_valuation_job
 from stock_monitor.bootstrap.runtime import assert_sqlite_prerequisites, validate_line_runtime_config
 from stock_monitor.domain.time_bucket import TimeBucketService
@@ -82,6 +82,7 @@ def _build_runtime(args) -> dict:
         "valuation_snapshot_repo": SqliteValuationSnapshotRepository(conn),
         "logger": SqliteLogger(conn),
         "pending_fallback": JsonlPendingFallback(Path("logs/pending_delivery.jsonl")),
+        "db_path": str(db_path),
     }
     return runtime
 
@@ -145,9 +146,10 @@ def _run_daemon_loop(
                 now_hhmm = now_dt.strftime("%H:%M")
                 today = now_dt.strftime("%Y-%m-%d")
                 if now_hhmm >= valuation_time and now_dt.weekday() < 5 and last_valuation_date != today:
-                    calculator = ManualValuationCalculator(
+                    calculator = RealValuationCalculator(
                         watchlist_repo=runtime["watchlist_repo"],
                         trade_date=today,
+                        db_path=runtime["db_path"],
                     )
                     run_daily_valuation_job(
                         now_dt=now_dt,

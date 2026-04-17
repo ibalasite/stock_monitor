@@ -561,7 +561,12 @@ class MopsTwseAdapter(SWRCacheBase):
 
         # Cache miss — choose strategy based on dataset
         if dataset == "eps":
-            self._ensure_bulk("eps", self._bulk_fetch_eps)
+            # EPS bulk is expensive; kick off in background, raise immediately.
+            # Caller (ParallelFinancialDataProvider) will retry once cache warms.
+            self._ensure_bulk_background("eps", self._bulk_fetch_eps)
+            raise ProviderUnavailableError(
+                "mops: EPS bulk fetch in progress — try again after pre-cache completes"
+            )
         elif dataset == "balance_sheet":
             self._ensure_bulk("balance_sheet", self._bulk_fetch_balance_sheet)
         elif dataset == "pepb":

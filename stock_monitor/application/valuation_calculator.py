@@ -1,10 +1,15 @@
 """Application-layer valuation calculator — CR-ARCH-01 compliant.
 
-ManualValuationCalculator lives here, NOT in app.py (Interface Layer).
+ManualValuationCalculator: formula approximation (legacy / testing use only).
+RealValuationCalculator: loads enabled methods from DB, calls each method's
+  compute() backed by ParallelFinancialDataProvider (P1+P2+P3 simultaneously).
+
 No scenario_case / test-branching code in this module (CR-SEC-02, CR-ARCH-02).
 """
 
 from __future__ import annotations
+
+import sqlite3
 
 
 class ManualValuationCalculator:
@@ -142,5 +147,40 @@ class ManualValuationCalculator:
             raysky_snapshot = self._calculate_raysky_snapshot(stock_no, primary_inputs, fallback_inputs)
             if raysky_snapshot is not None:
                 snapshots.append(raysky_snapshot)
+
+        return snapshots
+
+
+class RealValuationCalculator:
+    """Phase-3 valuation calculator using DB-registered methods and real financial data.
+
+    Loads enabled valuation methods from the valuation_methods table,
+    calls each method's compute() backed by ParallelFinancialDataProvider,
+    and returns only OK results (status == "OK" and fair_price is not None).
+    """
+
+    def __init__(self, watchlist_repo, trade_date: str, db_path: str | None = None):
+        self.watchlist_repo = watchlist_repo
+        self.trade_date = trade_date
+        self.db_path = db_path
+        self.events: list[tuple[str, str]] = []
+
+    def calculate(self) -> list[dict]:
+        import stock_monitor.application.market_scan_methods as msm
+
+        self.events = []
+        rows = self.watchlist_repo.list_enabled()
+        snapshots: list[dict] = []
+
+        with sqlite3.connect(self.db_path) as conn:
+            methods = msm.load_enabled_scan_methods(conn, self.trade_date, db_path=self.db_path)
+
+        for row in rows:
+            stock_no = str(row["stock_no"])
+            for method in methods:
+                result = method.compute(stock_no, self.trade_date)
+                if result.get("status") == "OK" and result.get("fair_price") is not None:
+                    snapshot = {**result, "stock_no": stock_no, "trade_date": self.trade_date}
+                    snapshots.append(snapshot)
 
         return snapshots
