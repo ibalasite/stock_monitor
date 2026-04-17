@@ -1,8 +1,15 @@
 # EDD - 台股監控與 LINE 通知系統
 
-版本：v1.4  
+版本：v1.5  
 日期：2026-04-17  
 對齊文件：[PDD_Stock_Monitoring_System.md](PDD_Stock_Monitoring_System.md)
+
+變更摘要（v1.5）：
+- 新增 CR-SEC-06：macOS launchd plist 禁止明文存放 LINE token；改由 `start_daemon.sh` 在執行時從 macOS Keychain 取出。
+- 新增 CR-SEC-07：Windows 禁止以 `setx` 將 LINE token 寫入 registry；改存 Windows Credential Manager，由 `start_daemon.ps1` 在執行時以 `Get-StoredCredential` 取出。
+- 更新 §15.5 macOS 排程設計：移除 plist `EnvironmentVariables` token 注入，改為 Keychain 取值說明。
+- 新增 §15.9 Windows 排程安全設計（Credential Manager）。
+- §15.7 CR 禁止清單新增 CR-SEC-06、CR-SEC-07。
 
 變更摘要（v1.2）：
 - 新增 §15 FR-20 macOS / Windows 雙平台相容工程設計。
@@ -64,6 +71,7 @@
 | v0.9 | 2026-04-14 | no schema break | 雙行情來源架構：新增 `YahooFinanceMarketDataProvider`（HTML scraping）、`CompositeMarketDataProvider`（Freshness-First）；`TwseRealtimeMarketDataProvider` 加入 `_price_cache` 與 `ex` 快取 |
 | v1.0 | 2026-04-14 | no schema break | 行情 price 改為**委賣一**（最佳委賣價）：TWSE 採 `a` 欄位第一值；Yahoo 採 HTML 委賣價區塊委賣一，盤後 fallback `regularMarketPrice` |
 | v1.1 | 2026-04-17 | no schema break | 新增 FR-19 全市場估值掃描：新 CLI `scan-market`、`AllListedStocksPort`、`TwseAllListedStocksProvider`、`run_market_scan_job`、CSV 輸出規格 |
+| v1.5 | 2026-04-17 | no schema break | Security Review：CR-SEC-06/07 排程 token 明文禁止；macOS 改 Keychain、Windows 改 Credential Manager |
 ## 1. 目的與範圍
 本文件定義工程實作細節，交付目標：
 1. 盤中每分鐘監控台股價格。
@@ -890,6 +898,8 @@ app.py scan-market / valuation 路由
 | CR-SEC-03 | 🟠 | `_resolve_timezone(name)` 在無效時區名稱時靜默 fallback 至 `timezone.utc`，造成 +08:00 偏移 8 小時誤差，系統無任何錯誤輸出 | ✅ 已修正：`raise ValueError(f"Invalid timezone name: {name!r}")` | 無效名稱必須 `raise ValueError(f"Invalid timezone: {name!r}")`，不得靜默降級 | TP-SEC-002 |
 | CR-SEC-04 | 🟡 | `urllib.request.urlopen` 讀取 HTTP 回應使用無邊界 `resp.read()`，存在過大回應耗盡記憶體風險 | ✅ 已修正：新增 `MAX_RESPONSE_BYTES = 1_048_576`；改為 `resp.read(MAX_RESPONSE_BYTES)` | 讀取回應應設上限（如 `resp.read(MAX_RESPONSE_BYTES)`），`MAX_RESPONSE_BYTES` 預設 `1_048_576`（1 MB） | TP-SEC-003 |
 | CR-SEC-05 | 🟡 | `LinePushClient.send()` 讀取 LINE API HTTP 回應使用無邊界 `resp.read()`；雖 LINE API 回應通常極小，但防穩性設計要求與 TWSE/Yahoo adapter 一致設上限 | ✅ 已修正：`line_messaging.py` 新增 `MAX_RESPONSE_BYTES = 1_048_576`；回應讀取改為 `resp.read(MAX_RESPONSE_BYTES)` | `line_messaging.py` 新增 `MAX_RESPONSE_BYTES = 1_048_576`；回應讀取改為 `resp.read(MAX_RESPONSE_BYTES)` | TP-SEC-004 |
+| CR-SEC-06 | 🔴 | `register_launchd_agents.sh` 透過 `sed` 將 `LINE_CHANNEL_ACCESS_TOKEN` 明文注入 `~/Library/LaunchAgents/*.plist` 的 `EnvironmentVariables` 區塊；任何能讀取 home 目錄的程序皆可取得 token | ❌ 未修正 | macOS plist 禁止在 `EnvironmentVariables` 存放 token；token 必須在 `start_daemon.sh` 執行時以 `security find-generic-password -s stock_monitor -a LINE_TOKEN -w` 從 Keychain 取出，僅作為執行時環境變數傳入子程序 | TP-SEC-006 |
+| CR-SEC-07 | 🔴 | Windows `start_daemon.ps1` 要求以 `setx` 將 `LINE_CHANNEL_ACCESS_TOKEN` 寫入 `HKEY_CURRENT_USER\Environment`（registry 明文）；任何能讀取 registry 的程序皆可取得 token | ❌ 未修正 | Windows 禁止以 `setx` 儲存 token；token 必須以 `cmdkey /add:stock_monitor /user:LINE_TOKEN /pass:<token>` 存入 Windows Credential Manager，並在 `start_daemon.ps1` 執行時以 `(Get-StoredCredential -Target stock_monitor).Password` 取出 | TP-SEC-007 |
 
 ### 13.2 架構改善（Architecture）
 
@@ -1409,6 +1419,8 @@ fi
 
 ### 15.5 macOS 排程（launchd）範本
 
+**CR-SEC-06 合規設計**：plist 不得存放任何 token 值。token 由 `start_daemon.sh` 在執行時從 **macOS Keychain** 讀取後以環境變數注入子程序。
+
 **新增檔案**：`scripts/com.stock_monitor.daemon.plist`
 
 ```xml
@@ -1421,16 +1433,8 @@ fi
   <string>com.stock_monitor.daemon</string>
   <key>ProgramArguments</key>
   <array>
-    <string>/opt/homebrew/bin/python3.11</string>
-    <string>-m</string>
-    <string>stock_monitor</string>
-    <string>--db-path</string>
-    <string>data/stock_monitor.db</string>
-    <string>run-daemon</string>
-    <string>--poll-interval-sec</string>
-    <string>60</string>
-    <string>--valuation-time</string>
-    <string>14:00</string>
+    <string>/bin/bash</string>
+    <string>/Users/USERNAME/projects/stock_monitor/scripts/start_daemon.sh</string>
   </array>
   <key>StartCalendarInterval</key>
   <array>
@@ -1443,24 +1447,33 @@ fi
     <!-- ... 2~5 同理 -->
   </array>
   <key>StandardOutPath</key>
-  <string>logs/daemon.log</string>
+  <string>/Users/USERNAME/projects/stock_monitor/logs/launchd_start.log</string>
   <key>StandardErrorPath</key>
-  <string>logs/daemon.log</string>
+  <string>/Users/USERNAME/projects/stock_monitor/logs/launchd_start.log</string>
   <key>WorkingDirectory</key>
   <string>/Users/USERNAME/projects/stock_monitor</string>
-  <key>EnvironmentVariables</key>
-  <dict>
-    <key>LINE_CHANNEL_ACCESS_TOKEN</key>
-    <string>YOUR_TOKEN</string>
-    <key>LINE_TO_GROUP_ID</key>
-    <string>YOUR_GROUP_ID</string>
-  </dict>
 </dict>
 </plist>
 ```
 
+> **禁止**（CR-SEC-06）：plist 的 `EnvironmentVariables` 區塊不得出現 `LINE_CHANNEL_ACCESS_TOKEN` 或任何 token 值。
+
+**一次性 Keychain 設定**（由使用者手動執行，不進 script）：
+```bash
+security add-generic-password -s stock_monitor -a LINE_TOKEN    -w "<YOUR_TOKEN>"
+security add-generic-password -s stock_monitor -a LINE_GROUP_ID -w "<YOUR_GROUP_ID>"
+```
+
+**`start_daemon.sh` 執行時取值方式**：
+```bash
+export LINE_CHANNEL_ACCESS_TOKEN=$(security find-generic-password -s stock_monitor -a LINE_TOKEN    -w)
+export LINE_TO_GROUP_ID=$(security find-generic-password -s stock_monitor -a LINE_GROUP_ID -w)
+```
+
 **安裝方式**（文件化，不自動執行）：
 ```bash
+# 1. 先完成 Keychain 一次性設定（見上）
+# 2. 複製並載入 agent
 cp scripts/com.stock_monitor.daemon.plist ~/Library/LaunchAgents/
 launchctl load ~/Library/LaunchAgents/com.stock_monitor.daemon.plist
 ```
@@ -1482,12 +1495,36 @@ launchctl load ~/Library/LaunchAgents/com.stock_monitor.daemon.plist
 | CR-PLAT-01 | 生產程式碼中禁止 `os.path.join`、字串硬編碼路徑分隔符（`"/"+`、`"\\"+`）；一律使用 `pathlib.Path` |
 | CR-PLAT-02 | `signal.SIGTERM` 必須有平台判斷（`sys.platform != "win32"`）才可安裝，禁止直接在 Windows 呼叫 `signal.signal(signal.SIGTERM, ...)`（AttributeError） |
 | CR-PLAT-03 | `start_daemon.sh` / `stop_daemon.sh` 必須 `chmod +x`；plist 中 WorkingDirectory 與 ProgramArguments 必須使用絕對路徑 |
+| CR-SEC-06 | macOS launchd plist 禁止在 `EnvironmentVariables` 存放 `LINE_CHANNEL_ACCESS_TOKEN` 或任何 token 明文；token 必須在 `start_daemon.sh` 執行時從 macOS Keychain 取出（`security find-generic-password`） |
+| CR-SEC-07 | Windows 禁止以 `setx` 將 `LINE_CHANNEL_ACCESS_TOKEN` 寫入 registry；token 必須存於 Windows Credential Manager（`cmdkey`），並在 `start_daemon.ps1` 執行時以 `Get-StoredCredential` 取出 |
 
 ---
 
 ### 15.8 DB 影響
 
 FR-20 不新增資料表、不變更 Schema。
+
+---
+
+### 15.9 Windows 排程安全設計（Credential Manager）
+
+**CR-SEC-07 合規設計**：Windows Scheduled Task 與 ps1 script 不得存放任何 token 值。token 由 `start_daemon.ps1` 在執行時從 **Windows Credential Manager** 讀取後以環境變數注入子程序。
+
+**一次性 Credential Manager 設定**（由使用者手動執行）：
+```powershell
+cmdkey /add:stock_monitor_LINE_TOKEN    /user:LINE_TOKEN    /pass:"<YOUR_TOKEN>"
+cmdkey /add:stock_monitor_LINE_GROUP_ID /user:LINE_GROUP_ID /pass:"<YOUR_GROUP_ID>"
+```
+
+**`start_daemon.ps1` 執行時取值方式**：
+```powershell
+$token   = (Get-StoredCredential -Target stock_monitor_LINE_TOKEN).Password
+$groupId = (Get-StoredCredential -Target stock_monitor_LINE_GROUP_ID).Password
+$env:LINE_CHANNEL_ACCESS_TOKEN = $token
+$env:LINE_TO_GROUP_ID          = $groupId
+```
+
+> **禁止**（CR-SEC-07）：`register_scheduled_tasks.ps1` 及所有 ps1 / bat 不得以 `setx`、`[System.Environment]::SetEnvironmentVariable`、或任何方式將 token 明文寫入 registry 或任何持久化檔案。
 
 ---
 
