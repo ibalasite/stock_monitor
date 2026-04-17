@@ -23,6 +23,21 @@ fi
 
 cd "${PROJECT_ROOT}"
 
+# CR-SEC-06: resolve credentials — env var takes priority; fall back to Keychain
+if [ -z "${LINE_CHANNEL_ACCESS_TOKEN:-}" ]; then
+    LINE_CHANNEL_ACCESS_TOKEN=$(security find-generic-password -s stock_monitor -a LINE_TOKEN -w 2>/dev/null || true)
+fi
+if [ -z "${LINE_TO_GROUP_ID:-}" ]; then
+    LINE_TO_GROUP_ID=$(security find-generic-password -s stock_monitor -a LINE_GROUP_ID -w 2>/dev/null || true)
+fi
+if [ -z "${LINE_CHANNEL_ACCESS_TOKEN:-}" ] || [ -z "${LINE_TO_GROUP_ID:-}" ]; then
+    echo "ERROR: LINE_CHANNEL_ACCESS_TOKEN / LINE_TO_GROUP_ID not found in env or Keychain."
+    echo "  Run: security add-generic-password -s stock_monitor -a LINE_TOKEN    -w '<token>'"
+    echo "  Run: security add-generic-password -s stock_monitor -a LINE_GROUP_ID -w '<group_id>'"
+    exit 1
+fi
+export LINE_CHANNEL_ACCESS_TOKEN LINE_TO_GROUP_ID
+
 # Resolve Python 3.11+ interpreter (project requires Python 3.11+)
 PYTHON=$(command -v python3.11 2>/dev/null || command -v python3 2>/dev/null)
 if [ -z "${PYTHON}" ]; then
