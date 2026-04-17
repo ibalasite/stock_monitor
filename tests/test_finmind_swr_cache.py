@@ -19,10 +19,8 @@ import time
 
 import pytest
 
-from stock_monitor.adapters.financial_data_finmind import (
-    FinMindFinancialDataProvider,
-    _CACHE_CREATE_SQL,
-)
+from stock_monitor.adapters.financial_data_cache import _CACHE_CREATE_SQL
+from stock_monitor.adapters.financial_data_finmind import FinMindFinancialDataProvider
 
 
 # ---------------------------------------------------------------------------
@@ -58,24 +56,25 @@ def _make_provider(tmp_path, monkeypatch, stale_days=15, api_rows=None):
     return provider, db_path, api_call_count
 
 
-def _insert_cache_row(db_path, stock_no, dataset, rows, fetched_at):
+def _insert_cache_row(db_path, stock_no, dataset, rows, fetched_at, provider="finmind"):
     with sqlite3.connect(db_path) as c:
         c.execute(
             """
             INSERT OR REPLACE INTO financial_data_cache
-                (stock_no, dataset, data_json, fetched_at)
-            VALUES (?, ?, ?, ?)
+                (provider, stock_no, dataset, data_json, fetched_at)
+            VALUES (?, ?, ?, ?, ?)
             """,
-            (stock_no, dataset, json.dumps(rows), fetched_at),
+            (provider, stock_no, dataset, json.dumps(rows), fetched_at),
         )
         c.commit()
 
 
-def _read_cache_row(db_path, stock_no, dataset):
+def _read_cache_row(db_path, stock_no, dataset, provider="finmind"):
     with sqlite3.connect(db_path) as c:
         row = c.execute(
-            "SELECT data_json, fetched_at FROM financial_data_cache WHERE stock_no=? AND dataset=?",
-            (stock_no, dataset),
+            "SELECT data_json, fetched_at FROM financial_data_cache"
+            " WHERE provider=? AND stock_no=? AND dataset=?",
+            (provider, stock_no, dataset),
         ).fetchone()
     return row
 
