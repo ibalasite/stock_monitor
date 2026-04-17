@@ -1,6 +1,6 @@
 # TEST_PLAN - Stock Monitor System
 
-版本：v1.2  
+版本：v1.3  
 日期：2026-04-17  
 依據文件：[EDD_Stock_Monitoring_System.md](c:/Projects/stock/EDD_Stock_Monitoring_System.md), [PDD_Stock_Monitoring_System.md](c:/Projects/stock/PDD_Stock_Monitoring_System.md), [USER_STORY_ACCEPTANCE_CRITERIA.md](c:/Projects/stock/USER_STORY_ACCEPTANCE_CRITERIA.md)
 
@@ -18,6 +18,7 @@
 11. 驗證 macOS / Windows 跨平台相容（FR-20）：pathlib 路徑、SIGTERM 優雅關閉、bash 腳本、launchd plist 格式（TP-PLAT-001~005、TP-UAT-017）。
 12. 驗證 FinMind SWR cache 三層策略（miss→fetch+store、fresh→no API、stale→立即回傳+背景刷新、DB 不可用降級）（TP-FIN-001~004）。
 13. 驗證三個實際估值方法（`OldbullDividendYieldV1`、`EmilyCompositeV1`、`RayskyBlendedMarginV1`）公式正確性與缺資料降級行為（TP-MVAL-001~003）。
+14. 驗證排程 token 安全規範：macOS launchd plist 不含 token 明文（CR-SEC-06）；Windows 不以 `setx` 寫入 registry（CR-SEC-07）（TP-SEC-006~007）。
 
 ## 2. 測試範圍
 ### In Scope
@@ -35,6 +36,7 @@
 12. 全市場估值掃描（FR-19）：`AllListedStocksPort`/`TwseAllListedStocksProvider` 清單擷取、三分類邏輯（below_cheap / near_fair / uncalculable）、watchlist upsert（new/updated 計數分離）、CSV 輸出（`scan_YYYYMMDD_*.csv`）。
 13. FinMind SWR cache（TP-FIN-001~004）：`financial_data_cache` 三層取值策略、背景刷新去重、DB 降級。
 14. 三方法估值單元測試（TP-MVAL-001~003）：`OldbullDividendYieldV1`、`EmilyCompositeV1`、`RayskyBlendedMarginV1` 公式正確性與缺資料行為。
+15. 排程 token 安全（TP-SEC-006~007）：macOS plist 靜態掃描確認無 token 明文；Windows 腳本確認無 `setx` token 行為。
 
 ### Out of Scope
 1. 自動下單。  
@@ -70,7 +72,7 @@
 6. 報價新鮮度門檻：`STALE_THRESHOLD_SEC=90`。  
 
 ## 6. 測試矩陣（需求追蹤）
-> **BDD 覆蓋規則**：類型含 `BDD` 的測試案例須有對應 `.feature` 場景與 `@tag`。類型為 `Unit` 或 `Migration` 者以 pytest 單元測試覆蓋，不要求 BDD 場景（例：TP-DB-006, TP-VAL-007, TP-SEC-003, TP-ARCH-005/006, TP-CODE-001~004 均屬此類）。
+> **BDD 覆蓋規則**：類型含 `BDD` 的測試案例須有對應 `.feature` 場景與 `@tag`。類型為 `Unit` 或 `Migration` 者以 pytest 單元測試覆蓋，不要求 BDD 場景（例：TP-DB-006, TP-VAL-007, TP-SEC-003, TP-SEC-006, TP-SEC-007, TP-ARCH-005/006, TP-CODE-001~004 均屬此類）。
 | 測試ID | 需求對應 | 類型 | 驗收重點 |
 |---|---|---|---|
 | TP-DB-001 | EDD §6.1 | Migration | `watchlist` 約束與欄位型別正確 |
@@ -150,6 +152,8 @@
 | TP-SEC-002 | EDD §13.1 CR-SEC-03 / §13.3 CR-CODE-05 | Unit | 無效時區名稱引發啟動時 `ValueError`，不得靜默 fallback UTC |
 | TP-SEC-003 | EDD §13.1 CR-SEC-04 / EDD §13.5 CR-ADP-04 | Unit | HTTP 回應讀取有大小上限，超大回應不得無限占用記憶體（TWSE adapter + Yahoo adapter 均涵蓋；Yahoo `MAX_RESPONSE_BYTES` 需 ≤ 1 MB，與 TWSE 相同） |
 | TP-SEC-004 | EDD §13.1 CR-SEC-05 | Unit | `LinePushClient.send()` HTTP 回應讀取也必須受 `MAX_RESPONSE_BYTES`（1 MB）上限限制，與 TWSE/Yahoo adapter 一致 |
+| TP-SEC-006 | EDD §13.1 CR-SEC-06 | Unit | `scripts/com.stock_monitor.daemon.plist` 靜態掃描不得含 `LINE_CHANNEL_ACCESS_TOKEN` 明文值；`register_launchd_agents.sh` 不得有注入 token 至 plist 的 `sed` 指令 |
+| TP-SEC-007 | EDD §13.1 CR-SEC-07 | Unit | `scripts/start_daemon.ps1` 與 `scripts/register_scheduled_tasks.ps1` 靜態掃描不得含 `setx LINE_CHANNEL_ACCESS_TOKEN` 或明文 token 指令 |
 | TP-ARCH-001 | EDD §13.2 CR-ARCH-01/02 | Unit | `ValuationCalculator` 可從 `stock_monitor.application.valuation_calculator` import；`app.py` 不含計算邏輯；`scenario_case` 分支不存在於生產估值流程 |
 | TP-ARCH-002 | EDD §13.2 CR-ARCH-03 | Unit | `render_line_template_message` 在整個專案內只有一份定義，來源為 `message_template.py` |
 | TP-ARCH-003 | EDD §13.3 CR-CODE-03 | Unit | `MinuteCycleConfig` dataclass 存在於 `runtime_service.py`，`run_minute_cycle` 接受它作為設定入口 |
@@ -237,6 +241,8 @@
 | TP-SEC-001 | `LinePushClient` 已載入 | 呼叫 `repr(LinePushClient(token="abc", to="xyz"))` | 輸出字串不包含 `abc`；欄位顯示為 `***` 或省略 |
 | TP-SEC-002 | 無 | 以無效時區名稱（如 `"Invalid/Tz"`）初始化 `TimeBucketService` 或呼叫 `_resolve_timezone` | 立即 `raise ValueError`，不繼續執行，不返回 UTC |
 | TP-SEC-003 | Mock HTTP server 回傳超過 1 MB 的 body | 分別呼叫 TWSE adapter 與 Yahoo adapter 的 URL 讀取路徑 | 兩個 adapter 均只讀取至各自的 `MAX_RESPONSE_BYTES`（≤ 1 MB），不引發 `MemoryError`；Yahoo `MAX_RESPONSE_BYTES = 1_048_576` |
+| TP-SEC-006 | `scripts/com.stock_monitor.daemon.plist` 與 `scripts/register_launchd_agents.sh` 已存在 | 讀取 plist 原始內容；grep `register_launchd_agents.sh` 中的 `sed` 指令 | plist 不含任何形如 token 字串的明文值（不含 `IpZ`、`Bearer` 等 base64 token 特徵）；`register_launchd_agents.sh` 不存在將 env var 以 `sed` 寫入 plist `EnvironmentVariables` 的邏輯 |
+| TP-SEC-007 | `scripts/start_daemon.ps1` 與 `scripts/register_scheduled_tasks.ps1` 已存在 | 讀取腳本原始內容；grep `setx` 與 `LINE_CHANNEL_ACCESS_TOKEN` | 兩支腳本均不含 `setx.*LINE_CHANNEL_ACCESS_TOKEN` 或 `[System.Environment]::SetEnvironmentVariable.*LINE_CHANNEL_ACCESS_TOKEN` 指令 |
 | TP-ARCH-001 | 空 DB + 一組主僅依數據 | `from stock_monitor.application.valuation_calculator import ManualValuationCalculator`；檢查 `app.py` 不含計算類；執行一次估值確認無 `scenario_case` log 事件 | import 成功；`app.py` grep 不出計算專屬名稱；system_logs 無偽造 skip 事件 |
 | TP-ARCH-002 | 專案已 import | 用 `grep -r "def render_line_template_message"` 掃瞄所有 `.py` | 僅在 `message_template.py` 出現一次；`runtime_service.py` 改用 import |
 | TP-ARCH-003 | DB 設定 + Mock LINE | `from stock_monitor.application.runtime_service import MinuteCycleConfig`；以 `MinuteCycleConfig` 呼叫 `run_minute_cycle` | import 成功；函式接受 config 物件呼叫正常 |
