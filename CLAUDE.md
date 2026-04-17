@@ -178,6 +178,8 @@ python -m pytest -q tests/test_integration_workflow.py -k TP-INT-010
 - **禁止** 生產程式碼中使用 `os.path.join`、字串硬編碼路徑分隔符（`"/"+`、`"\\"+`）；一律使用 `pathlib.Path`（CR-PLAT-01）
 - **禁止** 在未判斷 `sys.platform != "win32"` 的情況下直接安裝 `signal.SIGTERM` handler（CR-PLAT-02）
 - **禁止** `scripts/start_daemon.sh` / `stop_daemon.sh` 未 `chmod +x`；plist WorkingDirectory 使用相對路徑（CR-PLAT-03）
+- **禁止** macOS launchd plist 的 `EnvironmentVariables` 區塊存放 `LINE_CHANNEL_ACCESS_TOKEN` 或任何 token 明文；token 必須在 `start_daemon.sh` 執行時從 macOS Keychain 取出（CR-SEC-06）
+- **禁止** Windows 以 `setx` 或任何方式將 `LINE_CHANNEL_ACCESS_TOKEN` 寫入 registry 或持久化檔案；token 必須存於 Windows Credential Manager，由 `start_daemon.ps1` 在執行時以 `Get-StoredCredential` 取出（CR-SEC-07）
 
 ## 13. Out of Scope（此階段不做）
 - 自動下單

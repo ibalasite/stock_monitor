@@ -1,8 +1,8 @@
 # SECURITY_AND_SECRETS - Stock Monitoring System
 
-版本：v0.2  
-日期：2026-04-14  
-來源基準：`PDD_Stock_Monitoring_System.md`、`EDD_Stock_Monitoring_System.md`（v0.8）
+版本：v0.3  
+日期：2026-04-17  
+來源基準：`PDD_Stock_Monitoring_System.md`、`EDD_Stock_Monitoring_System.md`（v1.5）
 
 ## 1. 文件目的
 定義金鑰、權限、日誌與資料保護要求，降低通知系統的憑證與資料風險。
@@ -27,7 +27,11 @@
    不得靜默 fallback 至 UTC，否則導致 +08:00 偏移錯誤（對應 EDD §13.1 CR-SEC-03）。
 6. HTTP 回應讀取需設大小上限（預設 `MAX_RESPONSE_BYTES = 1_048_576`，即 1 MB）；
    防止超大回應耗盡記憶體（對應 EDD §13.1 CR-SEC-04）。
-7. 發現 token 外洩時需立即輪替並重啟服務。
+7. **macOS 排程**：`LINE_CHANNEL_ACCESS_TOKEN` 必須存於 **macOS Keychain**，禁止寫入 launchd plist 的 `EnvironmentVariables` 區塊；`start_daemon.sh` 執行時以 `security find-generic-password` 取出（對應 EDD §13.1 CR-SEC-06）。
+   - 一次性設定：`security add-generic-password -s stock_monitor -a LINE_TOKEN -w "<token>"`
+8. **Windows 排程**：`LINE_CHANNEL_ACCESS_TOKEN` 必須存於 **Windows Credential Manager**，禁止以 `setx` 寫入 registry；`start_daemon.ps1` 執行時以 `Get-StoredCredential` 取出（對應 EDD §13.1 CR-SEC-07）。
+   - 一次性設定：`cmdkey /add:stock_monitor_LINE_TOKEN /user:LINE_TOKEN /pass:"<token>"`
+9. 發現 token 外洩時需立即輪替並重啟服務。
 
 ## 4. LINE 權限與配置
 1. 使用 LINE Messaging API，不使用已終止的 LINE Notify。
@@ -68,6 +72,8 @@
 5. `LinePushClient` repr/str 不洩漏 token 明文（`TP-SEC-001`）。
 6. 無效時區名稱啟動時 fail-fast，不得靜默 fallback（`TP-SEC-002`）。
 7. HTTP 回應有大小上限，防止 OOM（`TP-SEC-003`）。
+8. macOS launchd plist 不得含 token 明文；token 從 Keychain 取出（`TP-SEC-006`）。
+9. Windows Credential Manager 取出 token，不以 `setx` 寫入 registry（`TP-SEC-007`）。
 
 ## 9. 後續強化建議
 1. token 週期性輪替（例如每 90 天）。
