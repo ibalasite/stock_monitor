@@ -64,6 +64,12 @@ erDiagram
         TEXT trade_date PK "YYYY-MM-DD"
         INT  sent_at "epoch UTC"
     }
+    financial_data_cache {
+        TEXT stock_no PK
+        TEXT dataset PK "e.g. TaiwanStockDividend"
+        TEXT data_json "json_valid"
+        INT  fetched_at "epoch UTC, TTL 15d"
+    }
 
     watchlist ||--o{ valuation_snapshots : "stock_no"
     watchlist ||--o{ message : "stock_no"
@@ -86,6 +92,7 @@ erDiagram
 | `message` | `INDEX(stock_no, stock_status, update_time DESC)` | 冷卻查詢效率 |
 | `message.methods_hit` | `json_valid() AND json_type()='array'` | 強制 JSON array 格式 |
 | `pending_delivery_ledger.status` | `CHECK IN('PENDING','RECONCILED','FAILED')` | 補償狀態合法性 |
+| `financial_data_cache` | `PRIMARY KEY (stock_no, dataset)` + `INDEX(fetched_at)` | SWR cache 快速查詢（TTL 15 天） |
 
 ---
 

@@ -260,7 +260,7 @@
       <h2 id="data-model">§6 資料模型（SQLite）</h2>
       <div class="diagram-section">
         <img class="diagram-img" src="architecture/images/06-data-model.png" alt="資料模型 ER 圖">
-        <p class="diagram-label">圖 6a — 資料模型：watchlist / valuation_methods / valuation_snapshots / message / pending_delivery_ledger</p>
+        <p class="diagram-label">圖 6a — 資料模型：watchlist / valuation_methods / valuation_snapshots / message / pending_delivery_ledger / financial_data_cache（共 8 表）</p>
       </div>
       <div class="diagram-section">
         <img class="diagram-img" src="architecture/images/06-data-model-2.png" alt="補償機制流程圖">
@@ -456,6 +456,62 @@ ON pending_delivery_ledger(status, updated_at);</code></pre>
       <pre><code>CREATE TABLE IF NOT EXISTS opening_summary_sent_dates (
   trade_date TEXT PRIMARY KEY
 );</code></pre>
+
+      <h3>financial_data_cache</h3>
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th>Column</th><th>Type</th><th>Key</th><th>Default</th><th>Constraint／說明</th></tr></thead>
+          <tbody>
+            <tr><td>stock_no</td><td>TEXT</td><td>PK</td><td>—</td><td>股票代號</td></tr>
+            <tr><td>dataset</td><td>TEXT</td><td>PK</td><td>—</td><td>FinMind dataset 名稱（e.g. TaiwanStockDividend）</td></tr>
+            <tr><td>data_json</td><td>TEXT</td><td></td><td>—</td><td>CHECK json_valid()；原始 API 回傳 JSON</td></tr>
+            <tr><td>fetched_at</td><td>INTEGER</td><td></td><td>—</td><td>Unix timestamp（秒）；TTL 15 天（SWR_TTL_SECONDS）</td></tr>
+          </tbody>
+        </table>
+      </div>
+      <pre><code>CREATE TABLE IF NOT EXISTS financial_data_cache (
+  stock_no   TEXT NOT NULL,
+  dataset    TEXT NOT NULL,
+  data_json  TEXT NOT NULL CHECK (json_valid(data_json)),
+  fetched_at INTEGER NOT NULL,
+  PRIMARY KEY (stock_no, dataset)
+);
+CREATE INDEX IF NOT EXISTS idx_fdc_fetched_at ON financial_data_cache(fetched_at);</code></pre>
+
+      <!-- ── FR-19 全市場估值掃描 ── -->
+      <h2 id="market-scan">§14 FR-19 全市場估值掃描</h2>
+      <p>手動執行 <code>scan-market</code> CLI，一次對全體上市上櫃普通股進行三方法估值，依結果自動 upsert 監控清單或輸出 CSV。不發送 LINE 訊息。</p>
+
+      <h3>架構圖（Component View）</h3>
+      <div class="diagram-section">
+        <img class="diagram-img" src="architecture/images/08-market-scan.png" alt="FR-19 全市場掃描架構圖">
+        <p class="diagram-label">圖 8a — FR-19 架構：scan-market CLI → run_market_scan_job → AllListedStocksProvider + ValuationMethods → watchlist/CSV/system_logs</p>
+      </div>
+
+      <h3>掃描流程圖（Flowchart）</h3>
+      <div class="diagram-section">
+        <img class="diagram-img" src="architecture/images/08-market-scan-2.png" alt="FR-19 掃描流程圖">
+        <p class="diagram-label">圖 8b — 掃描流程：DB 可用性 → 方法載入 → 逐股票三分類決策（watchlist_added / near_fair / uncalculable / above_fair_not_output）</p>
+      </div>
+
+      <h3>循序圖（Sequence Diagram）</h3>
+      <div class="diagram-section">
+        <img class="diagram-img" src="architecture/images/08-market-scan-3.png" alt="FR-19 循序圖">
+        <p class="diagram-label">圖 8c — 掃描循序：User → CLI → SQLite → run_market_scan_job → TWSE/TPEx API → ValuationMethods → CSV Writer</p>
+      </div>
+
+      <h3>三分類決策規則</h3>
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th>決策</th><th>條件</th><th>輸出</th></tr></thead>
+          <tbody>
+            <tr><td>watchlist_added</td><td>yesterday_close ≤ agg_cheap_price</td><td>upsert watchlist（不改 enabled）</td></tr>
+            <tr><td>near_fair</td><td>agg_cheap &lt; close ≤ agg_fair</td><td>scan_YYYYMMDD_near_fair.csv</td></tr>
+            <tr><td>uncalculable</td><td>全方法 SKIP 或無昨收價</td><td>scan_YYYYMMDD_uncalculable.csv</td></tr>
+            <tr><td>above_fair_not_output</td><td>close &gt; agg_fair</td><td>MarketScanResult.above_fair_count 計數</td></tr>
+          </tbody>
+        </table>
+      </div>
 
       <!-- ── 部署 ── -->
       <h2 id="deployment">§ 部署架構</h2>

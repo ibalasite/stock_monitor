@@ -172,8 +172,9 @@ PDD > EDD > USER_STORY_ACCEPTANCE_CRITERIA > TEST_PLAN > features + tests
 | `docs/architecture/diagrams/03-intraday-flow.md` → `images/03-intraday-flow.png` | AI 全自動 | → EDD 盤中每分鐘監控流程（冷卻 / 冪等 / 補償） |
 | `docs/architecture/diagrams/04-valuation-flow.md` → `images/04-valuation-flow.png` | AI 全自動 | → EDD 估值日結流程（三方法 + 狀態管理） |
 | `docs/architecture/diagrams/05-market-data-adapter.md` → `images/05-market-data-adapter.png` | AI 全自動 | → EDD Freshness-First 聚合策略 + CR-ADP-02 |
-| `docs/architecture/diagrams/06-data-model.md` → `images/06-data-model.png`、`images/06-data-model-2.png` | AI 全自動 | → EDD schema（7 表）；含 §6.3 補償流程 sequenceDiagram（→ `-2.png`） |
+| `docs/architecture/diagrams/06-data-model.md` → `images/06-data-model.png`、`images/06-data-model-2.png` | AI 全自動 | → EDD schema（8 表，含 financial_data_cache）；含 §6.3 補償流程 sequenceDiagram（→ `-2.png`） |
 | `docs/architecture/diagrams/07-deployment.md` → `images/07-deployment.png`、`images/07-deployment-2.png` | AI 全自動 | → EDD deployment 設計 + OPERATIONS_RUNBOOK；含 §7.3 Process 生命週期 stateDiagram（→ `-2.png`） |
+| `docs/architecture/diagrams/08-market-scan.md` → `images/08-market-scan.png`、`images/08-market-scan-2.png`、`images/08-market-scan-3.png` | AI 全自動 | → EDD §14.9/§14.10/§14.11（FR-19 架構圖、流程圖、循序圖） |
 
 ---
 
