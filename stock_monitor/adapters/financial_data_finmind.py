@@ -57,8 +57,16 @@ CREATE TABLE IF NOT EXISTS financial_data_cache (
 # Low-level FinMind HTTP call (no caching)
 # ---------------------------------------------------------------------------
 
-def _fetch_finmind(dataset: str, stock_id: str, start_date: str, token: str = "") -> list[dict]:
-    """Raw FinMind API call. Returns data list or [] on any error."""
+def _fetch_finmind(dataset: str, stock_id: str, start_date: str, token: str = "") -> list[dict] | None:
+    """Raw FinMind API call.
+
+    Returns:
+        list[dict]  — API returned status 200 (may be empty list if no data exists for this stock).
+        None        — network error, timeout, parse failure, or non-200 status (e.g. rate limit 402).
+
+    Callers must treat None as a transient failure and must NOT cache it.
+    An empty list [] means the stock genuinely has no data for this dataset and IS safe to cache.
+    """
     params: dict = {
         "dataset": dataset,
         "data_id": str(stock_id),
@@ -74,15 +82,15 @@ def _fetch_finmind(dataset: str, stock_id: str, start_date: str, token: str = ""
         with urllib_request.urlopen(req, timeout=_TIMEOUT_SEC) as resp:
             raw = resp.read(_MAX_BYTES)
     except (error.URLError, OSError, TimeoutError):
-        return []
+        return None  # transient — do not cache
 
     try:
         payload = json.loads(raw)
     except (json.JSONDecodeError, ValueError):
-        return []
+        return None  # transient — do not cache
 
     if payload.get("status") != 200:
-        return []
+        return None  # rate limit (402) or other server error — do not cache
     return payload.get("data", []) or []
 
 
@@ -183,7 +191,8 @@ class FinMindFinancialDataProvider:
             try:
                 start = _DATASET_START.get(dataset, "2010-01-01")
                 rows = _fetch_finmind(dataset, stock_no, start, self._token)
-                if rows:
+                if rows is not None:
+                    # rows is [] (genuine no data) or non-empty — safe to cache either way.
                     self._db_put(stock_no, dataset, rows)
                     # Update in-memory cache so next stock in this scan sees fresh data.
                     with self._lock:
@@ -219,9 +228,14 @@ class FinMindFinancialDataProvider:
                 self._spawn_refresh(stock_no, dataset)  # stale → background refresh
             return rows
 
-        # 4. Cache miss — fetch fresh, store, return
+        # 4. Cache miss — fetch fresh from FinMind API
         start = _DATASET_START.get(dataset, "2010-01-01")
         rows = _fetch_finmind(dataset, stock_no, start, self._token)
+        if rows is None:
+            # Transient failure (network error, rate limit, etc.) — do NOT cache.
+            # Return [] so callers skip this stock gracefully; next scan will retry.
+            return []
+        # rows is a list (possibly empty if genuinely no data) — safe to cache.
         self._db_put(stock_no, dataset, rows)
         with self._lock:
             self._mem[key] = rows
