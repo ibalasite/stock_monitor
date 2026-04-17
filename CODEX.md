@@ -1,7 +1,7 @@
 # CODEX.md - Stock Monitor AI 開發手冊
 
-最後更新：2026-04-17（Asia/Taipei, v1.2）
-對齊文件：`PDD_Stock_Monitoring_System.md`（v1.1）、`EDD_Stock_Monitoring_System.md`（v1.1）、`TEST_PLAN.md`、`USER_STORY_ACCEPTANCE_CRITERIA.md`、`API_CONTRACT.md`、`ADR.md`、`NFR_SLI_SLO.md`、`SECURITY_AND_SECRETS.md`、`OPERATIONS_RUNBOOK.md`
+最後更新：2026-04-17（Asia/Taipei, v1.3）
+對齊文件：`PDD_Stock_Monitoring_System.md`（v1.5）、`EDD_Stock_Monitoring_System.md`（v1.6）、`TEST_PLAN.md`、`USER_STORY_ACCEPTANCE_CRITERIA.md`、`API_CONTRACT.md`、`ADR.md`、`NFR_SLI_SLO.md`、`SECURITY_AND_SECRETS.md`、`OPERATIONS_RUNBOOK.md`
 
 ## 0. 使用方式
 本檔是 Codex 進入專案時的執行基線。開始任何修改前，先依本檔確認：
@@ -89,6 +89,13 @@ Alias（等效）：
 - 禁止空方法清單執行（`valuation_methods=[]`）
 - 若啟用方法數為 0，必須 fail-fast（`MARKET_SCAN_METHODS_EMPTY`），不得以全數 `uncalculable` 視為成功
 
+### 5.7 FR-21 三源平行財務資料備援
+- 財務資料請求（`get_avg_dividend` / `get_eps_data` 等）必須透過 `ParallelFinancialDataProvider`
+- 三源（FinMind P1、MOPS P2、Goodinfo P3）同時觸發，不得以 sequential fallback 替代
+- 各源有獨立 `financial_data_cache` 記錄（以 `provider` 欄位區分）
+- 三源均回傳 `None` 或 raise `ProviderUnavailableError` → 估值方法記錄 `SKIP_INSUFFICIENT_DATA`
+- 快取以 `fetched_at` 最新者優先，不以任一固定 provider 為準
+
 ## 6. 資料模型最小要求
 - `watchlist`：`manual_cheap_price <= manual_fair_price`；含 `stock_name TEXT NOT NULL DEFAULT ''`（FR-18，由 14:00 估值作業寫入）
 - `valuation_methods`：同 `method_name` 僅允許一個 `enabled=1`
@@ -96,6 +103,7 @@ Alias（等效）：
 - `message`：`UNIQUE(stock_no, minute_bucket)`
 - `methods_hit`：需為 JSON；實作建議加嚴為 JSON array（`json_type='array'`）
 - `pending_delivery_ledger.status`：`PENDING | RECONCILED | FAILED`
+- `financial_data_cache`（v1.6 更新）：PRIMARY KEY 為 `(provider, stock_no, dataset)`；`provider` 欄位值限 `'finmind'`、`'mops'`、`'goodinfo'`；舊表（PK 為 `(stock_no, dataset)`）由 `SWRCacheBase._migrate_cache_table()` 自動升級
 
 ## 7. 測試要求的 Python symbol contract
 | 模組 | Symbol |
@@ -121,7 +129,12 @@ Alias（等效）：
 | `stock_monitor.application.market_scan` | `run_market_scan_job`, `MarketScanResult` |
 | `stock_monitor.adapters.all_listed_stocks_twse` | `TwseAllListedStocksProvider` |
 | `stock_monitor.application.daemon_runner` | `_install_signal_handlers`（FR-20，SIGTERM 跨平台處理） |
-| `stock_monitor.adapters.financial_data_finmind` | `FinMindFinancialDataProvider`（含 `_fetch_finmind`、`_mem`、`SWR_TTL_SECONDS`） |
+| `stock_monitor.adapters.financial_data_port` | `ProviderUnavailableError`, `FinancialDataPort` |
+| `stock_monitor.adapters.financial_data_cache` | `SWRCacheBase`（含 `SWR_TTL_SECONDS`） |
+| `stock_monitor.adapters.financial_data_finmind` | `FinMindFinancialDataProvider`（含 `_fetch_finmind`、`_mem`） |
+| `stock_monitor.adapters.financial_data_mops` | `MopsTwseAdapter` |
+| `stock_monitor.adapters.financial_data_goodinfo` | `GoodinfoAdapter` |
+| `stock_monitor.adapters.financial_data_fallback` | `ParallelFinancialDataProvider`（含 `.default(db_path)` 工廠方法） |
 | `stock_monitor.application.valuation_methods_real` | `EmilyCompositeV1`, `OldbullDividendYieldV1`, `RayskyBlendedMarginV1` |
 | `stock_monitor.application.market_scan_methods` | `load_enabled_scan_methods`（含 `db_path` 參數） |
 
@@ -180,6 +193,11 @@ python -m pytest -q tests/test_integration_workflow.py -k TP-INT-010
 - **禁止** `scripts/start_daemon.sh` / `stop_daemon.sh` 未 `chmod +x`；plist WorkingDirectory 使用相對路徑（CR-PLAT-03）
 - **禁止** macOS launchd plist 的 `EnvironmentVariables` 區塊存放 `LINE_CHANNEL_ACCESS_TOKEN` 或任何 token 明文；token 必須在 `start_daemon.sh` 執行時從 macOS Keychain 取出（CR-SEC-06）
 - **禁止** Windows 以 `setx` 或任何方式將 `LINE_CHANNEL_ACCESS_TOKEN` 寫入 registry 或持久化檔案；token 必須存於 Windows Credential Manager，由 `start_daemon.ps1` 在執行時以 `Get-StoredCredential` 取出（CR-SEC-07）
+- **禁止** 在 `SWRCacheBase._fetch` 中將 API 失敗（`_fetch_raw` 回傳 `None`）寫入 DB 快取；`None` 只能觸發 `ProviderUnavailableError`（CR-FIN-01）
+- **禁止** `ParallelFinancialDataProvider._call` 以 sequential fallback 模式（P1 失敗才試 P2）執行；必須三源全部同時執行後比較 `fetched_at`（CR-FIN-02）
+- **禁止** 三個財務資料 Adapter 使用相同 `provider_name`；允許值為 `'finmind'`、`'mops'`、`'goodinfo'`（CR-FIN-03）
+- **禁止** `GoodinfoAdapter` cache stale 時同步阻塞等待 scraping 完成；stale 必須背景執行，miss 必須同步，兩者不可對調（CR-FIN-04）
+- **禁止** 估值方法（`EmilyCompositeV1` 等）直接 import `FinMindFinancialDataProvider`；一律使用 `ParallelFinancialDataProvider`（CR-FIN-05）
 
 ## 13. Out of Scope（此階段不做）
 - 自動下單

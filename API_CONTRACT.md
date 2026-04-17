@@ -1,8 +1,8 @@
 # API_CONTRACT - Stock Monitoring System
 
-版本：v0.5  
+版本：v0.6  
 日期：2026-04-17  
-來源基準：`PDD_Stock_Monitoring_System.md`（v1.4）、`EDD_Stock_Monitoring_System.md`（v1.4）
+來源基準：`PDD_Stock_Monitoring_System.md`（v1.5）、`EDD_Stock_Monitoring_System.md`（v1.6）
 
 ## 1. 文件目的
 定義應用層與基礎設施層的介面契約，讓 BDD 與 TDD 可直接依契約落地測試與實作。
@@ -168,9 +168,17 @@ CSV 共用欄位（三份 CSV 均適用）：`stock_no`, `stock_name`, `agg_fair
 2. 禁止傳入空清單 `valuation_methods=[]` 作為正常掃描路徑。
 3. 若啟用方法數為 0，CLI 應 fail-fast 並回傳錯誤，不輸出 CSV。
 
-### 5.10 `FinancialDataPort` 介面契約（FR-11/FR-12）
+### 5.10 `FinancialDataPort` 介面契約（FR-11/FR-12/FR-21）
 
-**模組**：`stock_monitor.adapters.financial_data_finmind.FinMindFinancialDataProvider`
+**實作入口**：`stock_monitor.adapters.financial_data_fallback.ParallelFinancialDataProvider`
+
+**後端 Adapter**：
+
+| 代號 | 模組 | `provider_name` |
+|---|---|---|
+| P1 | `stock_monitor.adapters.financial_data_finmind.FinMindFinancialDataProvider` | `'finmind'` |
+| P2 | `stock_monitor.adapters.financial_data_mops.MopsTwseAdapter` | `'mops'` |
+| P3 | `stock_monitor.adapters.financial_data_goodinfo.GoodinfoAdapter` | `'goodinfo'` |
 
 #### 方法簽名
 
@@ -183,19 +191,33 @@ CSV 共用欄位（三份 CSV 均適用）：`stock_no`, `stock_name`, `agg_fair
 | `get_price_annual_stats(stock_no: str) -> dict \| None` | `{"year_low_10y": float, "year_avg_10y": float} \| None` | 10 年年低均 / 年均均；無資料回 `None` |
 | `get_shares_outstanding(stock_no: str) -> float \| None` | `float \| None` | 流通股數（股）；無資料回 `None` |
 
-#### SWR Cache 契約
+#### 平行執行契約（FR-21）
 
-- `db_path=None` → 跳過 DB 層，直接呼叫 API，不 raise
-- cache miss → 呼叫 API，結果寫 DB，升入 `_mem`
-- cache fresh（fetched_at ≤ SWR_TTL_SECONDS 前）→ 回傳 DB 值，不呼叫 API
-- cache stale（fetched_at > SWR_TTL_SECONDS 前）→ 立即回傳舊值 + 非同步背景刷新（同 dataset 最多 1 刷新執行緒）
+- 三源（P1/P2/P3）以 `ThreadPoolExecutor(max_workers=3)` **同時觸發**，禁止序列備援（CR-FIN-02）
+- 60 秒逾時後取已完成者比較 `fetched_at`；逾時未完成的來源視同本次不可用
+- 各源維護獨立 `financial_data_cache` 記錄，以 `provider` 欄位區分（`'finmind'`/`'mops'`/`'goodinfo'`），禁止混用相同 `provider_name`（CR-FIN-03）
+- 三源全部 raise `ProviderUnavailableError` → 估值方法記錄 `SKIP_INSUFFICIENT_DATA`，不中斷掃描
+
+#### SWR Cache 契約（各 Adapter 共用）
+
+- `db_path=None` → 跳過 DB 層，直接呼叫 API / 爬蟲，不 raise
+- cache **miss**（DB 無此記錄）→ **同步**呼叫 API / 爬蟲，結果寫 DB，升入 `_mem`
+- cache **fresh**（`fetched_at ≤ SWR_TTL_SECONDS` 前）→ 回傳 DB 值，不觸發 API
+- cache **stale**（`fetched_at > SWR_TTL_SECONDS` 前）→ 立即回傳舊值 + **背景**刷新執行緒（同 dataset 最多 1 個，去重）
+- miss 與 stale 行為**不可對調**（CR-FIN-04）
+- `_fetch_raw` 回傳 `None`（來源確認該股票無任何資料）→ **不寫 DB**，raise `ProviderUnavailableError`（CR-FIN-01）
+- `_fetch_raw` 回傳 `[]`（空列表，有效結果）→ 寫 DB，`get_*` 回傳 `None`
 
 #### 資料缺失契約
 
 所有 `get_*` 方法在以下情況回傳 `None`（不 raise）：
-- FinMind API 回傳空列表
-- FinMind API HTTP 失敗（呼叫端由估值方法記錄 `SKIP_PROVIDER_ERROR`）
-- DB 快取無資料且 API 失敗
+- 對應 adapter 的 API / 爬蟲回傳空列表（股票確實無此資料）
+- `fetched_at` 最新的快取值為 `None`
+
+以下情況 raise `ProviderUnavailableError`（來源暫時不可用，由 `ParallelFinancialDataProvider` 攔截）：
+- FinMind API HTTP 4xx/5xx 失敗
+- Goodinfo 爬蟲 timeout 或 rate-limit 15 秒節流
+- MOPS bulk-fetch 尚未完成且當下無快取
 
 ## 6. 錯誤語意契約
 | Error Code | 行為 |
@@ -211,7 +233,8 @@ CSV 共用欄位（三份 CSV 均適用）：`stock_no`, `stock_name`, `agg_fair
 | `MARKET_SCAN_STOCK_ERROR` | 寫 ERROR（level），繼續下一支股票，不中斷整體掃描 |
 | `MARKET_SCAN_LIST_FETCH_FAILED` | scan-market fail-fast，印出錯誤後退出 |
 | `MARKET_SCAN_METHODS_EMPTY` | 無 `enabled=1` 估值方法時 fail-fast 退出，不輸出 CSV |
-| `FINMIND_FETCH_ERROR` | FinMind API 呼叫失敗；估值方法記錄 `SKIP_PROVIDER_ERROR`，不中斷掃描 |
+| `PROVIDER_UNAVAILABLE` | 某財務資料 adapter 暫時不可用（FinMind 4xx/5xx、Goodinfo timeout、MOPS bulk pending）；`ParallelFinancialDataProvider` 攔截，不向估值方法 raise |
+| `SKIP_INSUFFICIENT_DATA` | 三源全部不可用時，估值方法記錄此原因並跳過，不中斷掃描 |
 
 ## 7. BDD 對應
 1. `features/stock_monitoring_system.feature` 的 `TP-ENV-*`、`TP-POL-*`、`TP-INT-*` 全部應可對應到本契約至少一個 Port 行為。

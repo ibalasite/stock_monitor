@@ -1,8 +1,8 @@
 # ADR - Architecture Decision Records
 
-版本：v0.5  
+版本：v0.6  
 日期：2026-04-17  
-來源基準：`PDD_Stock_Monitoring_System.md`（v1.4）、`EDD_Stock_Monitoring_System.md`（v1.4）
+來源基準：`PDD_Stock_Monitoring_System.md`（v1.5）、`EDD_Stock_Monitoring_System.md`（v1.6）
 
 ## ADR-001 使用 Clean Architecture 分層
 1. 狀態：Accepted
@@ -222,3 +222,24 @@
      - NT$ 單位正規化：資產負債表值需除以 1,000 轉換為 NT$ 千元單位
    - `API_CONTRACT.md` 同步新增 `FinancialDataPort` 介面定義。
    - CLAUDE.md §7 symbol contract 新增三個條目。
+
+## ADR-018 財務資料三源平行執行（ParallelFinancialDataProvider）
+1. 狀態：Accepted
+2. 決策：
+   - 財務估值資料（股利、EPS 等）由三個來源（FinMind P1、MOPS/TWSE P2、Goodinfo P3）**同時平行執行**，而非序列備援（P1 失敗才試 P2）。
+   - 以 `ThreadPoolExecutor(max_workers=3)` 同時觸發三個 `SWRCacheBase` 子類別；60 秒後逾時，取已完成者。
+   - 三源完成後比較各自快取的 `fetched_at`，取最新者回傳給估值方法。
+   - 三源均不可用（`ProviderUnavailableError`）時，估值方法記錄 `SKIP_INSUFFICIENT_DATA`，不中斷掃描。
+   - 各源維護獨立的 `financial_data_cache` 記錄（`provider` 欄位區分 `'finmind'`/`'mops'`/`'goodinfo'`），互不覆蓋。
+   - 介面入口為 `ParallelFinancialDataProvider`（`stock_monitor.adapters.financial_data_fallback`），取代原 `FallbackFinancialDataProvider`（序列備援）。
+3. 原因：
+   - 序列備援下，P1 失敗（如 FinMind 達到速率上限）要等到下次才試 P2，延誤一整個估值週期。平行執行在同一次呼叫中即可取得任一來源的最新資料。
+   - 各源有獨立 SWR 快取，一個來源暫時失效時，其他來源的 stale cache 仍可提供合理資料，減少 `SKIP_INSUFFICIENT_DATA` 頻率。
+   - `fetched_at` 比較策略確保回傳最新鮮的資料，三源同時有效時不做隨機選擇。
+   - SWR 語意統一：cache miss → 同步取資料，cache stale → 背景刷新。兩者不可對調（CR-FIN-04）。
+4. 影響：
+   - `financial_data_cache` schema 新增 `provider TEXT NOT NULL` 欄位，PRIMARY KEY 改為 `(provider, stock_no, dataset)`（EDD §16）。
+   - 舊表由 `SWRCacheBase._migrate_cache_table()` 自動升級（ADD COLUMN + recreate index，非破壞性）。
+   - `market_scan_methods.py` 的 `load_enabled_scan_methods` 改注入 `ParallelFinancialDataProvider`。
+   - `API_CONTRACT.md` §5.10 更新為 `ParallelFinancialDataProvider` 並補充平行執行契約。
+   - CLAUDE.md §5.7/§6/§7/§12 新增 FR-21 規則、schema 升級說明、symbol contract、CR-FIN-01~05 禁止清單。
