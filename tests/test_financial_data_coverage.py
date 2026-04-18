@@ -1125,6 +1125,30 @@ def test_mops_ensure_bulk_fresh_in_db(tmp_path: object) -> None:
     assert called["n"] == 0  # _has_fresh_bulk returned True
 
 
+def test_mops_ensure_bulk_concurrent_raises(tmp_path: object) -> None:
+    """_ensure_bulk raises ProviderUnavailableError when __fetching sentinel is present."""
+    db = _make_db(tmp_path)  # type: ignore[arg-type]
+    adapter = MopsTwseAdapter(db_path=db)
+    adapter._bulk_done.add("balance_sheet__fetching")
+    with pytest.raises(ProviderUnavailableError):
+        adapter._ensure_bulk("balance_sheet", lambda: None)
+
+
+def test_mops_ensure_bulk_fetch_raises_removes_sentinel(tmp_path: object) -> None:
+    """_ensure_bulk cleans up sentinel and does NOT mark done when fetch_fn raises."""
+    db = _make_db(tmp_path)  # type: ignore[arg-type]
+    adapter = MopsTwseAdapter(db_path=db)
+
+    def _bad_fetch() -> None:
+        raise RuntimeError("network error")
+
+    with pytest.raises(RuntimeError):
+        adapter._ensure_bulk("balance_sheet", _bad_fetch)
+
+    assert "balance_sheet__fetching" not in adapter._bulk_done
+    assert "balance_sheet" not in adapter._bulk_done
+
+
 def test_mops_ensure_bulk_background_already_done(tmp_path: object) -> None:
     db = _make_db(tmp_path)  # type: ignore[arg-type]
     adapter = MopsTwseAdapter(db_path=db)
@@ -1136,6 +1160,21 @@ def test_mops_ensure_bulk_background_already_done(tmp_path: object) -> None:
 
     adapter._ensure_bulk_background("eps", _fake_fetch)
     assert called["n"] == 0
+
+
+def test_mops_ensure_bulk_background_pending_guard(tmp_path: object) -> None:
+    """_ensure_bulk_background does not start a second thread when key_pending already set."""
+    db = _make_db(tmp_path)  # type: ignore[arg-type]
+    adapter = MopsTwseAdapter(db_path=db)
+    adapter._bulk_done.add("eps_pending")
+    called = {"n": 0}
+
+    def _fake_fetch() -> None:
+        called["n"] += 1
+
+    adapter._ensure_bulk_background("eps", _fake_fetch)
+    assert called["n"] == 0
+    assert "eps_pending" in adapter._bulk_done  # sentinel untouched
 
 
 # ---------------------------------------------------------------------------

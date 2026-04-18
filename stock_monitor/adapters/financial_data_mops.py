@@ -609,21 +609,48 @@ class MopsTwseAdapter(SWRCacheBase):
         return empty
 
     def _ensure_bulk(self, key: str, fetch_fn) -> None:  # type: ignore[type-arg]
-        """Run bulk fetch synchronously if not done this run and not fresh in DB."""
+        """Run bulk fetch synchronously if not done this run and not fresh in DB.
+
+        The first caller executes the fetch *without* holding ``_bulk_lock``
+        (which would block every concurrent MOPS thread for the full fetch
+        duration — up to 2 minutes for balance_sheet).  A ``__fetching``
+        sentinel in ``_bulk_done`` signals that the fetch is in progress;
+        concurrent callers raise ``ProviderUnavailableError`` immediately so
+        FinMind / Goodinfo can serve their requests instead.  After the fetch
+        completes, all future callers return instantly via ``_bulk_done``.
+        """
+        _sentinel = f"{key}__fetching"
         with self._bulk_lock:
             if key in self._bulk_done:
                 return
+            if _sentinel in self._bulk_done:
+                # Another thread owns the fetch — bail so other providers serve.
+                raise ProviderUnavailableError(
+                    f"mops: {key} bulk fetch in progress — try again after pre-cache completes"
+                )
             if self._has_fresh_bulk(key):
                 self._bulk_done.add(key)
                 return
+            # This thread wins the fetch race; mark in progress before releasing lock.
+            self._bulk_done.add(_sentinel)
+        # Execute fetch WITHOUT holding _bulk_lock.
+        _success = False
+        try:
             fetch_fn()
-            self._bulk_done.add(key)
+            _success = True
+        finally:
+            with self._bulk_lock:
+                self._bulk_done.discard(_sentinel)
+                if _success:
+                    self._bulk_done.add(key)
 
     def _ensure_bulk_background(self, key: str, fetch_fn) -> None:  # type: ignore[type-arg]
         """Start bulk fetch in a background thread if not already running."""
         with self._bulk_lock:
             if key in self._bulk_done:
                 return
+            if f"{key}_pending" in self._bulk_done:
+                return  # background thread already running — do not start another
             if self._has_fresh_bulk(key):
                 self._bulk_done.add(key)
                 return
