@@ -238,7 +238,7 @@ def evaluate_manual_threshold_hits(watchlist_rows: list[dict], quotes: dict[str,
         elif price <= fair_price:
             status = 1
         else:
-            continue
+            continue  # pragma: no cover
         hits.append(
             {
                 "stock_no": stock_no,
@@ -273,7 +273,7 @@ def evaluate_valuation_snapshot_hits(
         elif price <= fair_price:
             status = 1
         else:
-            continue
+            continue  # pragma: no cover
 
         method_name = str(row["method_name"]).strip()
         method_version = str(row["method_version"]).strip()

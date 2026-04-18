@@ -7,9 +7,11 @@ import socket
 from dataclasses import dataclass
 from urllib import error, parse, request
 
-import truststore
-
-truststore.inject_into_ssl()
+try:
+    import truststore
+    truststore.inject_into_ssl()  # pragma: no cover
+except ImportError:
+    pass  # truststore requires Python ≥3.10; fall back to default SSL on 3.9
 
 MAX_RESPONSE_BYTES = 1_048_576  # 1 MB cap to prevent memory exhaustion (CR-SEC-04)
 

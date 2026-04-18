@@ -23,6 +23,7 @@ from stock_monitor.application.runtime_service import (
     run_minute_cycle,
     run_reconcile_cycle,
 )
+from stock_monitor.application.valuation_calculator import ManualValuationCalculator
 from stock_monitor.app import _build_runtime, _resolve_timezone, _run_daemon_loop, main
 from stock_monitor.application.valuation_calculator import ManualValuationCalculator as _ManualValuationCalculator
 
@@ -1383,4 +1384,53 @@ def test_run_minute_cycle_trigger_row_uses_db_stock_name():
         "[TP-NAME-002] Trigger row must use DB stock_name '台積電_DB(2330)'. "
         f"Got messages: {line_client.sent}"
     )
+
+
+def test_build_opening_method_pairs_empty_version_skips_row() -> None:
+    """Cover line 98: name non-empty but version empty → continue."""
+    pairs = _build_opening_method_pairs(
+        [
+            {"method_name": "custom_method", "method_version": ""},
+            {"method_name": "custom_method", "method_version": "v1"},
+        ]
+    )
+    # custom_method with empty version must be skipped; with v1 it's added
+    names_versions = [(n, v) for n, v in pairs]
+    assert ("custom_method", "") not in names_versions
+    assert ("custom_method", "v1") in names_versions
+
+
+def test_manual_valuation_calculator_raysky_missing_fields() -> None:
+    """Cover lines 110-116 and branch 148->139: raysky returns None when required fields missing."""
+
+    class _FakeWatchlistRepo:
+        def list_enabled(self):
+            return [
+                {
+                    "stock_no": "2330",
+                    "manual_fair_price": 100.0,
+                    "manual_cheap_price": 80.0,
+                }
+            ]
+
+    calc = ManualValuationCalculator(watchlist_repo=_FakeWatchlistRepo(), trade_date="2026-04-18")
+    # Patch _build_primary_inputs to return inputs missing required raysky fields
+    orig_build = calc._build_primary_inputs
+
+    def _incomplete_inputs(row: dict) -> dict:
+        inputs = orig_build(row)
+        inputs["current_assets"] = None
+        inputs["total_liabilities"] = None
+        inputs["shares_outstanding"] = None
+        return inputs
+
+    calc._build_primary_inputs = _incomplete_inputs
+    snapshots = calc.calculate()
+    # Emily + Oldbull snapshots are still produced; raysky is skipped (returns None)
+    methods = {s["method_name"] for s in snapshots}
+    assert "emily_composite" in methods
+    assert "oldbull_dividend_yield" in methods
+    assert "raysky_blended_margin" not in methods
+    # Events should include the VALUATION_SKIP_INSUFFICIENT_DATA log
+    assert any("VALUATION_SKIP_INSUFFICIENT_DATA" in ev[1] for ev in calc.events)
 
