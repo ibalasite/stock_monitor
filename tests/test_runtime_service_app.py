@@ -775,7 +775,7 @@ def test_app_main_init_db_run_once_and_reconcile(monkeypatch, tmp_path: Path, ca
         "message_repo": object(),
         "pending_repo": object(),
         "valuation_snapshot_repo": object(),
-        "logger": object(),
+        "logger": _FakeLogger(events=[]),
         "pending_fallback": object(),
     }
 
@@ -1075,7 +1075,7 @@ def test_run_daemon_loop_trading_poll_and_valuation(monkeypatch):
         "message_repo": object(),
         "pending_repo": object(),
         "valuation_snapshot_repo": object(),
-        "logger": object(),
+        "logger": _FakeLogger(events=[]),
         "pending_fallback": object(),
         "db_path": ":memory:",
     }
@@ -1116,7 +1116,7 @@ def test_run_daemon_loop_keyboard_interrupt(monkeypatch):
         "message_repo": object(),
         "pending_repo": object(),
         "valuation_snapshot_repo": object(),
-        "logger": object(),
+        "logger": _FakeLogger(events=[]),
         "pending_fallback": object(),
     }
 
