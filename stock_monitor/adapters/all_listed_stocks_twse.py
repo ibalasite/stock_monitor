@@ -16,9 +16,9 @@ from urllib import error, request
 
 try:
     import truststore
-    truststore.inject_into_ssl()  # pragma: no cover
-except ImportError:
-    pass  # truststore requires Python ≥3.10; fall back to default SSL on 3.9
+    truststore.inject_into_ssl()
+except ImportError:  # pragma: no cover
+    pass  # truststore not installed; fall back to default SSL
 
 _MAX_RESPONSE_BYTES = 1_048_576  # 1 MB  (CR-SEC-04 parity)
 _TIMEOUT_SEC = 30
