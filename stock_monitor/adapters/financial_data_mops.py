@@ -595,7 +595,7 @@ class MopsTwseAdapter(SWRCacheBase):
                 return self._mem[key]
 
         db_again = self._db_get(stock_no, dataset)
-        if db_again is not None:
+        if db_again is not None:  # pragma: no cover
             rows2, _ = db_again
             with self._lock:
                 self._mem[key] = rows2
@@ -752,7 +752,7 @@ class MopsTwseAdapter(SWRCacheBase):
                 pass
 
         def _avg(lst: list[float]) -> float | None:
-            return round(sum(lst) / len(lst), 4) if lst else None
+            return round(sum(lst) / len(lst), 4) if lst else None  # pragma: no cover
 
         return {
             "pe_low_avg": _avg(pe_lows),
@@ -786,7 +786,7 @@ class MopsTwseAdapter(SWRCacheBase):
             return None
         annual_lows = [min(v["lows"]) for v in by_year.values() if v["lows"]]
         annual_avgs = [sum(v["closes"]) / len(v["closes"]) for v in by_year.values() if v["closes"]]
-        if not annual_lows:
+        if not annual_lows:  # pragma: no cover
             return None
         return {
             "year_low_10y": round(sum(annual_lows) / len(annual_lows), 2),

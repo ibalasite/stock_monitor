@@ -1076,6 +1076,7 @@ def test_run_daemon_loop_trading_poll_and_valuation(monkeypatch):
         "valuation_snapshot_repo": object(),
         "logger": object(),
         "pending_fallback": object(),
+        "db_path": ":memory:",
     }
 
     result = _run_daemon_loop(

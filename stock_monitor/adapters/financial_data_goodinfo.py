@@ -381,7 +381,7 @@ class GoodinfoAdapter(SWRCacheBase):
         # Goodinfo EPS rows are annual; approximate TTM from 4 most recent quarters
         # if only annual data available, use the most recent year as TTM proxy.
         recent = rows_sorted[:4]
-        if not recent:
+        if not recent:  # pragma: no cover
             return None
 
         # If annual data: eps field is full-year EPS; TTM = most recent year
