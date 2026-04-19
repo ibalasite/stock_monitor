@@ -9,6 +9,7 @@ CREATE TABLE IF NOT EXISTS watchlist (
   stock_name TEXT NOT NULL DEFAULT '',
   manual_fair_price NUMERIC NOT NULL CHECK (manual_fair_price > 0),
   manual_cheap_price NUMERIC NOT NULL CHECK (manual_cheap_price > 0),
+  scan_method_name TEXT DEFAULT NULL,
   enabled INTEGER NOT NULL DEFAULT 1 CHECK (enabled IN (0,1)),
   created_at INTEGER NOT NULL,
   updated_at INTEGER NOT NULL,

@@ -287,14 +287,15 @@ def test_tp_scan_003_three_classification(tmp_path):
 
 
 # ---------------------------------------------------------------------------
-# TP-SCAN-003b  agg aggregation uses max() not arithmetic mean
+# TP-SCAN-003b  uses min-cheap method as conservative reference
 # ---------------------------------------------------------------------------
 
-def test_tp_scan_003b_agg_uses_max(tmp_path):
-    """[TP-SCAN-003b] When multiple methods succeed, agg_fair/cheap = max(), not mean().
+def test_tp_scan_003b_uses_min_cheap_method(tmp_path):
+    """[TP-SCAN-003b] When multiple methods succeed, the method with the MINIMUM
+    cheap price is used as the reference for both watchlist trigger and stored prices.
     E.g. method A: fair=150, cheap=100; method B: fair=200, cheap=120
-    → agg_fair=200 (max), agg_cheap=120 (max), not 175/110 (mean).
-    (EDD §14.3 / PDD FR-19 gap-1 fix)
+    → stored fair=150, cheap=100 (method_a, min cheap), NOT max (200/120).
+    (EDD §14.3 / PDD FR-19 conservative-ref update)
     """
     run_market_scan_job = require_symbol(
         "stock_monitor.application.market_scan",
@@ -304,12 +305,11 @@ def test_tp_scan_003b_agg_uses_max(tmp_path):
     db_path = _make_db(tmp_path)
     output_dir = str(tmp_path / "output")
 
-    # Stock close=80, will be below cheap regardless → triggers watchlist upsert
+    # close=80, below both methods' cheap → triggers watchlist upsert
     stocks = [{"stock_no": "8888", "stock_name": "聚合股", "yesterday_close": 80.0, "market": "TWSE"}]
     method_a = _StubMethod("method_a", results_by_stock={"8888": {"fair": 150.0, "cheap": 100.0}})
     method_b = _StubMethod("method_b", results_by_stock={"8888": {"fair": 200.0, "cheap": 120.0}})
 
-    import sqlite3 as _sqlite3
     run_market_scan_job(
         db_path=db_path,
         output_dir=output_dir,
@@ -320,21 +320,64 @@ def test_tp_scan_003b_agg_uses_max(tmp_path):
     from stock_monitor.adapters.sqlite_repo import connect_sqlite
     conn = connect_sqlite(db_path)
     row = conn.execute(
-        "SELECT manual_fair_price, manual_cheap_price FROM watchlist WHERE stock_no=?",
+        "SELECT manual_fair_price, manual_cheap_price, scan_method_name FROM watchlist WHERE stock_no=?",
         ("8888",),
     ).fetchone()
     conn.close()
 
     assert row is not None, "[TP-SCAN-003b] Stock 8888 must be upserted into watchlist."
-    agg_fair = float(row["manual_fair_price"])
-    agg_cheap = float(row["manual_cheap_price"])
-    assert agg_fair == 200.0, (
-        f"[TP-SCAN-003b] agg_fair must be max(150,200)=200. Got {agg_fair}. "
-        "Aggregation must use max(), not arithmetic mean (175)."
+    stored_fair = float(row["manual_fair_price"])
+    stored_cheap = float(row["manual_cheap_price"])
+    assert stored_fair == 150.0, (
+        f"[TP-SCAN-003b] fair must be method_a's fair=150 (min-cheap method). Got {stored_fair}."
     )
-    assert agg_cheap == 120.0, (
-        f"[TP-SCAN-003b] agg_cheap must be max(100,120)=120. Got {agg_cheap}. "
-        "Aggregation must use max(), not arithmetic mean (110)."
+    assert stored_cheap == 100.0, (
+        f"[TP-SCAN-003b] cheap must be method_a's cheap=100 (min cheap). Got {stored_cheap}."
+    )
+    assert row["scan_method_name"] == "method_a", (
+        f"[TP-SCAN-003b] scan_method_name must be 'method_a'. Got {row['scan_method_name']}."
+    )
+
+
+def test_tp_scan_003c_only_enters_watchlist_when_below_min_cheap(tmp_path):
+    """[TP-SCAN-003c] Stock is added to watchlist ONLY when close <= min(cheap) across methods.
+    If close is below one method's cheap but above the minimum cheap, it must NOT enter watchlist.
+    E.g. method A cheap=80, method B cheap=100, close=95
+    → method_a is the min-cheap reference (80); 95 > 80 → NOT added to watchlist.
+    """
+    run_market_scan_job = require_symbol(
+        "stock_monitor.application.market_scan",
+        "run_market_scan_job",
+        "TP-SCAN-003c",
+    )
+    MarketScanResult = require_symbol(
+        "stock_monitor.application.market_scan",
+        "MarketScanResult",
+        "TP-SCAN-003c",
+    )
+    db_path = _make_db(tmp_path)
+    output_dir = str(tmp_path / "output")
+
+    # close=95: below method_b cheap (100) but above method_a cheap (80, the minimum)
+    stocks = [{"stock_no": "9999", "stock_name": "嚴格股", "yesterday_close": 95.0, "market": "TWSE"}]
+    method_a = _StubMethod("method_a", results_by_stock={"9999": {"fair": 120.0, "cheap": 80.0}})
+    method_b = _StubMethod("method_b", results_by_stock={"9999": {"fair": 160.0, "cheap": 100.0}})
+
+    result = run_market_scan_job(
+        db_path=db_path,
+        output_dir=output_dir,
+        stocks_provider=_StubProvider(stocks),
+        valuation_methods=[method_a, method_b],
+    )
+
+    assert result.watchlist_upserted == 0, (
+        f"[TP-SCAN-003c] 95 > min_cheap(80) → must NOT be added to watchlist. "
+        f"Got watchlist_upserted={result.watchlist_upserted}."
+    )
+    # 95 <= best.fair (120) → should appear in near_fair instead
+    assert result.near_fair_count == 1, (
+        f"[TP-SCAN-003c] 95 <= best_method fair=120 → must be near_fair. "
+        f"Got near_fair_count={result.near_fair_count}."
     )
 
 

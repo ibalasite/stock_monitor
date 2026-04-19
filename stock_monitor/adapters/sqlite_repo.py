@@ -24,10 +24,12 @@ def connect_sqlite(db_path: str) -> sqlite3.Connection:
 
 def apply_schema(conn: sqlite3.Connection) -> None:
     conn.executescript(SCHEMA_SQL)
-    # Migration: add stock_name column if missing (for existing databases)
+    # Migration: add columns if missing (for existing databases)
     cols = {row[1] for row in conn.execute("PRAGMA table_info(watchlist)").fetchall()}
     if "stock_name" not in cols:
         conn.execute("ALTER TABLE watchlist ADD COLUMN stock_name TEXT NOT NULL DEFAULT ''")
+    if "scan_method_name" not in cols:
+        conn.execute("ALTER TABLE watchlist ADD COLUMN scan_method_name TEXT DEFAULT NULL")
     conn.commit()
 
 
@@ -38,7 +40,7 @@ class SqliteWatchlistRepository:
     def list_enabled(self) -> list[dict]:
         rows = self.conn.execute(
             """
-            SELECT stock_no, stock_name, manual_fair_price, manual_cheap_price
+            SELECT stock_no, stock_name, manual_fair_price, manual_cheap_price, scan_method_name
             FROM watchlist
             WHERE enabled = 1
             ORDER BY stock_no

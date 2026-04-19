@@ -1284,6 +1284,41 @@ def test_evaluate_manual_threshold_hits_uses_watchlist_stock_name_not_quote_name
     )
 
 
+def test_evaluate_manual_threshold_hits_skips_scan_origin_stocks():
+    """[TP-SCAN-RUNTIME-001] Stocks added by scan (scan_method_name IS NOT NULL)
+    must be skipped in evaluate_manual_threshold_hits.
+    Monitoring for scan-origin stocks happens via evaluate_valuation_snapshot_hits instead.
+    """
+    watchlist_rows = [
+        {
+            "stock_no": "1111",
+            "stock_name": "手動股",
+            "manual_fair_price": 100.0,
+            "manual_cheap_price": 80.0,
+            # scan_method_name absent → human-managed → should trigger
+        },
+        {
+            "stock_no": "2222",
+            "stock_name": "掃描股",
+            "manual_fair_price": 100.0,
+            "manual_cheap_price": 80.0,
+            "scan_method_name": "emily_composite",  # scan-origin → must be skipped
+        },
+    ]
+    quotes = {
+        "1111": {"price": 79.0, "tick_at": 123456},
+        "2222": {"price": 79.0, "tick_at": 123456},
+    }
+    hits = evaluate_manual_threshold_hits(watchlist_rows=watchlist_rows, quotes=quotes)
+    hit_stock_nos = [h["stock_no"] for h in hits]
+    assert "1111" in hit_stock_nos, (
+        "[TP-SCAN-RUNTIME-001] Human-managed stock 1111 must trigger manual_rule."
+    )
+    assert "2222" not in hit_stock_nos, (
+        "[TP-SCAN-RUNTIME-001] Scan-origin stock 2222 must be skipped in evaluate_manual_threshold_hits."
+    )
+
+
 def test_evaluate_valuation_snapshot_hits_uses_stock_name_map():
     """[TP-NAME-001] FR-18: evaluate_valuation_snapshot_hits must accept stock_name_map param
     and use it for stock_name in hits, NOT quote['name'] from API."""

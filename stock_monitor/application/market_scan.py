@@ -62,12 +62,14 @@ def _write_csv(path: Path, rows: list[dict]) -> None:
         writer.writerows(rows)
 
 
-def _upsert_watchlist(conn, stock_no: str, stock_name: str, fair: float, cheap: float) -> str:
+def _upsert_watchlist(
+    conn, stock_no: str, stock_name: str, fair: float, cheap: float, scan_method_name: str | None = None
+) -> str:
     """Insert or update watchlist entry. Returns 'new' or 'updated'.
 
     SELECT-before-upsert to distinguish new vs pre-existing entries (ADR-016).
     For NEW stocks: enabled defaults to 1.
-    For EXISTING stocks: only update stock_name/fair/cheap; do NOT touch enabled.
+    For EXISTING stocks: only update stock_name/fair/cheap/scan_method_name; do NOT touch enabled.
     EDD §14.3 Watchlist Upsert SQL contract.
     """
     now_epoch = int(time.time())
@@ -77,17 +79,51 @@ def _upsert_watchlist(conn, stock_no: str, stock_name: str, fair: float, cheap: 
     conn.execute(
         """
         INSERT INTO watchlist
-            (stock_no, stock_name, manual_fair_price, manual_cheap_price, enabled, created_at, updated_at)
-        VALUES (?, ?, ?, ?, 1, ?, ?)
+            (stock_no, stock_name, manual_fair_price, manual_cheap_price, scan_method_name, enabled, created_at, updated_at)
+        VALUES (?, ?, ?, ?, ?, 1, ?, ?)
         ON CONFLICT(stock_no) DO UPDATE SET
             stock_name = excluded.stock_name,
             manual_fair_price = excluded.manual_fair_price,
             manual_cheap_price = excluded.manual_cheap_price,
+            scan_method_name = excluded.scan_method_name,
             updated_at = excluded.updated_at
         """,
-        (stock_no, stock_name, fair, cheap, now_epoch, now_epoch),
+        (stock_no, stock_name, fair, cheap, scan_method_name, now_epoch, now_epoch),
     )
     return "updated" if existing else "new"
+
+
+def _upsert_scan_snapshot(
+    conn,
+    stock_no: str,
+    scan_date: str,
+    method_name: str,
+    method_version: str,
+    fair: float,
+    cheap: float,
+) -> None:
+    """Write the best method's prices to valuation_snapshots so the daemon can use them."""
+    now_epoch = int(time.time())
+    conn.execute(
+        """
+        INSERT INTO valuation_methods(method_name, method_version, enabled, created_at, updated_at)
+        VALUES (?, ?, 1, ?, ?)
+        ON CONFLICT(method_name, method_version) DO UPDATE SET updated_at = excluded.updated_at
+        """,
+        (method_name, method_version, now_epoch, now_epoch),
+    )
+    conn.execute(
+        """
+        INSERT INTO valuation_snapshots(
+            stock_no, trade_date, method_name, method_version, fair_price, cheap_price, created_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?)
+        ON CONFLICT(stock_no, trade_date, method_name, method_version) DO UPDATE SET
+            fair_price = excluded.fair_price,
+            cheap_price = excluded.cheap_price,
+            created_at = excluded.created_at
+        """,
+        (stock_no, scan_date, method_name, method_version, fair, cheap, now_epoch),
+    )
 
 
 def _write_system_log(conn, level: str, event: str, detail: str) -> None:
@@ -142,8 +178,7 @@ def run_market_scan_job(
             stock_name: str = stock["stock_name"]
             close: float | None = stock.get("yesterday_close")
 
-            success_fairs: list[float] = []
-            success_cheaps: list[float] = []
+            per_method: list[dict] = []  # {method_name, method_version, fair, cheap}
             methods_success: list[str] = []
             methods_skipped: list[str] = []
 
@@ -161,14 +196,20 @@ def run_market_scan_job(
                     continue
 
                 status = result.get("status", "")
-                method_label = f"{result.get('method_name', getattr(method, 'method_name', '?'))}_{result.get('method_version', getattr(method, 'method_version', 'v1'))}"
+                mn = str(result.get("method_name", getattr(method, "method_name", "?")))
+                mv = str(result.get("method_version", getattr(method, "method_version", "v1")))
+                method_label = f"{mn}_{mv}"
 
                 if status == "SUCCESS":
                     fair = result.get("fair_price")
                     cheap = result.get("cheap_price")
                     if fair is not None and cheap is not None:
-                        success_fairs.append(float(fair))
-                        success_cheaps.append(float(cheap))
+                        per_method.append({
+                            "method_name": mn,
+                            "method_version": mv,
+                            "fair": float(fair),
+                            "cheap": float(cheap),
+                        })
                         methods_success.append(method_label)
                 else:
                     methods_skipped.append(f"{method_label}:{status}")
@@ -187,7 +228,7 @@ def run_market_scan_job(
                 })
                 continue
 
-            if not success_fairs:
+            if not per_method:
                 # All methods skipped → uncalculable
                 uncalculable_rows.append({
                     "stock_no": stock_no,
@@ -200,20 +241,30 @@ def run_market_scan_job(
                 })
                 continue
 
-            agg_fair = max(success_fairs)
-            agg_cheap = max(success_cheaps)
+            # Use the method with the minimum cheap as the conservative reference.
+            # Only stocks below this tightest cheap threshold enter the watchlist.
+            best = min(per_method, key=lambda r: r["cheap"])
+
             row_base = {
                 "stock_no": stock_no,
                 "stock_name": stock_name,
-                "agg_fair_price": f"{agg_fair:.2f}",
-                "agg_cheap_price": f"{agg_cheap:.2f}",
+                "agg_fair_price": f"{best['fair']:.2f}",
+                "agg_cheap_price": f"{best['cheap']:.2f}",
                 "yesterday_close": f"{close:.2f}",
                 "methods_success": "|".join(methods_success),
                 "methods_skipped": "|".join(methods_skipped),
             }
 
-            if close <= agg_cheap:
-                kind = _upsert_watchlist(conn, stock_no, stock_name, agg_fair, agg_cheap)
+            if close <= best["cheap"]:
+                kind = _upsert_watchlist(
+                    conn, stock_no, stock_name, best["fair"], best["cheap"],
+                    scan_method_name=best["method_name"],
+                )
+                _upsert_scan_snapshot(
+                    conn, stock_no, scan_date,
+                    best["method_name"], best["method_version"],
+                    best["fair"], best["cheap"],
+                )
                 conn.commit()
                 watchlist_upserted += 1
                 if kind == "new":
@@ -221,7 +272,7 @@ def run_market_scan_job(
                 else:  # "updated"
                     watchlist_updated += 1
                 watchlist_added_rows.append(row_base)
-            elif close <= agg_fair:
+            elif close <= best["fair"]:
                 near_fair_rows.append(row_base)
             else:
                 above_fair_count += 1

@@ -226,6 +226,10 @@ def _send_opening_summary_if_needed(
 def evaluate_manual_threshold_hits(watchlist_rows: list[dict], quotes: dict[str, dict]) -> list[dict]:
     hits: list[dict] = []
     for row in watchlist_rows:
+        # Scan-added stocks are monitored via valuation_snapshots (formula method).
+        # Skip them here so manual_rule does not fire on scan-derived prices.
+        if row.get("scan_method_name"):
+            continue
         stock_no = str(row["stock_no"])
         quote = quotes.get(stock_no)
         if not quote:
