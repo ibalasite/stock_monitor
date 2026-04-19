@@ -13,6 +13,7 @@ import pytest
 from stock_monitor.adapters.sqlite_repo import apply_schema, connect_sqlite
 from stock_monitor.application.market_scan_methods import load_enabled_scan_methods
 from stock_monitor.application.valuation_methods_real import (
+    ConservativeMultiSourceMethod,
     EmilyCompositeV1,
     OldbullDividendYieldV1,
     RayskyBlendedMarginV1,
@@ -156,7 +157,7 @@ def test_load_enabled_scan_methods_returns_only_enabled(tmp_path):
     assert len(methods) == 3
 
 
-def test_load_enabled_scan_methods_instances_have_provider(tmp_path):
+def test_load_enabled_scan_methods_returns_conservative_wrappers(tmp_path):
     db_path = _make_db(tmp_path)
     conn = connect_sqlite(db_path)
     try:
@@ -170,7 +171,8 @@ def test_load_enabled_scan_methods_instances_have_provider(tmp_path):
         conn.close()
 
     assert len(methods) == 1
-    assert methods[0].provider is not None
+    assert isinstance(methods[0], ConservativeMultiSourceMethod)
+    assert callable(methods[0].compute)
 
 
 # ---------------------------------------------------------------------------
@@ -379,3 +381,86 @@ def test_raysky_margin_factor_applied():
 
     assert r["status"] == "SUCCESS"
     assert abs(float(r["cheap_price"]) - float(r["fair_price"]) * 0.8) < 0.5
+
+
+# ---------------------------------------------------------------------------
+# ConservativeMultiSourceMethod
+# ---------------------------------------------------------------------------
+
+
+def test_conservative_method_returns_min_when_all_succeed():
+    """When all 3 providers succeed, return min(fair) and min(cheap)."""
+    p1 = _StubProvider(avg_dividend=5.0)  # fair=100.0, cheap≈83.33
+    p2 = _StubProvider(avg_dividend=4.0)  # fair=80.0,  cheap≈66.67
+    p3 = _StubProvider(avg_dividend=6.0)  # fair=120.0, cheap=100.0
+
+    m = ConservativeMultiSourceMethod(OldbullDividendYieldV1, [p1, p2, p3])
+    r = m.compute("2330", "2026-04-17")
+
+    assert r["status"] == "SUCCESS"
+    assert r["method_name"] == "oldbull_dividend_yield"
+    assert r["method_version"] == "v1"
+    assert abs(float(r["fair_price"]) - 80.0) < 0.1   # min(100, 80, 120)
+    assert abs(float(r["cheap_price"]) - 66.67) < 0.1  # min(83.33, 66.67, 100)
+
+
+def test_conservative_method_uses_available_when_partial():
+    """When only some providers succeed, min of those is returned."""
+    p1 = _StubProvider(avg_dividend=5.0)   # fair=100
+    p2 = _StubProvider(avg_dividend=None)  # SKIP
+    p3 = _StubProvider(avg_dividend=3.0)   # fair=60
+
+    m = ConservativeMultiSourceMethod(OldbullDividendYieldV1, [p1, p2, p3])
+    r = m.compute("2330", "2026-04-17")
+
+    assert r["status"] == "SUCCESS"
+    assert abs(float(r["fair_price"]) - 60.0) < 0.1   # min(100, 60)
+
+
+def test_conservative_method_skip_when_all_fail():
+    """SKIP_INSUFFICIENT_DATA when every provider returns SKIP."""
+    p1 = _StubProvider(avg_dividend=None)
+    p2 = _StubProvider(avg_dividend=None)
+    p3 = _StubProvider(avg_dividend=None)
+
+    m = ConservativeMultiSourceMethod(OldbullDividendYieldV1, [p1, p2, p3])
+    r = m.compute("9999", "2026-04-17")
+
+    assert r["status"] == "SKIP_INSUFFICIENT_DATA"
+    assert r["fair_price"] is None
+    assert r["cheap_price"] is None
+
+
+def test_conservative_method_single_provider():
+    """Works with a single provider (edge case)."""
+    p = _StubProvider(avg_dividend=5.0)
+    m = ConservativeMultiSourceMethod(OldbullDividendYieldV1, [p])
+    r = m.compute("2330", "2026-04-17")
+
+    assert r["status"] == "SUCCESS"
+    assert abs(float(r["fair_price"]) - 100.0) < 0.1
+
+
+def test_conservative_method_preserves_method_name_version():
+    """method_name / method_version are taken from the wrapped class."""
+    m = ConservativeMultiSourceMethod(EmilyCompositeV1, [_StubProvider()])
+    assert m.method_name == "emily_composite"
+    assert m.method_version == "v1"
+
+    m2 = ConservativeMultiSourceMethod(RayskyBlendedMarginV1, [_StubProvider()])
+    assert m2.method_name == "raysky_blended_margin"
+
+
+def test_conservative_method_with_emily_takes_min():
+    """Full Emily composite: min across 3 differently-parameterised providers."""
+    # p1: avg_div=10 → large fair; p2: avg_div=2 → small fair
+    p1 = _StubProvider(avg_dividend=10.0, eps_data=None, pe_pb=None, price_stats=None)
+    p2 = _StubProvider(avg_dividend=2.0, eps_data=None, pe_pb=None, price_stats=None)
+    p3 = _StubProvider(avg_dividend=None, eps_data=None, pe_pb=None, price_stats=None)
+
+    m = ConservativeMultiSourceMethod(EmilyCompositeV1, [p1, p2, p3])
+    r = m.compute("2330", "2026-04-17")
+
+    assert r["status"] == "SUCCESS"
+    # p1: fair = 10*20*0.9 = 180; p2: fair = 2*20*0.9 = 36; p3: SKIP
+    assert abs(float(r["fair_price"]) - 36.0) < 0.5  # min(180, 36)

@@ -16,7 +16,7 @@ from urllib import error, request
 
 try:
     import truststore
-    truststore.inject_into_ssl()
+    truststore.inject_into_ssl()  # pragma: no cover
 except ImportError:  # pragma: no cover
     pass  # truststore not installed; fall back to default SSL
 

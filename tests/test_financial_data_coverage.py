@@ -1589,10 +1589,19 @@ def test_load_scan_methods_unknown_method_name_raises(tmp_path: object, monkeypa
     )
     conn.commit()
 
-    # Monkeypatch ParallelFinancialDataProvider.default to avoid real DB creation
+    # Stub out provider constructors so no real DB/network setup is needed
+    _stub = object()
     monkeypatch.setattr(
-        "stock_monitor.application.market_scan_methods.ParallelFinancialDataProvider.default",
-        lambda db_path=None: None,
+        "stock_monitor.application.market_scan_methods.FinMindFinancialDataProvider",
+        lambda db_path=None: _stub,
+    )
+    monkeypatch.setattr(
+        "stock_monitor.application.market_scan_methods.MopsTwseAdapter",
+        lambda db_path=None: _stub,
+    )
+    monkeypatch.setattr(
+        "stock_monitor.application.market_scan_methods.GoodinfoAdapter",
+        lambda db_path=None: _stub,
     )
 
     with pytest.raises(RuntimeError, match="MARKET_SCAN_METHODS_EMPTY"):

@@ -17,6 +17,47 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 
 
+class ConservativeMultiSourceMethod:
+    """Runs a valuation method against each provider independently; returns min fair/cheap.
+
+    For intraday monitoring, the most conservative threshold (lowest computed
+    fair/cheap across all data sources) reduces false positives. Any provider
+    returning SUCCESS contributes its result; the minimum wins.
+
+    If all providers return SKIP, the result is SKIP_INSUFFICIENT_DATA.
+    """
+
+    def __init__(self, method_cls: type, providers: list, **kwargs: object) -> None:
+        _probe = method_cls(provider=None)
+        self.method_name: str = _probe.method_name
+        self.method_version: str = _probe.method_version
+        self._instances = [method_cls(provider=p, **kwargs) for p in providers]
+
+    def compute(self, stock_no: str, trade_date_local: str) -> dict:
+        successes = []
+        for inst in self._instances:
+            r = inst.compute(stock_no, trade_date_local)
+            if r["status"] == "SUCCESS":
+                successes.append(r)
+
+        if not successes:
+            return {
+                "status": "SKIP_INSUFFICIENT_DATA",
+                "fair_price": None,
+                "cheap_price": None,
+                "method_name": self.method_name,
+                "method_version": self.method_version,
+            }
+
+        return {
+            "status": "SUCCESS",
+            "fair_price": min(r["fair_price"] for r in successes),
+            "cheap_price": min(r["cheap_price"] for r in successes),
+            "method_name": self.method_name,
+            "method_version": self.method_version,
+        }
+
+
 def _norm(fair: float, cheap: float) -> tuple[float, float]:
     """Normalize fair/cheap to sensible range."""
     f = round(max(float(fair), 0.01), 2)
